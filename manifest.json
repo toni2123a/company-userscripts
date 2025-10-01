@@ -1,10 +1,17 @@
 {
   "tools": [
     {
-      "id": "dpd",
+      "id": "tool-dpd",
       "name": "Tool DPD",
       "version": "1.0.0",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js"
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js",
+      "match": [
+        "*://*/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "kleines Test-Tool (DPD)"
     }
   ]
 }
