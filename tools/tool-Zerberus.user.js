@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Zerberus → DPD360 Flyout + Avis-Tools (Maps: 3.+4. Zeile)
+// @name         Zerberus → DPD360  
 // @namespace    https://dpd.de/
 // @version      1.3c
-// @description  Wie v1.3, aber Google Maps nutzt strikt 3. (Straße+Nr) und 4. (PLZ/Ort) Zeile der Avis-Adresse; Google-Suche weiterhin volle Adresse.
+// @description  Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an
 // @author       Thiemo Schöler
 // @match        https://zerberus-dpd-02.csf.blujaysolutions.net/*
 // @grant        GM_xmlhttpRequest
