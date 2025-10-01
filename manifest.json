@@ -3,15 +3,15 @@
     {
       "id": "tool-ssw-letzter08",
       "name": "ASEA incl. letzter Lagerscan",
-      "version": "1.4",
+      "version": "1.4.4",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-SSW-letzter08.user.js",
       "match": [
-        "*://scanserver-d0010157.ssw.dpdit.de/cgi-bin/report_inbound_ofd.cgi*"
+        "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/report_inbound_ofd\\.cgi.*$/"
       ],
       "grants": [
         "GM_xmlhttpRequest"
       ],
-      "description": "Zeigt den letzten Eintrag aus den Scanserver-Daten an, jetzt mit dynamischem Datum und \"Lager\"-Bezeichnung."
+      "description": "Zeigt den letzten Eintrag aus den Scanserver-Daten an, dynamische Hostnummer aus der URL."
     },
     {
       "id": "tool-openpricer",
