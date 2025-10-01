@@ -1,6 +1,19 @@
 {
   "tools": [
     {
+      "id": "tool-openpricer",
+      "name": "OpenPricer: Abholdepot (OPS/requirements)",
+      "version": "2.2.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-OpenPricer.user.js",
+      "match": [
+        "https://dpdde.openpricer.com/app/rfq/list*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Spalte \"Abholdepot\" in /app/rfq/list. Liest aus /app/rfq/<ID>/requirements (#agency). Mit Cache & Queue."
+    },
+    {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360 Flyout + Avis-Tools (Maps: 3.+4. Zeile)",
       "version": "1.3c",
