@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ASEA inkl. letzter Lagerscan (mit Standort-Setting)
 // @namespace    https://github.com/toni2123a/company-userscripts
-// @version      1.4.3
-// @description  Zeigt den letzten Eintrag aus den Scanserver-Daten. Standortnummer wird auf der Katalog-Seite gespeichert (GM-Storage + localStorage) und auf DPD-Seiten genutzt.
+// @version      1.5.1
+// @description  Zeigt den letzten Eintrag aus den Scanserver-Daten. Standortnummer kann im Script vorbelegt oder auf der Katalog-Seite gespeichert werden (GM-Storage + localStorage) und wird auf DPD-Seiten genutzt.
 // @match        https://toni2123a.github.io/company-userscripts/*
 // @include      /^https?:\/\/scanserver-d00\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-asea.user.js
@@ -16,6 +16,58 @@
 (function() {
   'use strict';
   const KEY = 'asea_standort';
+  const CONFIG = {
+    /**
+     * Optional: feste Standortnummer hinterlegen (z. B. "0157").
+     * Leer lassen, wenn die Nummer über die Katalog-Seite gepflegt werden soll.
+     */
+    presetStandort: ''
+  };
+
+  function buildIncludePatternSource() {
+    const preset = getPreset();
+    const core = preset ? preset : '\\d{4}';
+    return '^https?:\\/\\/scanserver-d00' + core + '\\.ssw\\.dpdit\\.de\\/cgi-bin\\/report_inbound_ofd\\.cgi.*$';
+  }
+
+  function buildIncludeRegex() {
+    return new RegExp(buildIncludePatternSource(), 'i');
+  }
+
+  function warnIfPresetNeedsMetaUpdate() {
+    const preset = getPreset();
+    if (!preset || typeof GM_info === 'undefined') return;
+
+    const expected = '/' + buildIncludePatternSource() + '/';
+    const scriptInfo = GM_info && GM_info.script ? GM_info.script : null;
+    if (!scriptInfo) return;
+    const patterns = [];
+    if (Array.isArray(scriptInfo.includes)) patterns.push(...scriptInfo.includes);
+    if (Array.isArray(scriptInfo.matches)) patterns.push(...scriptInfo.matches);
+
+    const hasExpected = patterns.some((p) => {
+      if (!p) return false;
+      if (p === expected) return true;
+      const src = String(p);
+      try {
+        // Muster evaluieren – falls als String gespeichert
+        const cleaned = src.startsWith('/') && src.endsWith('/') ? src.slice(1, -1) : src;
+        const expr = cleaned.replace(/\\\\/g, '\\');
+        return new RegExp(expr, 'i').test('https://scanserver-d00' + preset + '.ssw.dpdit.de/cgi-bin/report_inbound_ofd.cgi');
+      } catch (_) {
+        return false;
+      }
+    });
+
+    if (!hasExpected) {
+      console.warn('[ASEA] Hinweis: Bitte @include auf', expected, 'anpassen, damit der feste Standort ' + preset + ' geladen wird.');
+    }
+  }
+
+  function getPreset() {
+    const preset = String(CONFIG.presetStandort || '').trim();
+    return /^\d{4}$/.test(preset) ? preset : '';
+  }
 
   // --- Storage Helpers ---
   function setStandort(v) {
@@ -26,6 +78,8 @@
   function getGM() { try { return GM_getValue(KEY) || ''; } catch(_) { return ''; } }
   function getLS() { try { return localStorage.getItem(KEY) || ''; } catch(_) { return ''; } }
   function getStandortAny() {
+    const preset = getPreset();
+    if (preset) return preset;
     const gm = getGM();
     if (gm) return gm;
     const ls = getLS();
@@ -47,7 +101,19 @@
       if (!inp || !btn) { if (tries > 60) clearInterval(iv); return; }
       clearInterval(iv);
 
-      // initial sync
+      const preset = getPreset();
+      if (preset) {
+        inp.value = preset;
+        inp.disabled = true;
+        inp.setAttribute('aria-disabled', 'true');
+        btn.disabled = true;
+        btn.textContent = 'Im Script festgelegt';
+        if (msg) { msg.textContent = 'Standort wird im Script festgelegt (' + preset + ').'; msg.style.color = '#0a7c2f'; }
+        setStandort(preset);
+        return;
+      }
+
+      // initial sync (ohne Preset)
       const gm = getGM();
       if (gm) {
         inp.value = gm;
@@ -74,7 +140,12 @@
   // --- DPD-Seite: Nummer verwenden ---
   function runOnDpdPage() {
     const fromHost = extractFromHost(location.hostname);
-    let standort = getStandortAny() || fromHost;
+    const preset = getPreset();
+    let standort = preset || getStandortAny() || fromHost;
+
+    if (preset && preset !== getGM()) {
+      setStandort(preset);
+    }
 
     if (!standort) {
       const input = prompt('Bitte 4-stellige Standortnummer eingeben (z. B. 0157):', '');
@@ -98,7 +169,9 @@
   }
 
   const isCatalog = /:\/\/toni2123a\.github\.io\/company-userscripts\//.test(location.href);
-  const isDpd     = /scanserver-d00\d{4}\.ssw\.dpdit\.de/i.test(location.hostname);
+  const isDpd     = buildIncludeRegex().test(location.href);
+
+  warnIfPresetNeedsMetaUpdate();
   if (isCatalog) initCatalogBridge();
   if (isDpd)     runOnDpdPage();
 })();
