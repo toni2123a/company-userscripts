@@ -1,0 +1,10 @@
+{
+  "tools": [
+    {
+      "id": "dpd",
+      "name": "Tool DPD",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/<deinUser>/company-userscripts/main/tools/tool-dpd.user.js"
+    }
+  ]
+}
