@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Anzeige der Fahrername im Depotportal 
+// @name         Anzeige der Fahrernamen im Depotportal 
 // @namespace    bodo.tools
 // @version      1.6
 // @description  Button neben "Beleg" -> Fahrer aus DPD360 nur bei Klick laden
