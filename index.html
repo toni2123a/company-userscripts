@@ -1,47 +1,37 @@
 <!doctype html>
 <html lang="de">
-  <head>
-    <meta charset="utf-8" />
-    <title>Company Userscripts</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        text-align: center;
-        padding: 2rem;
-      }
-      img.logo {
-        max-width: 200px;
-        margin-bottom: 2rem;
-      }
-      ul {
-        list-style: none;
-        padding: 0;
-      }
-      li {
-        margin: 1rem 0;
-      }
-      a {
-        display: inline-block;
-        padding: 0.5rem 1rem;
-        background: #005bbb;
-        color: #fff;
-        border-radius: 6px;
-        text-decoration: none;
-        font-weight: bold;
-      }
-      a:hover {
-        background: #004099;
-      }
-    </style>
-  </head>
-  <body>
-    <!-- Firmenlogo -->
-    <img class="logo" src="data:image/png;base64,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" alt="Firmenlogo" />
+<head>
+  <meta charset="utf-8" />
+  <title>Company Userscripts</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
+    img.logo { max-width: 200px; margin-bottom: 2rem; height: auto; }
+    h1 { margin: 0 0 1.5rem; }
+    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; }
+    .btn:hover { background:#004099; }
+    .note { color:#444; font-size:.95rem; margin-top:.5rem; }
+    ul { list-style:none; padding:0; margin:2rem auto 0; max-width:420px; }
+    li { margin:1rem 0; }
+    .step { font-size:.9rem; color:#222; margin-bottom:.25rem; }
+  </style>
+</head>
+<body>
+  <!-- Firmenlogo aus dem Repo -->
+  <img class="logo" src="./dpd.png" alt="DPD Firmenlogo" />
 
-    <h1>Company Userscripts</h1>
-    <ul>
-      <li><a href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/bootstrap.user.js">Installiere Bootstrap (alle Tools)</a></li>
-      <li><a href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">Installiere Tool DPD</a></li>
-    </ul>
-  </body>
+  <h1>Company Userscripts</h1>
+
+  <!-- Schritt 1: Tampermonkey installieren -->
+  <p class="step"><strong>Schritt 1:</strong> Tampermonkey im Microsoft Edge installieren</p>
+  <p><a class="btn" href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener">Tampermonkey im Edge-Store öffnen</a></p>
+  <p class="note">Nach der Installation Edge ggf. kurz neu starten.</p>
+
+  <!-- Schritt 2: einzelne Tools installieren -->
+  <p class="step"><strong>Schritt 2:</strong> gewünschte Tools einzeln installieren</p>
+  <ul>
+    <li><a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">Installiere Tool DPD</a></li>
+    <!-- weitere Tools hier ergänzen -->
+  </ul>
+</body>
 </html>
