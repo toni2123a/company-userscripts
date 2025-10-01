@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Fahrer-Lookup per Klick (DPD360 -> Depotportal, v1.6)
+// @name         Anzeige der Fahrername im Depotportal 
 // @namespace    bodo.tools
 // @version      1.6
 // @description  Button neben "Beleg" -> Fahrer aus DPD360 nur bei Klick laden
