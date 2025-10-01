@@ -3,7 +3,9 @@
     {
       "id": "tool-ssw-letzter08",
       "name": "ASEA inkl. letzter Lagerscan (mit Standort-Setting)",
-      "version": "1.5.0",
+
+      "version": "1.5.1",
+
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-SSW-letzter08.user.js",
       "match": [
         "https://toni2123a.github.io/company-userscripts/*",
