@@ -1,6 +1,20 @@
 {
   "tools": [
     {
+      "id": "tool-fahrer-depotportal",
+      "name": "Anzeige der Fahrername im Depotportal",
+      "version": "1.6",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Fahrer-depotportal.user.js",
+      "match": [
+        "https://depotportal.dpd.com/*/tracking/parcels/*"
+      ],
+      "grants": [
+        "GM_xmlhttpRequest",
+        "GM_addStyle"
+      ],
+      "description": "Button neben \"Beleg\" -> Fahrer aus DPD360 nur bei Klick laden"
+    },
+    {
       "id": "tool-asea_erweiterung",
       "name": "ASEA 🚀 Optimierte Barcode- & Google-Links",
       "version": "5.1",
@@ -25,20 +39,6 @@
         "GM_xmlhttpRequest"
       ],
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
-    },
-    {
-      "id": "tool-fahrer-depotportal",
-      "name": "Fahrer-Lookup per Klick (DPD360 -> Depotportal, v1.6)",
-      "version": "1.6",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Fahrer-depotportal.user.js",
-      "match": [
-        "https://depotportal.dpd.com/*/tracking/parcels/*"
-      ],
-      "grants": [
-        "GM_xmlhttpRequest",
-        "GM_addStyle"
-      ],
-      "description": "Button neben \"Beleg\" -> Fahrer aus DPD360 nur bei Klick laden"
     },
     {
       "id": "tool-openpricer",
