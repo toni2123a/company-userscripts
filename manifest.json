@@ -50,7 +50,7 @@
       "grants": [
         "GM_xmlhttpRequest"
       ],
-      "description": "Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an"
+      "description": "Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an. Eimalige Anmeldung (Tag) in dpd360 erforderlich"
     }
   ]
 }
