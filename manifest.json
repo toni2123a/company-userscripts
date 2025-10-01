@@ -24,7 +24,7 @@
       "grants": [
         "GM_xmlhttpRequest"
       ],
-      "description": "Zeigt den letzten Eintrag aus den Scanserver-Daten an, dynamische Hostnummer aus der URL."
+      "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
       "id": "tool-openpricer",
