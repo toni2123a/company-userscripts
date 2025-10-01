@@ -1,101 +1,131 @@
 // ==UserScript==
-// @name         ASEA incl. letzter Lagerscan
-// @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  Zeigt den letzten Eintrag aus den Scanserver-Daten an, jetzt mit dynamischem Datum und "Lager"-Bezeichnung.
-// @author       Thiemo Schöler
-// @match        *://scanserver-d0010157.ssw.dpdit.de/cgi-bin/report_inbound_ofd.cgi*
+// @name         ASEA inkl. letzter Lagerscan (mit Standort-Setting)
+// @namespace    https://github.com/toni2123a/company-userscripts
+// @version      1.4.0
+// @description  Zeigt den letzten Eintrag aus den Scanserver-Daten. Standortnummer wird auf der Katalog-Seite gespeichert.
+// @match        https://toni2123a.github.io/company-userscripts/*
+// @include      /^https?:\/\/scanserver-d00\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
 (function() {
-    'use strict';
+  'use strict';
 
-    console.log("🔄 Tampermonkey-Script läuft...");
+  const KEY = 'asea_standort'; // GM-Storage-Key für die Standortnummer (z.B. "0157")
 
-    // Funktion, um das aktuelle Datum im YYYYMMDD-Format zu erhalten
-    function getCurrentDate() {
-        let today = new Date();
-        let year = today.getFullYear();
-        let month = String(today.getMonth() + 1).padStart(2, '0'); // Monat beginnt bei 0
-        let day = String(today.getDate()).padStart(2, '0');
-        return `${year}${month}${day}`;
-    }
+  // ---------- UTIL ----------
+  function setStandort(num) { try { GM_setValue(KEY, String(num).trim()); } catch(_) {} }
+  function getStandort()    { try { return GM_getValue(KEY) || ''; } catch(_) { return ''; } }
 
-    // Aktuelles Datum für die API abrufen
-    let currentDate = getCurrentDate();
-    console.log(`📆 Aktuelles Datum: ${currentDate}`);
+  function extractStandortFromHost(host) {
+    const m = String(host).match(/scanserver-d00(\d{4})\.ssw\.dpdit\.de/i);
+    return m ? m[1] : '';
+  }
 
-    // Dynamische API-URL mit aktuellem Datum
-    let apiUrl = `https://scanserver-d0010157.ssw.dpdit.de/cgi-bin/pa.cgi?_url=file&_passwd=87654321&_disp=3&_pivotxx=0&_rastert=4&_rasteryt=0&_rasterx=0&_rastery=0&_pivot=0&_pivotbp=0&_sortby=time&_dca=0&_tabledef=time%7C&_arg59=dpd&_arg9=1%2C${currentDate}%2C000000%2C${currentDate}%2C235959&_DateConnectToggle=1&_DateDefault=-1.0&_arg9connect=on&_DateFrom=20250125&_TimeFrom=000000&_DateTo=${currentDate}&_TimeTo=235959&_arg3=08&_csv=5`;
+  function css(s) { GM_addStyle(s); }
+  function el(tag, attrs = {}, children = []) {
+    const n = document.createElement(tag);
+    Object.entries(attrs).forEach(([k,v]) => {
+      if (k === 'class') n.className = v;
+      else if (k === 'text') n.textContent = v;
+      else n.setAttribute(k, v);
+    });
+    children.forEach(c => n.appendChild(c));
+    return n;
+  }
 
-    console.log(`🌐 API-URL generiert: ${apiUrl}`);
+  // ---------- UI auf der Katalog-Seite ----------
+  function mountSettingsOnCatalog() {
+    // Sucht linke Tool-Spalte; wenn nicht vorhanden, oben einsetzen
+    const anchor = document.querySelector('#tools-head')?.parentElement || document.body;
 
-    // CSV-Daten abrufen
-    GM_xmlhttpRequest({
-        method: "GET",
-        url: apiUrl,
-        onload: function(response) {
-            console.log("📥 API-Antwort erhalten:", response.responseText);
+    css(`
+      .asea-card{border:1px solid #e6e6e6;border-radius:10px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.06);padding:1rem;margin-bottom:1rem}
+      .asea-card h3{margin:.25rem 0 1rem;font-size:1.05rem}
+      .asea-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+      .asea-input{padding:.55rem .7rem;border:1px solid #cfd6e4;border-radius:8px;font-size:1rem;min-width:120px}
+      .asea-btn{padding:.6rem 1rem;border-radius:8px;background:#005bbb;color:#fff;font-weight:700;border:none;cursor:pointer}
+      .asea-btn:hover{background:#004099}
+      .asea-ok{color:#0a7c2f;font-weight:600;margin-top:.5rem}
+      .asea-hint{color:#555;font-size:.92rem;margin-top:.35rem}
+    `);
 
-            // CSV in ein Array von Objekten umwandeln
-            let rows = response.responseText.trim().split("\n");
-            let data = rows.slice(1).map(row => { // Erste Zeile ignorieren (Überschrift)
-                let [time, count] = row.split(";");
-                return { time: time.trim(), count: count.trim() };
-            });
+    const card = el('div', {class: 'asea-card'});
+    const h3   = el('h3', {text: 'Standortnummer festlegen'});
+    const row  = el('div', {class: 'asea-row'});
+    const inp  = el('input', {class: 'asea-input', type: 'text', maxlength: '4', placeholder: 'z. B. 0157', value: getStandort()});
+    const btn  = el('button', {class: 'asea-btn', type: 'button', text: 'Speichern'});
+    const ok   = el('div', {class: 'asea-ok', text: ''});
+    const hint = el('div', {class: 'asea-hint', text: 'Diese Nummer wird vom Tool auf den DPD-Seiten verwendet. (Beispiel: scanserver-d00' + (getStandort()||'XXXX') + '.ssw.dpdit.de)'});
 
-            // Letzten Eintrag holen
-            if (data.length > 0) {
-                let letzterEintrag = data[data.length - 1];
-                console.log("📊 Letzter Eintrag:", letzterEintrag);
-
-                // Tabelle erstellen oder bestehende finden
-                let table = document.getElementById("scanserver-tabelle");
-                if (!table) {
-                    table = document.createElement("table");
-                    table.id = "scanserver-tabelle";
-                    table.style.position = "fixed";
-                    table.style.top = "10px";  // Oben positionieren
-                    table.style.right = "10px"; // Rechts positionieren
-                    table.style.backgroundColor = "white";
-                    table.style.border = "1px solid black";
-                    table.style.padding = "10px";
-                    table.style.zIndex = "1000";
-                    table.style.fontFamily = "Arial, sans-serif";
-                    table.style.boxShadow = "2px 2px 10px rgba(0,0,0,0.5)";
-                    table.style.borderCollapse = "collapse";
-                    document.body.appendChild(table);
-
-                    // Tabellenkopf hinzufügen
-                    let headerRow = table.insertRow();
-                    let header1 = headerRow.insertCell(0);
-                    let header2 = headerRow.insertCell(1);
-                    header1.innerHTML = "<b>Scanart</b>";
-                    header2.innerHTML = "<b>Uhrzeit</b>";
-                    header1.style.padding = "5px";
-                    header2.style.padding = "5px";
-                    header1.style.borderBottom = "1px solid black";
-                    header2.style.borderBottom = "1px solid black";
-                }
-
-                // Vorherige Daten entfernen, bevor neue Zeilen eingefügt werden
-                while (table.rows.length > 1) {
-                    table.deleteRow(1);
-                }
-
-                // Neue Zeilen mit den neuesten Daten füllen
-                let newRow = table.insertRow();
-                let cell1 = newRow.insertCell(0);
-                let cell2 = newRow.insertCell(1);
-                cell1.innerHTML = "Lager"; // Geändert von "Letzter Scan" zu "Lager"
-                cell2.innerHTML = letzterEintrag.time;
-                cell1.style.padding = "5px";
-                cell2.style.padding = "5px";
-            } else {
-                console.warn("⚠️ Keine Daten gefunden.");
-            }
-        }
+    btn.addEventListener('click', () => {
+      const val = (inp.value || '').trim();
+      if (!/^\d{4}$/.test(val)) {
+        ok.textContent = 'Bitte 4-stellige Standortnummer eingeben.';
+        ok.style.color = '#8a1c1c';
+        return;
+      }
+      setStandort(val);
+      ok.textContent = 'Gespeichert: ' + val;
+      ok.style.color = '#0a7c2f';
+      hint.textContent = 'Diese Nummer wird vom Tool auf den DPD-Seiten verwendet. (Beispiel: scanserver-d00' + val + '.ssw.dpdit.de)';
     });
 
+    row.appendChild(inp);
+    row.appendChild(btn);
+    card.appendChild(h3);
+    card.appendChild(row);
+    card.appendChild(ok);
+    card.appendChild(hint);
+
+    // ganz oben in der Tool-Liste einfügen
+    anchor.parentNode.insertBefore(card, anchor.nextSibling);
+  }
+
+  // ---------- Laufzeit auf der DPD-Seite ----------
+  async function runOnDpdPage() {
+    // 1) Standort ermitteln
+    const fromHost = extractStandortFromHost(location.hostname);
+    let standort = getStandort() || fromHost;
+
+    // Falls nichts gespeichert & Host liefert auch nichts: kurze Abfrage
+    if (!standort) {
+      const input = prompt('Bitte 4-stellige Standortnummer eingeben (z. B. 0157):', '');
+      if (input && /^\d{4}$/.test(input)) {
+        standort = input;
+        setStandort(standort);
+      } else {
+        console.warn('[ASEA] Keine gültige Standortnummer – Tool beendet.');
+        return;
+      }
+    }
+
+    // 2) Hinweis falls Host-Nummer ≠ gespeicherte Nummer
+    if (fromHost && standort && fromHost !== standort) {
+      console.info('[ASEA] Host ('+fromHost+') ≠ gespeicherte Nummer ('+standort+'). Verwende gespeicherte Nummer.');
+    }
+
+    // 3) Beispiel: hier deine eigentliche Logik (Scanserver-Daten abrufen usw.)
+    //    Falls du GM_xmlhttpRequest brauchst, kannst du die URL mit der "standort" zusammensetzen:
+    //    const url = `https://scanserver-d00${standort}.ssw.dpdit.de/cgi-bin/report_inbound_ofd.cgi?...`;
+    //    GM_xmlhttpRequest({ method:'GET', url, onload: (r)=>{ /* ... */ } });
+
+    // Demo: unauffälliger Hinweis in der Seite
+    try {
+      const tag = document.createElement('div');
+      tag.textContent = 'ASEA-Tool aktiv (Standort: ' + standort + ')';
+      tag.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#005bbb;color:#fff;padding:6px 10px;border-radius:8px;font:12px/1.2 Arial, sans-serif;z-index:99999;opacity:.9';
+      document.body.appendChild(tag);
+      setTimeout(()=> tag.remove(), 5000);
+    } catch(_) {}
+  }
+
+  // ---------- Router ----------
+  const isCatalog = /:\/\/toni2123a\.github\.io\/company-userscripts\//.test(location.href);
+  const isDpd     = /scanserver-d00\d{4}\.ssw\.dpdit\.de/i.test(location.hostname);
+  if (isCatalog)  mountSettingsOnCatalog();
+  if (isDpd)      runOnDpdPage();
 })();
