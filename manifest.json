@@ -2,7 +2,7 @@
   "tools": [
     {
       "id": "tool-fahrer-depotportal",
-      "name": "Anzeige der Fahrername im Depotportal",
+      "name": "Anzeige der Fahrernamen im Depotportal",
       "version": "1.6",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Fahrer-depotportal.user.js",
       "match": [
