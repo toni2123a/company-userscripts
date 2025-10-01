@@ -12,26 +12,27 @@
     header img { max-width:200px; height:auto; }
     header h1 { margin:1rem 0 0; font-size:1.4rem; }
     .page { display:grid; grid-template-columns: 1.1fr 1fr; gap:1.25rem; padding:1rem 1.25rem 2rem; max-width:1200px; margin:0 auto; }
-    @media (max-width: 900px) {
-      .page { grid-template-columns: 1fr; }
-    }
-    /* left column = tools */
+    @media (max-width: 900px) { .page { grid-template-columns: 1fr; } }
     .panel { background:#fff; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.06); padding:1rem; }
     .panel h2 { margin:.25rem 0 1rem; font-size:1.1rem; }
+
+    /* Tools */
     .tool { border:1px solid #e6e6e6; border-radius:10px; margin:.75rem 0; overflow:hidden; background:#fff; }
     .tool-header { width:100%; text-align:left; border:none; background:#f6f7fb; padding:.9rem 1rem; cursor:pointer; display:flex; align-items:center; justify-content:space-between; font-weight:700; }
     .tool-header:hover { background:#eef1f9; }
-    .tool-header span.meta { font-weight:400; font-size:.9rem; color:#555; margin-left:.75rem; }
+    .tool-header .meta { font-weight:400; font-size:.9rem; color:#555; margin-left:.75rem; }
     .chev { transition: transform .2s ease; }
     .tool[aria-expanded="true"] .chev { transform: rotate(90deg); }
     .tool-body { display:none; padding:1rem; border-top:1px solid #e6e6e6; }
     .tool[aria-expanded="true"] .tool-body { display:block; }
+
     .btn { display:inline-block; padding:.7rem 1.1rem; border-radius:8px; background:var(--brand); color:#fff; text-decoration:none; font-weight:700; }
     .btn:hover { background:var(--brand-hover); }
     .muted { color:#555; font-size:.93rem; }
     .code { background:#f3f3f3; padding:.15rem .35rem; border-radius:4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .error { background:#fff4f4; border:1px solid #ffd6d6; color:#8a1c1c; padding:.7rem 1rem; border-radius:8px; margin:.75rem 0; }
 
-    /* right column = instructions */
+    /* Anleitung rechts */
     .steps ol { margin:.25rem 0 0 1.2rem; padding:0; }
     .steps li { margin:.75rem 0; }
     .callout { background:#f6fff6; border:1px solid #d9f0d9; color:#0a7c2f; padding:.6rem .8rem; border-radius:8px; display:none; margin-top:.5rem; font-weight:600; }
@@ -45,53 +46,16 @@
   </header>
 
   <main class="page">
-    <!-- LEFT: TOOLS -->
+    <!-- LINKS: TOOL-LISTE -->
     <section class="panel" aria-labelledby="tools-head">
       <h2 id="tools-head">Tools</h2>
-
-      <!-- Tool: DPD -->
-      <article class="tool" aria-expanded="false">
-        <button class="tool-header" type="button" aria-controls="t-dpd">
-          <div>Tool DPD <span class="meta">v1.0.0</span></div>
-          <div class="chev">▶</div>
-        </button>
-        <div class="tool-body" id="t-dpd">
-          <p class="muted">
-            Kleines Test-Tool für DPD. Läuft auf <span class="code">*://*/*</span>.<br/>
-            Rechte: <span class="code">none</span>.
-          </p>
-          <p>
-            <a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">
-              Tool installieren
-            </a>
-          </p>
-          <p class="muted">
-            Direktlink (.user.js):<br/>
-            <a class="ext" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">
-              https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js
-            </a>
-          </p>
-        </div>
-      </article>
-
-      <!-- Weitere Tools: Kopiere diesen Block und passe Namen/Version/Links an -->
-      <!--
-      <article class="tool" aria-expanded="false">
-        <button class="tool-header" type="button" aria-controls="t-xyz">
-          <div>Tool XYZ <span class="meta">v1.2.3</span></div>
-          <div class="chev">▶</div>
-        </button>
-        <div class="tool-body" id="t-xyz">
-          <p class="muted">Kurzbeschreibung. Läuft auf <span class="code">https://beispiel.de/*</span>. Rechte: <span class="code">GM_xmlhttpRequest</span>.</p>
-          <p><a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-xyz.user.js">Tool installieren</a></p>
-          <p class="muted">Direktlink: <a class="ext" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-xyz.user.js">.../tool-xyz.user.js</a></p>
-        </div>
-      </article>
-      -->
-
+      <div id="toolsList"><div class="muted">Lade Tools…</div></div>
+      <div id="toolsError" class="error" style="display:none;">
+        Konnte <span class="code">manifest.json</span> nicht laden. Bitte neu laden oder später erneut versuchen.
+      </div>
     </section>
 
-    <!-- RIGHT: INSTRUCTIONS -->
+    <!-- RECHTS: ANLEITUNG -->
     <aside class="panel steps" aria-labelledby="inst-head">
       <h2 id="inst-head">Grundprogramm installieren</h2>
       <ol>
@@ -120,15 +84,79 @@
   </main>
 
   <script>
-    // Accordion für Tools
-    document.querySelectorAll('.tool').forEach(function(card){
-      const header = card.querySelector('.tool-header');
+    // Manifest laden und Tools rendern
+    async function loadManifest() {
+      const list = document.getElementById('toolsList');
+      const err  = document.getElementById('toolsError');
+      try {
+        const res = await fetch('./manifest.json?v=' + Date.now()); // Cache-Busting
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const manifest = await res.json();
+        if (!manifest.tools || !manifest.tools.length) {
+          list.innerHTML = '<div class="muted">Keine Tools in der Manifest-Datei gefunden.</div>';
+          return;
+        }
+        list.innerHTML = '';
+        manifest.tools.forEach(tool => list.appendChild(renderTool(tool)));
+      } catch (e) {
+        console.error('Manifest laden fehlgeschlagen', e);
+        err.style.display = 'block';
+      }
+    }
+
+    function renderTool(t) {
+      const art = document.createElement('article');
+      art.className = 'tool';
+      art.setAttribute('aria-expanded', 'false');
+
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'tool-header';
+      header.setAttribute('aria-controls', 't-' + (t.id || t.name).toLowerCase());
+      header.innerHTML =
+        '<div>' + escapeHtml(t.name || t.id) +
+        (t.version ? ' <span class="meta">v' + escapeHtml(t.version) + '</span>' : '') +
+        '</div><div class="chev">▶</div>';
+
+      const body = document.createElement('div');
+      body.className = 'tool-body';
+      body.id = 't-' + (t.id || t.name).toLowerCase();
+
+      const matches = Array.isArray(t.match) ? t.match : (t.match ? [t.match] : []);
+      const grants  = Array.isArray(t.grants) ? t.grants : (t.grants ? [t.grants] : ['none']);
+
+      const desc = document.createElement('p');
+      desc.className = 'muted';
+      const matchTxt = matches.length ? matches.map(escapeHtml).join(', ') : '*://*/*';
+      const grantTxt = grants.length ? grants.map(escapeHtml).join(', ') : 'none';
+      desc.innerHTML =
+        escapeHtml(t.description || 'Kein Beschreibungstext hinterlegt.') + '<br/>' +
+        'Läuft auf <span class="code">' + matchTxt + '</span>. ' +
+        'Rechte: <span class="code">' + grantTxt + '</span>.';
+
+      const installP = document.createElement('p');
+      installP.innerHTML = '<a class="btn" href="' + encodeURI(t.url) + '">Tool installieren</a>';
+
+      const linkP = document.createElement('p');
+      linkP.className = 'muted';
+      linkP.innerHTML = 'Direktlink (.user.js):<br/><a class="ext" href="' + encodeURI(t.url) + '">' + escapeHtml(t.url) + '</a>';
+
       header.addEventListener('click', function(){
-        const open = card.getAttribute('aria-expanded') === 'true';
-        // nur dieses auf/zu, andere bleiben wie sie sind – bei Bedarf auf "Akkordeon" umbauen
-        card.setAttribute('aria-expanded', open ? 'false' : 'true');
+        const open = art.getAttribute('aria-expanded') === 'true';
+        art.setAttribute('aria-expanded', open ? 'false' : 'true');
       });
-    });
+
+      body.appendChild(desc);
+      body.appendChild(installP);
+      body.appendChild(linkP);
+      art.appendChild(header);
+      art.appendChild(body);
+      return art;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
 
     // Schritt 2: edge://extensions – Copy-Fallback
     (function(){
@@ -137,11 +165,9 @@
       const msg  = document.getElementById('copiedMsg');
 
       link.addEventListener('click', async function(){
-        // Versuchen zu öffnen; viele Browser blocken das – parallel kopieren
         try { window.open(url, '_blank'); } catch(_) {}
-        try {
-          await navigator.clipboard.writeText(url);
-        } catch {
+        try { await navigator.clipboard.writeText(url); }
+        catch {
           const ta = document.createElement('textarea');
           ta.value = url; document.body.appendChild(ta); ta.select();
           document.execCommand('copy'); document.body.removeChild(ta);
@@ -149,6 +175,8 @@
         msg.style.display = 'block';
       }, false);
     })();
+
+    loadManifest();
   </script>
 </body>
 </html>
