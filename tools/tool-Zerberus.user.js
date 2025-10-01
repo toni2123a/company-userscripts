@@ -2,7 +2,7 @@
 // @name         Zerberus → DPD360  
 // @namespace    https://dpd.de/
 // @version      1.3c
-// @description  Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an
+// @description  Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an. Eimalige Anmeldung (Tag) in dpd360 erforderlich
 // @author       Thiemo Schöler
 // @match        https://zerberus-dpd-02.csf.blujaysolutions.net/*
 // @grant        GM_xmlhttpRequest
