@@ -8,13 +8,14 @@
     body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
     img.logo { max-width: 200px; margin-bottom: 2rem; height: auto; }
     h1 { margin: 0 0 1.5rem; }
-    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; }
+    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; cursor:pointer; }
     .btn:hover { background:#004099; }
     .note { color:#444; font-size:.95rem; margin-top:.5rem; }
     ul { list-style:none; padding:0; margin:1rem auto 0; max-width:520px; }
     li { margin:1rem 0; }
     .step { font-size:.95rem; color:#222; margin:1.5rem 0 .5rem; }
     .hint { font-size:.9rem; color:#333; margin-top:.25rem; }
+    .ok { color:#0a7c2f; font-weight:600; margin-top:.4rem; display:none; }
     code { background:#f3f3f3; padding:0 .25rem; border-radius:4px; }
   </style>
 </head>
@@ -33,15 +34,18 @@
   </p>
   <p class="note">Nach der Installation Edge ggf. kurz neu starten.</p>
 
-  <!-- Schritt 2: Entwicklermodus einschalten (ein Link) -->
+  <!-- Schritt 2: Entwicklermodus einschalten (ein Link mit Fallback) -->
   <p class="step"><strong>Schritt 2:</strong> Entwicklermodus einschalten</p>
   <p>
-    <a class="btn" href="edge://extensions" target="_blank" rel="noopener">Edge-Erweiterungen öffnen (edge://extensions)</a>
+    <a class="btn" id="devLink" href="edge://extensions" target="_blank" rel="noopener">
+      Edge-Erweiterungen öffnen (edge://extensions)
+    </a>
   </p>
   <p class="hint">
     Den Schalter <strong>„Entwicklermodus“</strong> findest du <strong>links mittig</strong> auf der Seite <code>edge://extensions</code>.
-    Falls der Link im Browser nicht öffnet: Adresse <code>edge://extensions</code> manuell in die Adresszeile kopieren.
+    Wenn der Link nicht öffnet, wurde die Adresse in die Zwischenablage kopiert – füge sie in die Adresszeile ein.
   </p>
+  <div id="copied" class="ok" aria-live="polite">Link kopiert. Öffne einen neuen Tab und füge <code>edge://extensions</code> in die Adresszeile ein.</div>
 
   <!-- Schritt 3: einzelne Tools installieren -->
   <p class="step"><strong>Schritt 3:</strong> gewünschte Tools einzeln installieren</p>
@@ -53,5 +57,29 @@
     </li>
     <!-- weitere Tools hier ergänzen -->
   </ul>
+
+  <script>
+    (function(){
+      const url = 'edge://extensions';
+      const link = document.getElementById('devLink');
+      const msg  = document.getElementById('copied');
+
+      link.addEventListener('click', async function(e){
+        // Versuche den Direktaufruf (wird i.d.R. blockiert, aber schadet nicht)
+        try { window.open(url, '_blank'); } catch(_) {}
+        // Immer: URL in die Zwischenablage kopieren und Hinweis anzeigen
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          // Fallback für sehr strenge Umgebungen
+          const ta = document.createElement('textarea');
+          ta.value = url; document.body.appendChild(ta); ta.select();
+          document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        msg.style.display = 'block';
+        // Wir verhindern NICHT die Standardaktion – falls der Browser es doch zulässt, öffnet er die Seite.
+      }, false);
+    })();
+  </script>
 </body>
 </html>
