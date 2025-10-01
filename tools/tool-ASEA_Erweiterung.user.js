@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         🚀 Optimierte Barcode- & Google-Links
+// @name         ASEA 🚀 Optimierte Barcode- & Google-Links
 // @namespace    http://tampermonkey.net/
 // @version      5.1
 // @description  Fügt Barcode-, Google Maps- & Google Search-Spalten hinzu (schneller & stabiler)
