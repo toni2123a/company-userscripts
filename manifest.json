@@ -3,7 +3,7 @@
     {
       "id": "tool-ssw-letzter08",
       "name": "ASEA inkl. letzter Lagerscan (mit Standort-Setting)",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-SSW-letzter08.user.js",
       "match": [
         "https://toni2123a.github.io/company-userscripts/*",
@@ -15,7 +15,7 @@
         "GM_addStyle",
         "GM_xmlhttpRequest"
       ],
-      "description": "Zeigt den letzten Eintrag aus den Scanserver-Daten. Standortnummer wird auf der Katalog-Seite gespeichert und im GM-Storage gespiegelt."
+      "description": "Zeigt den letzten Eintrag aus den Scanserver-Daten. Standortnummer wird auf der Katalog-Seite gespeichert (GM-Storage + localStorage) und auf DPD-Seiten genutzt."
     },
     {
       "id": "tool-openpricer",
