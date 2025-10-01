@@ -2,7 +2,7 @@
   "tools": [
     {
       "id": "tool-openpricer",
-      "name": "OpenPricer: Abholdepot (OPS/requirements)",
+      "name": "OpenPricer: Abholdepot hinzufügen",
       "version": "2.2.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-OpenPricer.user.js",
       "match": [
