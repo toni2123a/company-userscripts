@@ -1,6 +1,6 @@
 // build-manifest.js
 // Liest Header aus tools/*.user.js und erzeugt manifest.json
-// Unterstützt mehrere @match/@include und mehrere @grant
+// Unterstützt mehrere @match/@include & mehrere @grant
 
 const fs = require('fs');
 const path = require('path');
@@ -26,7 +26,6 @@ function parseHeader(str) {
       meta[key] = val;
     }
   });
-  // Fallbacks
   if (!meta.matches.length) meta.matches = ['*://*/*'];
   if (!meta.grants.length) meta.grants = ['none'];
   return meta;
@@ -39,15 +38,14 @@ function main() {
     const p = path.join(TOOLS_DIR, f);
     const txt = fs.readFileSync(p, 'utf8');
     const meta = parseHeader(txt);
-    const id = (path.basename(f, '.user.js') || (meta.name || 'tool'))
-      .toLowerCase().replace(/\s+/g,'-');
+    const id = (path.basename(f, '.user.js') || (meta.name || 'tool')).toLowerCase().replace(/\s+/g,'-');
     return {
       id,
       name: meta.name || id,
       version: meta.version || '0.0.0',
       url: RAW_PREFIX + encodeURIComponent(f),
-      match: meta.matches,                  // Array
-      grants: meta.grants,                  // Array
+      match: meta.matches,         // Array
+      grants: meta.grants,         // Array
       description: meta.description || ''
     };
   }).sort((a,b)=> a.name.localeCompare(b.name,'de'));
