@@ -1,6 +1,19 @@
 {
   "tools": [
     {
+      "id": "tool-asea_erweiterung",
+      "name": "🚀 Optimierte Barcode- & Google-Links",
+      "version": "5.1",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEA_Erweiterung.user.js",
+      "match": [
+        "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/report_inbound_ofd\\.cgi.*$/"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Fügt Barcode-, Google Maps- & Google Search-Spalten hinzu (schneller & stabiler)"
+    },
+    {
       "id": "tool-ssw-letzter08",
       "name": "ASEA incl. letzter Lagerscan",
       "version": "1.4.4",
