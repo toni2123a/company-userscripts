@@ -8,16 +8,14 @@
     body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
     img.logo { max-width: 200px; margin-bottom: 2rem; height: auto; }
     h1 { margin: 0 0 1.5rem; }
-    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; cursor:pointer; }
+    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; }
     .btn:hover { background:#004099; }
-    .btn.secondary { background:#666; }
-    .btn.secondary:hover { background:#555; }
     .note { color:#444; font-size:.95rem; margin-top:.5rem; }
     ul { list-style:none; padding:0; margin:1rem auto 0; max-width:520px; }
     li { margin:1rem 0; }
     .step { font-size:.95rem; color:#222; margin:1.5rem 0 .5rem; }
-    .tips { font-size:.9rem; color:#333; margin-top:.5rem; }
-    .hidden { display:none; }
+    .hint { font-size:.9rem; color:#333; margin-top:.25rem; }
+    code { background:#f3f3f3; padding:0 .25rem; border-radius:4px; }
   </style>
 </head>
 <body>
@@ -35,21 +33,15 @@
   </p>
   <p class="note">Nach der Installation Edge ggf. kurz neu starten.</p>
 
-  <!-- Schritt 2: Entwicklermodus einschalten -->
+  <!-- Schritt 2: Entwicklermodus einschalten (ein Link) -->
   <p class="step"><strong>Schritt 2:</strong> Entwicklermodus einschalten</p>
   <p>
-    <a class="btn" id="openDevMode" href="edge://extensions" target="_blank" rel="noopener">Edge-Erweiterungen öffnen</a>
-    <button class="btn secondary" id="copyDevUrl" type="button">edge://extensions kopieren</button>
+    <a class="btn" href="edge://extensions" target="_blank" rel="noopener">Edge-Erweiterungen öffnen (edge://extensions)</a>
   </p>
-  <div class="tips" id="devHelp" aria-live="polite">
-    Falls sich die Seite nicht öffnet:
-    <ol style="text-align:left; display:inline-block; margin:.5rem 0 0; padding-left:1.2rem;">
-      <li>Adresse <code>edge://extensions</code> in die Adresszeile einfügen.</li>
-      <li>Oben rechts den Schalter <strong>„Entwicklermodus“</strong> einschalten.</li>
-      <li>Diese Seite neu laden.</li>
-    </ol>
-    <div id="copiedMsg" class="hidden" style="margin-top:.5rem; color:#0a7c2f; font-weight:600;">Link kopiert. Füge ihn in die Adresszeile ein und bestätige.</div>
-  </div>
+  <p class="hint">
+    Den Schalter <strong>„Entwicklermodus“</strong> findest du <strong>links mittig</strong> auf der Seite <code>edge://extensions</code>.
+    Falls der Link im Browser nicht öffnet: Adresse <code>edge://extensions</code> manuell in die Adresszeile kopieren.
+  </p>
 
   <!-- Schritt 3: einzelne Tools installieren -->
   <p class="step"><strong>Schritt 3:</strong> gewünschte Tools einzeln installieren</p>
@@ -61,34 +53,5 @@
     </li>
     <!-- weitere Tools hier ergänzen -->
   </ul>
-
-  <script>
-    // Versucht edge://extensions zu öffnen; wenn geblockt, zeigen wir Hilfetext
-    document.getElementById('openDevMode').addEventListener('click', function() {
-      // Einige Browser blocken chrome:// / edge:// Navigation aus http(s) – kein verlässlicher Workaround möglich.
-      // Wir lassen den Link laufen; Fallback erfolgt über Copy-Button und Hinweise.
-      setTimeout(function(){
-        // Nach kurzem Delay zeigen wir vorsorglich den Hinweis (falls Tab/Seite nicht gewechselt hat).
-        document.getElementById('devHelp').classList.remove('hidden');
-      }, 500);
-    });
-
-    // Kopiert die URL edge://extensions in die Zwischenablage
-    document.getElementById('copyDevUrl').addEventListener('click', async function() {
-      try {
-        await navigator.clipboard.writeText('edge://extensions');
-        document.getElementById('copiedMsg').classList.remove('hidden');
-      } catch (e) {
-        // Fallback: Eingabefeld temporär erzeugen
-        const ta = document.createElement('textarea');
-        ta.value = 'edge://extensions';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        document.getElementById('copiedMsg').classList.remove('hidden');
-      }
-    });
-  </script>
 </body>
 </html>
