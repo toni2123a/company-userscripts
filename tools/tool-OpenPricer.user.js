@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         OpenPricer: Abholdepot (OPS/requirements)
+// @name         OpenPricer: Abholdepot hinzufügen
 // @namespace    dpd-openpricer
 // @version      2.2.0
 // @description  Spalte "Abholdepot" in /app/rfq/list. Liest aus /app/rfq/<ID>/requirements (#agency). Mit Cache & Queue.
