@@ -2,7 +2,7 @@
 // @name         OpenPricer: Abholdepot hinzufügen
 // @namespace    dpd-openpricer
 // @version      2.2.0
-// @description  Spalte "Abholdepot" in /app/rfq/list. Liest aus /app/rfq/<ID>/requirements (#agency). Mit Cache & Queue.
+// @description  Fügt eine Spalte "Abholdepot" in der Übersicht hinzu 
 // @match        https://dpdde.openpricer.com/app/rfq/list*
 // @run-at       document-idle
 // @grant        none
