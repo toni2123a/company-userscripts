@@ -38,14 +38,7 @@
     .callout { background:#f6fff6; border:1px solid #d9f0d9; color:#0a7c2f; padding:.6rem .8rem; border-radius:8px; display:none; margin-top:.5rem; font-weight:600; }
     a.ext { word-break: break-all; }
 
-    /* … dein vorhandenes CSS … */
-  .cfg-card{border:1px solid #e6e6e6;border-radius:10px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.06);padding:1rem;margin:0 0 1rem}
-  .cfg-card h3{margin:.25rem 0 1rem;font-size:1.05rem}
-  .cfg-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-  .cfg-input{padding:.55rem .7rem;border:1px solid #cfd6e4;border-radius:8px;font-size:1rem;min-width:120px}
-  .cfg-btn{padding:.6rem 1rem;border-radius:8px;background:#005bbb;color:#fff;font-weight:700;border:none;cursor:pointer}
-  .cfg-btn:hover{background:#004099}
-  .cfg-ok{margin-top:.5rem;font-weight:600}
+  
   </style>
 </head>
 <body>
@@ -59,14 +52,7 @@
     <section class="panel" aria-labelledby="tools-head">
       <h2 id="tools-head">Tools</h2>
       <!-- … im linken Panel, direkt über <div id="toolsList"> … -->
-<div class="cfg-card" id="aseaCfgCard">
-  <h3>Standortnummer festlegen</h3>
-  <div class="cfg-row">
-    <input class="cfg-input" id="aseaNum" type="text" maxlength="4" placeholder="z. B. 0157">
-    <button class="cfg-btn" id="aseaSave" type="button">Speichern</button>
-  </div>
-  <div class="cfg-ok" id="aseaMsg" aria-live="polite"></div>
-</div>
+
 
       <div id="toolsList"><div class="muted">Lade Tools…</div></div>
       <div id="toolsError" class="error" style="display:none;">
@@ -192,28 +178,8 @@
       }, false);
     })();
 
-    <!-- … im <script>-Bereich der index.html ergänzen (am Ende ist ok) -->
+ 
 
-  (function(){
-    const KEY = 'asea_standort';
-    const inp = document.getElementById('aseaNum');
-    const btn = document.getElementById('aseaSave');
-    const msg = document.getElementById('aseaMsg');
-
-    try { inp.value = localStorage.getItem(KEY) || ''; } catch(_) {}
-
-    btn.addEventListener('click', function(){
-      const v = (inp.value || '').trim();
-      if (!/^\d{4}$/.test(v)) {
-        msg.textContent = 'Bitte 4-stellige Standortnummer eingeben.';
-        msg.style.color = '#8a1c1c';
-        return;
-      }
-      try { localStorage.setItem(KEY, v); } catch(_) {}
-      msg.textContent = 'Gespeichert: ' + v;
-      msg.style.color = '#0a7c2f';
-    });
-  })();
 
 
     loadManifest();
