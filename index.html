@@ -5,79 +5,148 @@
   <title>Company Userscripts</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 2rem; }
-    img.logo { max-width: 200px; margin-bottom: 2rem; height: auto; }
-    h1 { margin: 0 0 1.5rem; }
-    .btn { display:inline-block; padding:.75rem 1.25rem; border-radius:8px; background:#005bbb; color:#fff; text-decoration:none; font-weight:700; cursor:pointer; }
-    .btn:hover { background:#004099; }
-    .note { color:#444; font-size:.95rem; margin-top:.5rem; }
-    ul { list-style:none; padding:0; margin:1rem auto 0; max-width:520px; }
-    li { margin:1rem 0; }
-    .step { font-size:.95rem; color:#222; margin:1.5rem 0 .5rem; }
-    .hint { font-size:.9rem; color:#333; margin-top:.25rem; }
-    .ok { color:#0a7c2f; font-weight:600; margin-top:.4rem; display:none; }
-    code { background:#f3f3f3; padding:0 .25rem; border-radius:4px; }
+    :root { --brand:#005bbb; --brand-hover:#004099; --text:#222; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Arial, sans-serif; color:var(--text); background:#fafafa; }
+    header { text-align:center; padding:2rem 1rem 1rem; }
+    header img { max-width:200px; height:auto; }
+    header h1 { margin:1rem 0 0; font-size:1.4rem; }
+    .page { display:grid; grid-template-columns: 1.1fr 1fr; gap:1.25rem; padding:1rem 1.25rem 2rem; max-width:1200px; margin:0 auto; }
+    @media (max-width: 900px) {
+      .page { grid-template-columns: 1fr; }
+    }
+    /* left column = tools */
+    .panel { background:#fff; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.06); padding:1rem; }
+    .panel h2 { margin:.25rem 0 1rem; font-size:1.1rem; }
+    .tool { border:1px solid #e6e6e6; border-radius:10px; margin:.75rem 0; overflow:hidden; background:#fff; }
+    .tool-header { width:100%; text-align:left; border:none; background:#f6f7fb; padding:.9rem 1rem; cursor:pointer; display:flex; align-items:center; justify-content:space-between; font-weight:700; }
+    .tool-header:hover { background:#eef1f9; }
+    .tool-header span.meta { font-weight:400; font-size:.9rem; color:#555; margin-left:.75rem; }
+    .chev { transition: transform .2s ease; }
+    .tool[aria-expanded="true"] .chev { transform: rotate(90deg); }
+    .tool-body { display:none; padding:1rem; border-top:1px solid #e6e6e6; }
+    .tool[aria-expanded="true"] .tool-body { display:block; }
+    .btn { display:inline-block; padding:.7rem 1.1rem; border-radius:8px; background:var(--brand); color:#fff; text-decoration:none; font-weight:700; }
+    .btn:hover { background:var(--brand-hover); }
+    .muted { color:#555; font-size:.93rem; }
+    .code { background:#f3f3f3; padding:.15rem .35rem; border-radius:4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+    /* right column = instructions */
+    .steps ol { margin:.25rem 0 0 1.2rem; padding:0; }
+    .steps li { margin:.75rem 0; }
+    .callout { background:#f6fff6; border:1px solid #d9f0d9; color:#0a7c2f; padding:.6rem .8rem; border-radius:8px; display:none; margin-top:.5rem; font-weight:600; }
+    a.ext { word-break: break-all; }
   </style>
 </head>
 <body>
-  <!-- Firmenlogo aus dem Repo -->
-  <img class="logo" src="./dpd.png" alt="DPD Firmenlogo" />
+  <header>
+    <img src="./dpd.png" alt="Firmenlogo" />
+    <h1>Company Userscripts</h1>
+  </header>
 
-  <h1>Company Userscripts</h1>
+  <main class="page">
+    <!-- LEFT: TOOLS -->
+    <section class="panel" aria-labelledby="tools-head">
+      <h2 id="tools-head">Tools</h2>
 
-  <!-- Schritt 1: Tampermonkey installieren -->
-  <p class="step"><strong>Schritt 1:</strong> Tampermonkey im Microsoft Edge installieren</p>
-  <p>
-    <a class="btn" href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener">
-      Tampermonkey im Edge-Store öffnen
-    </a>
-  </p>
-  <p class="note">Nach der Installation Edge ggf. kurz neu starten.</p>
+      <!-- Tool: DPD -->
+      <article class="tool" aria-expanded="false">
+        <button class="tool-header" type="button" aria-controls="t-dpd">
+          <div>Tool DPD <span class="meta">v1.0.0</span></div>
+          <div class="chev">▶</div>
+        </button>
+        <div class="tool-body" id="t-dpd">
+          <p class="muted">
+            Kleines Test-Tool für DPD. Läuft auf <span class="code">*://*/*</span>.<br/>
+            Rechte: <span class="code">none</span>.
+          </p>
+          <p>
+            <a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">
+              Tool installieren
+            </a>
+          </p>
+          <p class="muted">
+            Direktlink (.user.js):<br/>
+            <a class="ext" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">
+              https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js
+            </a>
+          </p>
+        </div>
+      </article>
 
-  <!-- Schritt 2: Entwicklermodus einschalten (ein Link mit Fallback) -->
-  <p class="step"><strong>Schritt 2:</strong> Entwicklermodus einschalten</p>
-  <p>
-    <a class="btn" id="devLink" href="edge://extensions" target="_blank" rel="noopener">
-      Edge-Erweiterungen öffnen (edge://extensions)
-    </a>
-  </p>
-  <p class="hint">
-    Den Schalter <strong>„Entwicklermodus“</strong> findest du <strong>links mittig</strong> auf der Seite <code>edge://extensions</code>.
-    Wenn der Link nicht öffnet, wurde die Adresse in die Zwischenablage kopiert – füge sie in die Adresszeile ein.
-  </p>
-  <div id="copied" class="ok" aria-live="polite">Link kopiert. Öffne einen neuen Tab und füge <code>edge://extensions</code> in die Adresszeile ein.</div>
+      <!-- Weitere Tools: Kopiere diesen Block und passe Namen/Version/Links an -->
+      <!--
+      <article class="tool" aria-expanded="false">
+        <button class="tool-header" type="button" aria-controls="t-xyz">
+          <div>Tool XYZ <span class="meta">v1.2.3</span></div>
+          <div class="chev">▶</div>
+        </button>
+        <div class="tool-body" id="t-xyz">
+          <p class="muted">Kurzbeschreibung. Läuft auf <span class="code">https://beispiel.de/*</span>. Rechte: <span class="code">GM_xmlhttpRequest</span>.</p>
+          <p><a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-xyz.user.js">Tool installieren</a></p>
+          <p class="muted">Direktlink: <a class="ext" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-xyz.user.js">.../tool-xyz.user.js</a></p>
+        </div>
+      </article>
+      -->
 
-  <!-- Schritt 3: einzelne Tools installieren -->
-  <p class="step"><strong>Schritt 3:</strong> gewünschte Tools einzeln installieren</p>
-  <ul>
-    <li>
-      <a class="btn" href="https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dpd.user.js">
-        Installiere Tool DPD
-      </a>
-    </li>
-    <!-- weitere Tools hier ergänzen -->
-  </ul>
+    </section>
+
+    <!-- RIGHT: INSTRUCTIONS -->
+    <aside class="panel steps" aria-labelledby="inst-head">
+      <h2 id="inst-head">Grundprogramm installieren</h2>
+      <ol>
+        <li>
+          <strong>Tampermonkey installieren</strong><br/>
+          <a class="btn" href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener">
+            Edge-Store öffnen
+          </a>
+          <div class="muted" style="margin-top:.35rem;">Nach der Installation Edge ggf. neu starten.</div>
+        </li>
+        <li>
+          <strong>Entwicklermodus einschalten</strong><br/>
+          <a class="btn" id="devLink" href="edge://extensions" target="_blank" rel="noopener">edge://extensions öffnen</a>
+          <div class="muted" style="margin-top:.35rem;">
+            Den Schalter <b>„Entwicklermodus“</b> findest du <b>links mittig</b> auf <span class="code">edge://extensions</span>.<br/>
+            Wenn der Link nicht öffnet, wird die Adresse automatisch in die Zwischenablage kopiert.
+          </div>
+          <div id="copiedMsg" class="callout" aria-live="polite">Link kopiert. Öffne einen neuen Tab und füge <span class="code">edge://extensions</span> ein.</div>
+        </li>
+        <li>
+          <strong>Tool auswählen & installieren</strong><br/>
+          Links ein Tool aufklappen und auf <b>„Tool installieren“</b> klicken. Tampermonkey zeigt den Install-Dialog.
+        </li>
+      </ol>
+    </aside>
+  </main>
 
   <script>
+    // Accordion für Tools
+    document.querySelectorAll('.tool').forEach(function(card){
+      const header = card.querySelector('.tool-header');
+      header.addEventListener('click', function(){
+        const open = card.getAttribute('aria-expanded') === 'true';
+        // nur dieses auf/zu, andere bleiben wie sie sind – bei Bedarf auf "Akkordeon" umbauen
+        card.setAttribute('aria-expanded', open ? 'false' : 'true');
+      });
+    });
+
+    // Schritt 2: edge://extensions – Copy-Fallback
     (function(){
       const url = 'edge://extensions';
       const link = document.getElementById('devLink');
-      const msg  = document.getElementById('copied');
+      const msg  = document.getElementById('copiedMsg');
 
-      link.addEventListener('click', async function(e){
-        // Versuche den Direktaufruf (wird i.d.R. blockiert, aber schadet nicht)
+      link.addEventListener('click', async function(){
+        // Versuchen zu öffnen; viele Browser blocken das – parallel kopieren
         try { window.open(url, '_blank'); } catch(_) {}
-        // Immer: URL in die Zwischenablage kopieren und Hinweis anzeigen
         try {
           await navigator.clipboard.writeText(url);
         } catch {
-          // Fallback für sehr strenge Umgebungen
           const ta = document.createElement('textarea');
           ta.value = url; document.body.appendChild(ta); ta.select();
           document.execCommand('copy'); document.body.removeChild(ta);
         }
         msg.style.display = 'block';
-        // Wir verhindern NICHT die Standardaktion – falls der Browser es doch zulässt, öffnet er die Seite.
       }, false);
     })();
   </script>
