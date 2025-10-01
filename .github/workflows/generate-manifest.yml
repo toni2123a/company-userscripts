@@ -11,7 +11,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write   # erlaubt Commit zurück ins Repo
+  contents: write
 
 jobs:
   build:
