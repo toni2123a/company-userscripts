@@ -37,7 +37,7 @@
       "grants": [
         "none"
       ],
-      "description": "Spalte \"Abholdepot\" in /app/rfq/list. Liest aus /app/rfq/<ID>/requirements (#agency). Mit Cache & Queue."
+      "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu"
     },
     {
       "id": "tool-zerberus",
