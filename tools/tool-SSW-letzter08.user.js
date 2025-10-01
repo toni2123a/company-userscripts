@@ -63,7 +63,6 @@
       console.warn('[ASEA] Hinweis: Bitte @include auf', expected, 'anpassen, damit der feste Standort ' + preset + ' geladen wird.');
     }
   }
-
   function getPreset() {
     const preset = String(CONFIG.presetStandort || '').trim();
     return /^\d{4}$/.test(preset) ? preset : '';
