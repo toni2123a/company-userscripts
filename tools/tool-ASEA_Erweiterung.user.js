@@ -2,7 +2,7 @@
 // @name         ASEA 🚀 Optimierte Barcode- & Google-Links
 // @namespace    http://tampermonkey.net/
 // @version      5.1
-// @description  Fügt Barcode-, Google Maps- & Google Search-Spalten hinzu (schneller & stabiler)
+// @description  Scanserver ASEA Erweiterung. Fügt Barcode-, Google Maps- & Google Search-Spalten hinzu (schneller & stabiler)
 // @author       Thiemo Schöler
 // Läuft auf allen Standorten (z. B. 0157, 0160, ...):
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
