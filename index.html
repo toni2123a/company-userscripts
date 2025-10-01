@@ -104,55 +104,52 @@
       }
     }
 
-    function renderTool(t) {
-      const art = document.createElement('article');
-      art.className = 'tool';
-      art.setAttribute('aria-expanded', 'false');
+  function renderTool(t) {
+    const art = document.createElement('article');
+    art.className = 'tool';
+    art.setAttribute('aria-expanded', 'false');
 
-      const header = document.createElement('button');
-      header.type = 'button';
-      header.className = 'tool-header';
-      header.setAttribute('aria-controls', 't-' + (t.id || t.name).toLowerCase());
-      header.innerHTML =
-        '<div>' + escapeHtml(t.name || t.id) +
-        (t.version ? ' <span class="meta">v' + escapeHtml(t.version) + '</span>' : '') +
-        '</div><div class="chev">▶</div>';
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.className = 'tool-header';
+    header.setAttribute('aria-controls', 't-' + (t.id || t.name).toLowerCase());
+    header.innerHTML =
+      '<div>' + escapeHtml(t.name || t.id) +
+      (t.version ? ' <span class="meta">v' + escapeHtml(t.version) + '</span>' : '') +
+      '</div><div class="chev">▶</div>';
 
-      const body = document.createElement('div');
-      body.className = 'tool-body';
-      body.id = 't-' + (t.id || t.name).toLowerCase();
+    const body = document.createElement('div');
+    body.className = 'tool-body';
+    body.id = 't-' + (t.id || t.name).toLowerCase();
 
-      const matches = Array.isArray(t.match) ? t.match : (t.match ? [t.match] : []);
-      const grants  = Array.isArray(t.grants) ? t.grants : (t.grants ? [t.grants] : ['none']);
+    const matches = Array.isArray(t.match) ? t.match : (t.match ? [t.match] : []);
+    const grants  = Array.isArray(t.grants) ? t.grants : (t.grants ? [t.grants] : ['none']);
 
-      const desc = document.createElement('p');
-      desc.className = 'muted';
-      const matchTxt = matches.length ? matches.map(escapeHtml).join(', ') : '*://*/*';
-      const grantTxt = grants.length ? grants.map(escapeHtml).join(', ') : 'none';
-      desc.innerHTML =
-        escapeHtml(t.description || 'Kein Beschreibungstext hinterlegt.') + '<br/>' +
-        'Läuft auf <span class="code">' + matchTxt + '</span>. ' +
-        'Rechte: <span class="code">' + grantTxt + '</span>.';
+    const desc = document.createElement('p');
+    desc.className = 'muted';
+    const matchTxt = matches.length ? matches.map(escapeHtml).join(', ') : '*://*/*';
+    const grantTxt = grants.length ? grants.map(escapeHtml).join(', ') : 'none';
+    desc.innerHTML =
+      escapeHtml(t.description || 'Kein Beschreibungstext hinterlegt.') + '<br/>' +
+      'Läuft auf <span class="code">' + matchTxt + '</span>. ' +
+      'Rechte: <span class="code">' + grantTxt + '</span>.';
 
-      const installP = document.createElement('p');
-      installP.innerHTML = '<a class="btn" href="' + encodeURI(t.url) + '">Tool installieren</a>';
+    const installP = document.createElement('p');
+    installP.innerHTML = '<a class="btn" href="' + encodeURI(t.url) + '">Tool installieren</a>';
 
-      const linkP = document.createElement('p');
-      linkP.className = 'muted';
-      linkP.innerHTML = 'Direktlink (.user.js):<br/><a class="ext" href="' + encodeURI(t.url) + '">' + escapeHtml(t.url) + '</a>';
+    header.addEventListener('click', function(){
+      const open = art.getAttribute('aria-expanded') === 'true';
+      art.setAttribute('aria-expanded', open ? 'false' : 'true');
+    });
 
-      header.addEventListener('click', function(){
-        const open = art.getAttribute('aria-expanded') === 'true';
-        art.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
+    body.appendChild(desc);
+    body.appendChild(installP);
+    art.appendChild(header);
+    art.appendChild(body);
+    return art;
+  }
 
-      body.appendChild(desc);
-      body.appendChild(installP);
-      body.appendChild(linkP);
-      art.appendChild(header);
-      art.appendChild(body);
-      return art;
-    }
+
 
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
