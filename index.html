@@ -58,6 +58,16 @@
     <!-- LINKS: TOOL-LISTE -->
     <section class="panel" aria-labelledby="tools-head">
       <h2 id="tools-head">Tools</h2>
+      <!-- … im linken Panel, direkt über <div id="toolsList"> … -->
+<div class="cfg-card" id="aseaCfgCard">
+  <h3>Standortnummer festlegen</h3>
+  <div class="cfg-row">
+    <input class="cfg-input" id="aseaNum" type="text" maxlength="4" placeholder="z. B. 0157">
+    <button class="cfg-btn" id="aseaSave" type="button">Speichern</button>
+  </div>
+  <div class="cfg-ok" id="aseaMsg" aria-live="polite"></div>
+</div>
+
       <div id="toolsList"><div class="muted">Lade Tools…</div></div>
       <div id="toolsError" class="error" style="display:none;">
         Konnte <span class="code">manifest.json</span> nicht laden. Bitte neu laden oder später erneut versuchen.
@@ -182,7 +192,32 @@
       }, false);
     })();
 
+    <!-- … im <script>-Bereich der index.html ergänzen (am Ende ist ok) -->
+
+  (function(){
+    const KEY = 'asea_standort';
+    const inp = document.getElementById('aseaNum');
+    const btn = document.getElementById('aseaSave');
+    const msg = document.getElementById('aseaMsg');
+
+    try { inp.value = localStorage.getItem(KEY) || ''; } catch(_) {}
+
+    btn.addEventListener('click', function(){
+      const v = (inp.value || '').trim();
+      if (!/^\d{4}$/.test(v)) {
+        msg.textContent = 'Bitte 4-stellige Standortnummer eingeben.';
+        msg.style.color = '#8a1c1c';
+        return;
+      }
+      try { localStorage.setItem(KEY, v); } catch(_) {}
+      msg.textContent = 'Gespeichert: ' + v;
+      msg.style.color = '#0a7c2f';
+    });
+  })();
+
+
     loadManifest();
+    
   </script>
 </body>
 </html>
