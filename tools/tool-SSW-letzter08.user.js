@@ -2,7 +2,7 @@
 // @name         ASEA incl. letzter Lagerscan
 // @namespace    http://tampermonkey.net/
 // @version      1.4.4
-// @description  Zeigt den letzten Eintrag aus den Scanserver-Daten an, dynamische Hostnummer aus der URL.
+// @description  Zeigt den letzten Lagerscan aus den Scanserver-Daten an.
 // @author       Thiemo Schöler
 // Läuft auf allen passenden scanserver-d001#### Hosts:
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
