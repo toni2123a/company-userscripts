@@ -42,7 +42,7 @@
     },
     {
       "id": "tool-dipatcher2prio",
-      "name": "DPD Dispatcher – Prio Monitoring (v3.2 sort + tracking link)",
+      "name": "DPD Dispatcher – Prio Monitoring (v3.2.2)",
       "version": "3.2.2",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
       "match": [
@@ -51,7 +51,7 @@
       "grants": [
         "none"
       ],
-      "description": "Prio-Monitoring mit Auto-Refresh, Kommentar-Nachladen, selbstheilendem UI, Sortierung (kritisch oben) und Tracking-Link."
+      "description": "PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis."
     },
     {
       "id": "tool-openpricer",
