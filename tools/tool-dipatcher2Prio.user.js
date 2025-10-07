@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio Monitoring (v3.2 sort + tracking link)
 // @namespace    bodo.dpd.custom
-// @version      3.2.1
+// @version      3.2.2
 // @description  Prio-Monitoring mit Auto-Refresh, Kommentar-Nachladen, selbstheilendem UI, Sortierung (kritisch oben) und Tracking-Link.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -199,13 +199,15 @@
   // 1) mit kritischen zuerst (err desc)
   // 2) dann nach verspäteten (warn desc)
   // 3) dann nach Tournummer aufsteigend (numerisch; "—" ans Ende)
-  groups.sort((a,b)=>{
-    if (a.err !== b.err) return b.err - a.err;
-    if (a.warn !== b.warn) return b.warn - a.warn;
-    const aN = /^\d+$/.test(a.tour) ? Number(a.tour) : Number.POSITIVE_INFINITY;
-    const bN = /^\d+$/.test(b.tour) ? Number(b.tour) : Number.POSITIVE_INFINITY;
-    return aN - bN;
-  });
+  function tourNum(x){
+  return /^\d+$/.test(x) ? Number(x) : Number.POSITIVE_INFINITY;
+}
+groups.sort((a, b) => {
+  const ba = (a.err > 0) ? 0 : 1;
+  const bb = (b.err > 0) ? 0 : 1;
+  if (ba !== bb) return ba - bb;               // kritische Gruppen oben
+  return tourNum(a.tour) - tourNum(b.tour);    // Tournummer asc
+});
 
   // Einzelereignisse innerhalb jeder Gruppe: error>warn>info, dann Zeit desc
   const sortGroupItems = arr => arr.sort((a,b)=>{
