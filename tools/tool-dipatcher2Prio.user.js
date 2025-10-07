@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio Monitoring (v3.2 sort + tracking link)
 // @namespace    bodo.dpd.custom
-// @version      3.2.0
+// @version      3.2.1
 // @description  Prio-Monitoring mit Auto-Refresh, Kommentar-Nachladen, selbstheilendem UI, Sortierung (kritisch oben) und Tracking-Link.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -487,78 +487,113 @@ const delivered = r => {
   }
 
   // ------- refresh logic
-  async function refreshViaApi(){
-    const { rows, total } = await fetchAll();
+ async function refreshViaApi(){
+  const { rows, total } = await fetchAll();
 
-    let prioIn = 0, prioOpen = 0, prioDelivered = 0, prioTotal = 0;
-    const reds=[], oranges=[];
-    for(const r of rows){
-      if(!isPRIO(r)) continue;
-      prioTotal++;
-      if (delivered(r)) continue; else prioIn++;
-      if (isCritCode(r)) reds.push(r);
-      else if (isPredictOverdueNoETA(r)) oranges.push(r);
-    }
-    prioOpen = 0;
-    setKpis(prioIn, prioOpen);
-
-    state.events = [];
-    const checkedTxt = (total ? `${rows.length}/${total}` : `${rows.length}`);
-
-    for (const r of reds){
-      const ps=predictStart(r), pe=predictEnd(r);
-      const wnd = (ps&&pe) ? `${ps.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}–${pe.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}` : '';
-      addEvent({
-        title:`PRIO kritisch (Code): ${parcelId(r) || 'Sendung'}`,
-        meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zusatzcode ${addCodes(r).join(',')}${wnd?' • '+wnd:''}`,
-        sev:'error',
-        comment: commentOf(r),
-        parcel: parcelId(r)
-      });
-    }
-    for (const r of oranges){
-      const ps=predictStart(r), pe=predictEnd(r);
-      const wnd = (ps&&pe) ? `${ps.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}–${pe.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}` : 'Predict';
-      addEvent({
-        title:`PRIO verspätet (Predict): ${parcelId(r) || 'Sendung'}`,
-        meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zeitfenster überschritten • ${wnd}`,
-        sev:'warn',
-        comment: commentOf(r),
-        parcel: parcelId(r)
-      });
-    }
-    addEvent({
-      title:'Aktualisiert',
-      meta:`Rot: ${reds.length} • Orange: ${oranges.length} • Geprüft: ${checkedTxt} • PRIO: ${prioTotal} • in Zustellung: ${prioIn} • geliefert: ${prioDelivered}`,
-      sev:'info', read:true
-    });
-    render();
+  let prioIn = 0, prioOpen = 0, prioDelivered = 0, prioTotal = 0;
+  const reds=[], oranges=[];
+  for (const r of rows){
+    if(!isPRIO(r)) continue;
+    prioTotal++;
+    if (delivered(r)) { prioDelivered++; continue; } else { prioIn++; }
+    if (isCritCode(r)) reds.push(r);
+    else if (isPredictOverdueNoETA(r)) oranges.push(r);
   }
+  prioOpen = 0;
+  setKpis(prioIn, prioOpen);
+
+  const newEvents = [];
+  const push = (ev)=> newEvents.push({
+    id: ++state.nextId,
+    title: ev.title, meta: ev.meta, sev: ev.sev || 'info',
+    ts: ev.ts || Date.now(), read: !!ev.read,
+    comment: ev.comment || '', hasComment: !!(ev.comment && ev.comment.trim()),
+    parcel: ev.parcel || ''
+  });
+
+  const mkWnd = (ps,pe)=> (ps&&pe) ? `${ps.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}–${pe.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}` : '';
+
+  for (const r of reds){
+    const ps=predictStart(r), pe=predictEnd(r);
+    push({
+      title:`PRIO kritisch (Code): ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zusatzcode ${addCodes(r).join(',')}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}`,
+      sev:'error', comment: commentOf(r), parcel: parcelId(r)
+    });
+  }
+  for (const r of oranges){
+    const ps=predictStart(r), pe=predictEnd(r);
+    push({
+      title:`PRIO verspätet (Predict): ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zeitfenster überschritten • ${mkWnd(ps,pe) || 'Predict'}`,
+      sev:'warn', comment: commentOf(r), parcel: parcelId(r)
+    });
+  }
+  push({
+    title:'Aktualisiert',
+    meta:`Rot: ${reds.length} • Orange: ${oranges.length} • Geprüft: ${(total ? `${rows.length}/${total}` : `${rows.length}`)} • PRIO: ${prioTotal} • in Zustellung: ${prioIn} • geliefert: ${prioDelivered}`,
+    sev:'info', read:true
+  });
+
+  // Jetzt erst swap
+  state.events = newEvents;
+}
 
   async function fullRefresh(){
-    if(isBusy) return;
-    try{
-      isBusy = true;
-      dimButtons(true);
-      addEvent({title:'Aktualisiere (API)…', meta:'Replay aktiver Filter (pageSize=500)', sev:'info', read:true}); render();
-      await refreshViaApi();
+  if (isBusy) return;
+  try{
+    if (!lastOkRequest) {
+      addEvent({title:'Hinweis', meta:'Kein API-Request erkannt. Bitte einmal die normale Suche in der Liste ausführen, danach funktioniert Auto 60s.', sev:'info', read:true});
+      render();
+      return;
+    }
+    isBusy = true;
+    dimButtons(true);
+    addEvent({title:'Aktualisiere (API)…', meta:'Replay aktiver Filter (pageSize=500)', sev:'info', read:true}); render();
+
+    // WICHTIG: Neue Events erst in temp sammeln
+    const snapshotEvents = state.events.slice();  // Backup
+    const beforeKpis = {in: document.getElementById(NS+'kpi-in')?.textContent, open: document.getElementById(NS+'kpi-open')?.textContent};
+
+    try {
+      await refreshViaApi();          // baut neue Events in temp (siehe Patch unten)
       await fetchMissingComments();
-    }catch(e){ addEvent({title:'Fehler (API)', meta:String(e&&e.message||e), sev:'warn'}); }
-    finally{ dimButtons(false); isBusy=false; }
+    } catch (err) {
+      console.error(err);
+      // Fehlermodus: alte Liste & KPIs beibehalten
+      state.events = snapshotEvents;
+      if (beforeKpis.in)  document.getElementById(NS+'kpi-in').textContent   = beforeKpis.in;
+      if (beforeKpis.open)document.getElementById(NS+'kpi-open').textContent = beforeKpis.open;
+      addEvent({title:'Fehler (API)', meta:String(err && err.message || err), sev:'warn'});
+    }
+    render();
+
+  } finally {
+    dimButtons(false);
+    isBusy = false;
   }
+}
+
   function dimButtons(on){
     document.querySelectorAll('.'+NS+'btn-sm').forEach(b=>b.classList.toggle(NS+'dim', !!on));
   }
 
   // ------- auto refresh
   function scheduleAuto(){
-    try{
-      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-      if (!autoEnabled) return;
-      if (document.hidden) return;
-      autoTimer = setInterval(()=>{ fullRefresh().catch(()=>{}); }, 60_000);
-    }catch{}
-  }
+  try{
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    if (!autoEnabled) return;
+    if (document.hidden) return;
+    // NEU: ohne geklonte Anfrage kein Auto-Refresh
+    if (!lastOkRequest) return;
+
+    autoTimer = setInterval(()=>{
+      if (!lastOkRequest) return;   // Guard bei Laufzeit
+      fullRefresh().catch(()=>{});
+    }, 60_000);
+  }catch(e){ console.error(e); }
+}
+
   document.addEventListener('visibilitychange', ()=>scheduleAuto());
 
   // ------- boot
