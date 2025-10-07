@@ -41,6 +41,19 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tool-dipatcher2prio",
+      "name": "DPD Dispatcher – Prio Monitoring (v3.2 sort + tracking link)",
+      "version": "3.2.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Prio-Monitoring mit Auto-Refresh, Kommentar-Nachladen, selbstheilendem UI, Sortierung (kritisch oben) und Tracking-Link."
+    },
+    {
       "id": "tool-openpricer",
       "name": "OpenPricer: Abholdepot hinzufügen",
       "version": "2.2.0",
