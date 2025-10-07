@@ -90,8 +90,6 @@
           </div>
           <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
           <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
-          <button class="${NS}btn-sm" data-action="readAll">Alle gelesen</button>
-          <button class="${NS}btn-sm" data-action="clearAll">Leeren</button>
         </div>
       </div>
       <ul class="${NS}list" id="${NS}list"></ul>
