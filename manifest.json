@@ -54,6 +54,20 @@
       "description": "PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis."
     },
     {
+      "id": "tool-dpd360ad",
+      "name": "DPD360 – Zustelldaten-Abfrage (8 Wochen) + Trackinglinks (robust)",
+      "version": "1.6.1",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-DPD360AD.user.js",
+      "match": [
+        "https://dpd360.dpd.de/ops/notification_new.aspx*"
+      ],
+      "grants": [
+        "GM.xmlHttpRequest",
+        "GM_addStyle"
+      ],
+      "description": "Button robust einhängen, Hausnummern aus API (deliveryAddress.houseNo) sauber sortieren, Trackinglinks anzeigen."
+    },
+    {
       "id": "tool-openpricer",
       "name": "OpenPricer: Abholdepot hinzufügen",
       "version": "2.2.0",
