@@ -55,7 +55,7 @@
     },
     {
       "id": "tool-dpd360ad",
-      "name": "DPD360 – Zustelldaten-Abfrage (8 Wochen) + Trackinglinks (robust)",
+      "name": "DPD360 – AD klärung Abfrage letzte Zustellung aus Depotportal",
       "version": "1.6.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-DPD360AD.user.js",
       "match": [
