@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD360 – Zustelldaten-Abfrage (8 Wochen) + Trackinglinks (robust)
+// @name         DPD360 – AD klärung Abfrage letzte Zustellung aus Depotportal 
 // @namespace    dpd360.tools
 // @version      1.6.1
 // @description  Button robust einhängen, Hausnummern aus API (deliveryAddress.houseNo) sauber sortieren, Trackinglinks anzeigen.
