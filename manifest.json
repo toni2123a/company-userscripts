@@ -42,8 +42,8 @@
     },
     {
       "id": "tool-dipatcher2prio",
-      "name": "DPD Dispatcher – Prio Monitoring (v3.2.2)",
-      "version": "3.2.2",
+      "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
+      "version": "3.2.3",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
