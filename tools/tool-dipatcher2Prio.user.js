@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Prio Monitoring (v3.2.2)
+// @name         DPD Dispatcher – Prio Monitoring (v3.2.3)
 // @namespace    bodo.dpd.custom
-// @version      3.2.2
+// @version      3.2.3
 // @description  PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -138,6 +138,13 @@
   function dimButtons(on){
     document.querySelectorAll('.'+NS+'btn-sm').forEach(b=>b.classList.toggle(NS+'dim', !!on));
   }
+    function setBadge(n){
+        const b = document.getElementById(NS+'badge');
+        if(!b) return;
+        const v = Math.max(0, Number(n||0));
+        b.textContent = String(v);
+        b.style.display = v > 0 ? 'inline-block' : 'none'; // <— wichtig
+    }
 
   // ---------- rendering ----------
   function setKpis(inDel, open){
@@ -161,7 +168,10 @@
     list.innerHTML='';
 
     // (Optional) Ungelesen-Badge – derzeit deaktiviert
-    if (badge){ badge.style.display='none'; }
+
+      //badge.style.display = totalAlerts > 0 ? 'inline-block' : 'none';
+
+
 
     // Kommentar-Filter
     const modeEl = document.getElementById(NS+'filter-comment');
@@ -501,6 +511,9 @@
       if (isCritCode(r)) reds.push(r);
       else if (isPredictOverdueNoETA(r)) oranges.push(r);
     }
+
+    setBadge(reds.length + oranges.length);
+
     prioOpen = 0;
     setKpis(prioIn, prioOpen);
 
@@ -537,6 +550,8 @@
       meta:`Rot: ${reds.length} • Orange: ${oranges.length} • Geprüft: ${(total ? `${rows.length}/${total}` : `${rows.length}`)} • PRIO: ${prioTotal} • in Zustellung: ${prioIn} • geliefert: ${prioDelivered}`,
       sev:'info', read:true
     });
+
+
 
     state.events = newEvents;
   }
