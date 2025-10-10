@@ -41,6 +41,19 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tool-dispatcher2am2",
+      "name": "DPD Dispatcher – Express_12 Monitor (v1.0.3)",
+      "version": "1.0.3",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "EXPRESS_12 Monitoring: findet EXPRESS_12 auch ohne UI-Filter. Lädt ALLE Seiten, testet mehrere priority/service Varianten, plus Fallback ohne Filter. Warn: Fenster >=12:00; Info: Erinnerung ab 11:00. Panel versetzt (Mitte+Offset)."
+    },
+    {
       "id": "tool-dipatcher2prio",
       "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
       "version": "3.2.3",
