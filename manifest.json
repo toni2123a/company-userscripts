@@ -41,23 +41,23 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
-      "id": "tool-dispatcher2am2",
-      "name": "DPD Dispatcher – Express_12 Monitor (v1.0.3)",
-      "version": "1.0.3",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
+      "id": "tool-dipatcher2prio",
+      "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
+      "version": "3.2.3",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
       "grants": [
         "none"
       ],
-      "description": "EXPRESS_12 Monitoring: findet EXPRESS_12 auch ohne UI-Filter. Lädt ALLE Seiten, testet mehrere priority/service Varianten, plus Fallback ohne Filter. Warn: Fenster >=12:00; Info: Erinnerung ab 11:00. Panel versetzt (Mitte+Offset)."
+      "description": "PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis."
     },
     {
-      "id": "tool-dipatcher2prio",
-      "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
-      "version": "3.2.3",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
+      "id": "tool-dispatcher2am2",
+      "name": "DPD Dispatcher – Prio/Express12 Monitoring (v4.0.0)",
+      "version": "4.0.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
