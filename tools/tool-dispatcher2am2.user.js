@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Express_12 Monitor (v1.0.3)
+// @name         DPD Dispatcher – Prio/Express12 Monitoring (v4.0.0)
 // @namespace    bodo.dpd.custom
-// @version      1.0.3
-// @description  EXPRESS_12 Monitoring: findet EXPRESS_12 auch ohne UI-Filter. Lädt ALLE Seiten, testet mehrere priority/service Varianten, plus Fallback ohne Filter. Warn: Fenster >=12:00; Info: Erinnerung ab 11:00. Panel versetzt (Mitte+Offset).
+// @version      4.0.0
+// @description  PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        none
@@ -11,72 +11,77 @@
 (function () {
   'use strict';
 
-  const NS = 'e12-';
-  const OFFSET_PX = 260; // Position zwischen PRIO (Mitte) und rechts
-  const log = (...a)=>console.debug('[Express_12]', ...a);
+  const NS = 'pm-';
+  const log = (...a)=>console.debug('[PrioMonitoring]', ...a);
   const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
   const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
   const fmt = ts => { try { return new Date(ts||Date.now()).toLocaleString('de-DE'); } catch { return String(ts||''); } };
 
+  // ---------- global state ----------
   const state={events:[], nextId:1, _bootShown:false};
   let lastOkRequest=null;
   let autoEnabled = true, autoTimer = null, isBusy = false, isLoading = false;
   const commentCache = new Map();
 
-  // --------------------------------- Styles / UI ---------------------------------
+  // ---------- styles ----------
   function ensureStyles(){
     if (document.getElementById(NS+'style')) return;
     const style=document.createElement('style'); style.id=NS+'style';
     style.textContent=`
-    .${NS}fixed-wrap{position:fixed; top:8px; left:calc(50% + ${OFFSET_PX}px); transform:translateX(0); display:flex; gap:8px; z-index:99999}
-    .${NS}btn{border:1px solid rgba(0,0,0,.12); background:#fff; padding:8px 14px; border-radius:999px; font:600 13px system-ui; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.08)}
-    .${NS}badge{min-width:18px; height:18px; line-height:18px; text-align:center; background:#0b61a4; color:#fff; border-radius:9px; font:700 11px/18px system-ui; padding:0 6px; display:none}
-    .${NS}panel{position:fixed; top:48px; left:calc(50% + ${OFFSET_PX}px); transform:translateX(0); width:min(760px,92vw); max-height:74vh; overflow:auto; background:#fff; border:1px solid rgba(0,0,0,.12); box-shadow:0 12px 28px rgba(0,0,0,.18); border-radius:12px; z-index:100000}
-    .${NS}header{display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,.08); font:700 13px system-ui}
-    .${NS}actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-    .${NS}btn-sm{border:1px solid rgba(0,0,0,.12); background:#f7f7f7; padding:6px 10px; border-radius:8px; font:600 12px system-ui; cursor:pointer}
-    .${NS}kpis{display:flex; gap:10px; align-items:center}
-    .${NS}kpi{background:#f5f5f5; border:1px solid rgba(0,0,0,.08); padding:4px 8px; border-radius:999px; font:600 12px system-ui}
+    .${NS}fixed-wrap{position:fixed;top:8px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:99999}
+    .${NS}btn{border:1px solid rgba(0,0,0,.12);background:#fff;padding:8px 14px;border-radius:999px;font:600 13px system-ui;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+    .${NS}badge{min-width:18px;height:18px;line-height:18px;text-align:center;background:#b00020;color:#fff;border-radius:9px;font:700 11px/18px system-ui;padding:0 6px;display:none}
+    .${NS}panel{position:fixed;top:48px;left:50%;transform:translateX(-50%);width:min(760px,92vw);max-height:74vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100000}
+    .${NS}header{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
+    .${NS}actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer}
+    .${NS}kpis{display:flex;gap:10px;align-items:center}
+    .${NS}kpi{background:#f5f5f5;border:1px solid rgba(0,0,0,.08);padding:4px 8px;border-radius:999px;font:600 12px system-ui}
     .${NS}kpi b{font-variant-numeric:tabular-nums}
-    .${NS}filter{display:flex; gap:6px; align-items:center; font:600 12px system-ui}
-    .${NS}filter select{padding:4px 8px; border-radius:8px; border:1px solid rgba(0,0,0,.15); background:#fff}
-    .${NS}list{list-style:none; margin:0; padding:0}
-    .${NS}item{padding:12px 14px; border-left:4px solid transparent; border-bottom:1px solid rgba(0,0,0,.06)}
-    .${NS}title{font:700 14px system-ui; margin:0 0 6px; text-align:center}
-    .${NS}meta{font:400 12px/1.35 system-ui; opacity:.85}
-    .${NS}comment{margin-top:6px; font:500 12px/1.35 system-ui; background:#fafafa; border:1px solid rgba(0,0,0,.08); border-radius:8px; padding:6px 8px}
-    .${NS}sev-error{background:#fff2f2; border-left-color:#b00020}
-    .${NS}sev-warn{background:#fff7e6; border-left-color:#e67600}
-    .${NS}sev-info{background:#f7f7f7; border-left-color:#bdbdbd}
-    .${NS}empty{padding:14px 12px; opacity:.75; text-align:center; font:500 12px system-ui}
-    .${NS}dim{opacity:.6; pointer-events:none}
-    .${NS}chip{display:inline-flex; gap:6px; align-items:center; border:1px solid rgba(0,0,0,.12); background:#fff; padding:4px 8px; border-radius:999px; font:600 12px system-ui}
-    .${NS}dot{width:8px; height:8px; border-radius:50%; background:#16a34a}
+    .${NS}filter{display:flex;gap:6px;align-items:center;font:600 12px system-ui}
+    .${NS}filter select{padding:4px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);background:#fff}
+    .${NS}list{list-style:none;margin:0;padding:0}
+    .${NS}item{padding:12px 14px;border-left:4px solid transparent;border-bottom:1px solid rgba(0,0,0,.06)}
+    .${NS}title{font:700 14px system-ui;margin:0 0 6px;text-align:center}
+    .${NS}meta{font:400 12px/1.35 system-ui;opacity:.85}
+    .${NS}comment{margin-top:6px;font:500 12px/1.35 system-ui;background:#fafafa;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px 8px}
+    .${NS}sev-error{background:#fff2f2;border-left-color:#b00020}
+    .${NS}sev-warn{background:#fff7e6;border-left-color:#e67600}
+    .${NS}sev-info{background:#f7f7f7;border-left-color:#bdbdbd}
+    .${NS}empty{padding:14px 12px;opacity:.75;text-align:center;font:500 12px system-ui}
+    .${NS}dim{opacity:.6;pointer-events:none}
+    .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui}
+    .${NS}dot{width:8px;height:8px;border-radius:50%;background:#16a34a}
     .${NS}dot.off{background:#9ca3af}
-    .${NS}plink{color:inherit; text-decoration:underline; font-weight:700}
-    .${NS}loading{display:none; padding:8px 12px; border-bottom:1px solid rgba(0,0,0,.08); font:600 12px system-ui; background:#fffbe6}
+    .${NS}plink{color:inherit;text-decoration:underline;font-weight:700}
+    .${NS}gitems{margin-left:12px; display:none}
+    .${NS}gopen > .${NS}gitems{display:block}
+    .${NS}loading{display:none;padding:8px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:600 12px system-ui;background:#fffbe6}
     .${NS}loading.on{display:block}
     `;
     document.head.appendChild(style);
   }
 
+  // ---------- UI mount ----------
   function mountUI(){
     ensureStyles();
     if (!document.body) return false;
     if (document.getElementById(NS+'wrap') && document.getElementById(NS+'panel')) return true;
 
+    // Button
     const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'fixed-wrap';
-    const btn=document.createElement('button'); btn.id=NS+'btn'; btn.className=NS+'btn'; btn.textContent='Express_12 Monitor'; btn.type='button';
+    const btn=document.createElement('button'); btn.id=NS+'btn'; btn.className=NS+'btn'; btn.textContent='Prio/Express12 Monitoring'; btn.type='button';
     const badge=document.createElement('span'); badge.id=NS+'badge'; badge.className=NS+'badge'; badge.textContent='0';
     wrap.appendChild(btn); wrap.appendChild(badge);
     document.body.appendChild(wrap);
 
+    // Panel
     const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel'; panel.style.display='none';
     panel.innerHTML=`
       <div class="${NS}header">
         <div class="${NS}kpis">
-          <span class="${NS}kpi" id="${NS}chip-in">EXPRESS_12 in Zustellung: <b id="${NS}kpi-in">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-open">Erinnerungen (>=11:00): <b id="${NS}kpi-rem">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-in">PRIO in Zustellung: <b id="${NS}kpi-in">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-open">PRIO offen: <b id="${NS}kpi-open">0</b></span>
         </div>
         <div class="${NS}actions">
           <div class="${NS}filter">
@@ -102,25 +107,29 @@
     btn.addEventListener('click', ()=>toggle());
     panel.addEventListener('click', async (e)=>{
       const b=e.target.closest('.'+NS+'btn-sm'); if(!b) return;
-      if(b.dataset.action==='refreshApi'){ await fullRefresh().catch(console.error); }
+      const a=b.dataset.action;
+      if(a==='refreshApi'){ await fullRefresh().catch(console.error); }
     });
     document.getElementById(NS+'filter-comment').addEventListener('change', ()=>render());
     document.addEventListener('click',(e)=>{ if(panel.style.display==='none') return; if(panel.contains(e.target)||wrap.contains(e.target)) return; toggle(false); });
 
+    // Auto toggle
     const autoDot = document.getElementById(NS+'auto-dot');
     const autoChip = document.getElementById(NS+'auto-chip');
     function setAutoUI(){ autoDot.classList.toggle('off', !autoEnabled); }
     autoChip.addEventListener('click', ()=>{ autoEnabled = !autoEnabled; setAutoUI(); scheduleAuto(); });
     setAutoUI();
 
-    if (!state._bootShown) { addEvent({title:'Express_12 Monitor bereit', meta:'Fenster versetzt • Auto-Refresh 60s • Kommentare', sev:'info', read:true}); state._bootShown=true; }
+    if (!state._bootShown) { addEvent({title:'Prio Monitoring bereit', meta:'Auto-Refresh 60s • Tour-Gruppierung • Kommentare integriert', sev:'info', read:true}); state._bootShown=true; }
     render();
     return true;
   }
 
+  // self-heal (Button/Panel wieder anheften, falls SPA neu rendert)
   setInterval(()=>{ try { mountUI(); } catch{} }, 1500);
   new MutationObserver(()=>{ try { mountUI(); } catch{} }).observe(document.documentElement, {childList:true, subtree:true});
 
+  // ---------- small helpers ----------
   function setLoading(on){
     isLoading = !!on;
     const el = document.getElementById(NS+'loading');
@@ -129,29 +138,42 @@
   function dimButtons(on){
     document.querySelectorAll('.'+NS+'btn-sm').forEach(b=>b.classList.toggle(NS+'dim', !!on));
   }
-  function setBadge(n){
-    const b = document.getElementById(NS+'badge'); if(!b) return;
-    const v = Math.max(0, Number(n||0));
-    b.textContent = String(v);
-    b.style.display = v > 0 ? 'inline-block' : 'none';
-  }
-  function setKpis(inDel, rem){
+    function setBadge(n){
+        const b = document.getElementById(NS+'badge');
+        if(!b) return;
+        const v = Math.max(0, Number(n||0));
+        b.textContent = String(v);
+        b.style.display = v > 0 ? 'inline-block' : 'none'; // <— wichtig
+    }
+
+  // ---------- rendering ----------
+  function setKpis(inDel, open){
     const elIn   = document.getElementById(NS+'kpi-in');
-    const elRem  = document.getElementById(NS+'kpi-rem');
+    const elOpen = document.getElementById(NS+'kpi-open');
     const chipIn   = document.getElementById(NS+'chip-in');
-    const chipRem  = document.getElementById(NS+'chip-open');
-    const vIn = Number(inDel||0), vRem = Number(rem||0);
+    const chipOpen = document.getElementById(NS+'chip-open');
+    const vIn = Number(inDel||0), vOpen = Number(open||0);
     if (elIn) elIn.textContent = String(vIn);
-    if (elRem) elRem.textContent = String(vRem);
+    if (elOpen) elOpen.textContent = String(vOpen);
     if (chipIn) chipIn.style.display   = vIn   === 0 ? 'none' : '';
-    if (chipRem) chipRem.style.display = vRem === 0 ? 'none' : '';
+    if (chipOpen) chipOpen.style.display = vOpen === 0 ? 'none' : '';
   }
 
   function render(){
     const list = document.getElementById(NS+'list');
+    const badge = document.getElementById(NS+'badge');
     if (!list) return;
+
+    // Liste leeren
     list.innerHTML='';
 
+    // (Optional) Ungelesen-Badge – derzeit deaktiviert
+
+      //badge.style.display = totalAlerts > 0 ? 'inline-block' : 'none';
+
+
+
+    // Kommentar-Filter
     const modeEl = document.getElementById(NS+'filter-comment');
     const mode = modeEl ? (modeEl.value || 'all') : 'all';
     let filtered = state.events.filter(ev=>{
@@ -160,8 +182,13 @@
       return true;
     });
 
+    // Einzelereignisse sortieren (für Gruppen)
     const sevRank = s => (s==='error'?0 : s==='warn'?1 : 2);
-    filtered.sort((a,b)=>{ const sr = sevRank(a.sev) - sevRank(b.sev); if (sr!==0) return sr; return (b.ts||0) - (a.ts||0); });
+    filtered.sort((a,b)=>{
+      const sr = sevRank(a.sev) - sevRank(b.sev);
+      if (sr !== 0) return sr;
+      return (b.ts||0) - (a.ts||0);
+    });
 
     if (filtered.length === 0){
       const d=document.createElement('div');
@@ -171,26 +198,128 @@
       return;
     }
 
-    for(const ev of filtered){
-      const row=document.createElement('li');
-      row.className = `${NS}item ${ev.sev==='error'?NS+'sev-error':ev.sev==='warn'?NS+'sev-warn':NS+'sev-info'}`;
+    // --- Gruppierung nach Tour (nur echte Ereignisse error/warn) ---
+const groupsMap = new Map();
+for (const ev of filtered) {
+  if (ev.sev === 'info') continue; // Info nicht gruppieren
+  const m = /Tour\s+(\d+)/i.exec(ev.meta || '');
+  const tourKey = m ? m[1] : '—';
+  if (!groupsMap.has(tourKey)) {
+    groupsMap.set(tourKey, {
+      tour: tourKey, items: [],
+      // getrennte Zähler
+      prioErr:0, prioWarn:0,
+      expNo11:0, expLate:0
+    });
+  }
+  const g = groupsMap.get(tourKey);
+  g.items.push(ev);
 
-      const parcelTxt = ev.parcel && /^\d+$/.test(ev.parcel)
-        ? `<a class="${NS}plink" href=https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${ev.parcel} target="_blank" rel="noopener">${ev.parcel}</a>`
-        : (ev.parcel ? esc(ev.parcel) : '');
+  // nach Art zählen
+  switch (ev.kind) {
+    case 'prioCode':    g.prioErr++;  break;
+    case 'prioPredict': g.prioWarn++; break;
+    case 'expNo11':     g.expNo11++;  break;
+    case 'expLate':     g.expLate++;  break;
+    default:
+      // Fallback, falls kind fehlt
+      if (ev.sev === 'error') g.prioErr++;
+      else if (ev.sev === 'warn') g.prioWarn++;
+  }
+}
+let groups = Array.from(groupsMap.values())
+  .filter(g => g.items.length > 0 && (g.prioErr + g.prioWarn + g.expNo11 + g.expLate) > 0);
 
-      let titleHtml = esc(ev.title);
-      if (parcelTxt) {
-        const m = /(\d{8,})\s*$/.exec(ev.title||'');
-        if (m && m[1] === ev.parcel) titleHtml = esc(ev.title.slice(0, ev.title.length - m[1].length)) + parcelTxt;
-        else titleHtml += ' ' + parcelTxt;
+
+    // Gruppen-Sortierung: kritische Gruppen zuerst, dann Tournummer ASC
+    function tourNum(x){ return /^\d+$/.test(x) ? Number(x) : Number.POSITIVE_INFINITY; }
+function critCount(g){ return (g.prioErr + g.expNo11 + g.expLate); }
+groups.sort((a, b) => {
+  const ba = critCount(a) > 0 ? 0 : 1;
+  const bb = critCount(b) > 0 ? 0 : 1;
+  if (ba !== bb) return ba - bb;
+  return tourNum(a.tour) - tourNum(b.tour);
+});
+
+
+    // Items innerhalb Gruppe: error > warn > info, ts desc
+    const sortGroupItems = arr => arr.sort((a,b)=>{
+      const sr = sevRank(a.sev) - sevRank(b.sev);
+      if (sr !== 0) return sr;
+      return (b.ts||0) - (a.ts||0);
+    });
+
+    // Rendern der Gruppen
+    for (const g of groups){
+      const liGroup = document.createElement('li');
+      liGroup.className = `${NS}item ${NS}sev-info`;
+      const expanded = (g.prioErr + g.expNo11 + g.expLate) > 0;
+      if (expanded) liGroup.classList.add(NS+'gopen');
+
+      const headTitle = document.createElement('div');
+      headTitle.className = NS+'title';
+      const parts = [];
+
+        // Nur anzeigen, was >0 ist
+        if ((g.prioErr|0) > 0 || (g.prioWarn|0) > 0) {
+            parts.push(`PRIO: ${g.prioErr} kritisch / ${g.prioWarn} verspätet`);
+        }
+        if ((g.expNo11|0) > 0 || (g.expLate|0) > 0) {
+            parts.push(`EXPRESS: ${g.expNo11} offen>11:00 / ${g.expLate} spät geplant`);
+        }
+
+        headTitle.textContent = `Tour ${g.tour} (${parts.length ? parts.join(' • ') : '–'})`;
+
+      const headHint = document.createElement('div');
+      headHint.className = NS+'meta';
+      headHint.textContent = 'Klicke zum Auf- oder Zuklappen';
+
+      const itemsWrap = document.createElement('div');
+      itemsWrap.className = NS+'gitems';
+      if (expanded) itemsWrap.style.display = 'block';
+
+      sortGroupItems(g.items);
+      for (const ev of g.items){
+        const row = document.createElement('div');
+        row.className = `${NS}item ${ev.sev==='error'?NS+'sev-error':ev.sev==='warn'?NS+'sev-warn':NS+'sev-info'}`;
+
+        const parcelTxt = ev.parcel && /^\d+$/.test(ev.parcel)
+          ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${ev.parcel}" target="_blank" rel="noopener">${ev.parcel}</a>`
+          : (ev.parcel ? esc(ev.parcel) : '');
+
+        let titleHtml = esc(ev.title);
+        if (parcelTxt) {
+          const m = /(\d{8,})\s*$/.exec(ev.title||'');
+          if (m && m[1] === ev.parcel) titleHtml = esc(ev.title.slice(0, ev.title.length - m[1].length)) + parcelTxt;
+          else titleHtml += ' ' + parcelTxt;
+        }
+
+        row.innerHTML = `
+          <div class="${NS}title">${titleHtml}</div>
+          <div class="${NS}meta">${esc(ev.meta||'')} – ${fmt(ev.ts)}${ev.read?'':' • ungelesen'}</div>
+          ${ev.comment ? `<div class="${NS}comment">${esc(ev.comment)}</div>` : ''}`;
+        itemsWrap.appendChild(row);
       }
 
-      row.innerHTML = `
-        <div class="${NS}title">${titleHtml}</div>
-        <div class="${NS}meta">${esc(ev.meta||'')} – ${fmt(ev.ts)}${ev.read?'':' • ungelesen'}</div>
-        ${ev.comment ? `<div class="${NS}comment">${esc(ev.comment)}</div>` : ''}`;
-      list.appendChild(row);
+      liGroup.addEventListener('click', (e)=>{
+        if (e.target.closest('a')) return;
+        liGroup.classList.toggle(NS+'gopen');
+        const show = liGroup.classList.contains(NS+'gopen');
+        itemsWrap.style.display = show ? 'block' : 'none';
+      });
+
+      liGroup.appendChild(headTitle);
+      liGroup.appendChild(headHint);
+      liGroup.appendChild(itemsWrap);
+      list.appendChild(liGroup);
+    }
+
+    // Falls gerade geladen wird und noch nichts gerendert: Hinweis
+    if (isLoading && groups.length === 0) {
+      const d=document.createElement('div');
+      d.className=NS+'empty';
+      d.textContent='Lade Daten …';
+      list.appendChild(d);
     }
   }
 
@@ -209,143 +338,216 @@
     state.events.push(e); render();
   }
 
-  // --------------------------------- Network hook ---------------------------------
-  ;(function hook(){
-    if (!window.__e12_fetch_hooked && window.fetch) {
-      const orig=window.fetch;
-      window.fetch=async function(i,init={}){ const res=await orig(i,init);
-        try{
-          const uStr=typeof i==='string'?i:(i&&i.url)||''; if(uStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
-            const u=new URL(uStr,location.origin); const h={}; const src=(init&&init.headers)||(i&&i.headers);
-            if(src){ if(src.forEach) src.forEach((v,k)=>h[String(k).toLowerCase()]=String(v)); else if(Array.isArray(src)) src.forEach(([k,v])=>h[String(k).toLowerCase()]=String(v)); else Object.entries(src).forEach(([k,v])=>h[String(k).toLowerCase()]=String(v)); }
-            if(!h['authorization']){ const m=document.cookie.match(/(?:^|;\\s*)dpd-register-jwt=([^;]+)/); if(m){ h['authorization']='Bearer '+decodeURIComponent(m[1]); } }
-            lastOkRequest={url:u, headers:h}; const n=document.getElementById(NS+'note-capture'); if(n) n.style.display='none';
-          }
-        }catch{}
-        return res;
-      };
-      window.__e12_fetch_hooked = true;
-    }
-    if (!window.__e12_xhr_hooked && window.XMLHttpRequest) {
-      const X=window.XMLHttpRequest; const open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
-      X.prototype.open=function(m,u){ this.__e12_url=(typeof u==='string')?new URL(u,location.origin):null; this.__e12_headers={}; return open.apply(this,arguments); };
-      X.prototype.setRequestHeader=function(k,v){ try{this.__e12_headers[String(k).toLowerCase()]=String(v);}catch{} return setH.apply(this,arguments); };
-      X.prototype.send=function(){ const onload=()=>{ try{
-        if(this.__e12_url && this.__e12_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){
-          if(!this.__e12_headers['authorization']){ const m=document.cookie.match(/(?:^|;\\s*)dpd-register-jwt=([^;]+)/); if(m){ this.__e12_headers['authorization']='Bearer '+decodeURIComponent(m[1]); } }
-          lastOkRequest={url:this.__e12_url, headers:this.__e12_headers}; const n=document.getElementById(NS+'note-capture'); if(n) n.style.display='none';
-        }}catch{} this.removeEventListener('load',onload); }; this.addEventListener('load',onload); return send.apply(this,arguments); };
-      window.__e12_xhr_hooked = true;
-    }
-  })();
+  // ---------- network hook (clone request) ----------
+  (function hook(){
+  if (!window.__pm_fetch_hooked && window.fetch) {
+    const orig = window.fetch;
+    window.fetch = async function(i, init = {}) {
+      const res = await orig(i, init);
+      try {
+        const uStr = typeof i === 'string' ? i : (i && i.url) || '';
+        if (uStr.includes('/dispatcher/api/pickup-delivery') && res.ok) {
+          const u = new URL(uStr, location.origin);
+          const q = u.searchParams;
 
-  // --------------------------------- API helpers ---------------------------------
-  function buildHeaders(h){ const H=new Headers(); try{
+          // Nur Listen-Requests als Vorlage akzeptieren (KEIN parcelNumber!)
+          if (!q.get('parcelNumber')) {
+            const h = {};
+            const src = (init && init.headers) || (i && i.headers);
+            if (src) {
+              if (src.forEach) src.forEach((v, k) => h[String(k).toLowerCase()] = String(v));
+              else if (Array.isArray(src)) src.forEach(([k, v]) => h[String(k).toLowerCase()] = String(v));
+              else Object.entries(src).forEach(([k, v]) => h[String(k).toLowerCase()] = String(v));
+            }
+            if (!h['authorization']) {
+              const m = document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+              if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+            }
+            lastOkRequest = { url: u, headers: h };
+            const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+          }
+        }
+      } catch {}
+      return res;
+    };
+    window.__pm_fetch_hooked = true;
+  }
+
+  if (!window.__pm_xhr_hooked && window.XMLHttpRequest) {
+    const X = window.XMLHttpRequest;
+    const open = X.prototype.open, send = X.prototype.send, setH = X.prototype.setRequestHeader;
+
+    X.prototype.open = function(m, u) {
+      this.__pm_url = (typeof u === 'string') ? new URL(u, location.origin) : null;
+      this.__pm_headers = {};
+      return open.apply(this, arguments);
+    };
+    X.prototype.setRequestHeader = function(k, v) {
+      try { this.__pm_headers[String(k).toLowerCase()] = String(v); } catch {}
+      return setH.apply(this, arguments);
+    };
+    X.prototype.send = function() {
+      const onload = () => {
+        try {
+          if (this.__pm_url && this.__pm_url.href.includes('/dispatcher/api/pickup-delivery') &&
+              this.status >= 200 && this.status < 300) {
+
+            // Nur Listen-Requests (ohne parcelNumber) als Vorlage übernehmen
+            const q = this.__pm_url.searchParams;
+            if (!q.get('parcelNumber')) {
+              if (!this.__pm_headers['authorization']) {
+                const m = document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+                if (m) this.__pm_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+              }
+              lastOkRequest = { url: this.__pm_url, headers: this.__pm_headers };
+              const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+            }
+          }
+        } catch {}
+        this.removeEventListener('load', onload);
+      };
+      this.addEventListener('load', onload);
+      return send.apply(this, arguments);
+    };
+    window.__pm_xhr_hooked = true;
+  }
+})();
+
+  // ---------- API helpers ----------
+ function buildUrlPrio(base, page){
+  const u = new URL(base.href);
+  const q = u.searchParams;
+  q.set('page', String(page));
+  q.set('pageSize', '500');
+  q.set('priority', 'prio');
+  q.delete('elements');      // Express-Filter raus
+  q.delete('parcelNumber');  // Einzel-Abfrage raus
+  u.search = q.toString();
+  return u;
+}
+
+    function buildHeaders(h){ const H=new Headers(); try{
     if(h){ Object.entries(h).forEach(([k,v])=>{const key=k.toLowerCase(); if(['authorization','accept','x-xsrf-token','x-csrf-token'].includes(key)){ H.set(key==='accept'?'Accept':key.replace(/(^.|-.)/g,s=>s.toUpperCase()), v);} }); }
     if(!H.has('Accept')) H.set('Accept','application/json, text/plain, */*');
   }catch{} return H; }
 
-  // Kandidaten für API-Parameter, falls UI nichts setzt / abweicht
-  const PRIORITY_KEYS = [
-    // häufigster Fall
-    {k:'priority', v:'EXPRESS_12'},
-    {k:'priority', v:'express_12'},
-    {k:'priority', v:'EXPRESS12'},
-    {k:'priority', v:'express12'},
-    // mögliche Alternativen
-    {k:'serviceType', v:'express_12'},
-    {k:'service',     v:'express_12'},
-    {k:'product',     v:'express_12'}
-  ];
+  function buildUrlElements(base, page, el){ // '023'
+  const u = new URL(base.href);
+  const q = u.searchParams;
+  q.set('page', String(page));
+  q.set('pageSize', '500');
+  q.set('elements', String(el));
+  q.delete('priority');      // PRIO-Filter raus
+  q.delete('parcelNumber');  // Einzel-Abfrage raus
+  u.search = q.toString();
+  return u;
+}
+function buildUrlByParcel(base, parcel){
+  const u = new URL(base.href);
+  const q = u.searchParams;
+  q.set('page','1');
+  q.set('pageSize','500');
+  q.set('parcelNumber', String(parcel));
+  // Alles, was die Einzelabfrage einschränken könnte, entfernen:
+  q.delete('priority');
+  q.delete('elements');
+  u.search = q.toString();
+  return u;
+}
 
-  function stripPriorityParams(q){
-    // alles entfernen, was den Priority-Filter beeinflussen könnte
-    ['priority','serviceType','service','product'].forEach(p=>q.delete(p));
-    // mögliche Spaltenfilterreste (je nach UI) entfernen
-    ['prio','prio12','priorityId','priority_id'].forEach(p=>q.delete(p));
+ async function fetchPaged(builder){
+  if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
+  const headers = buildHeaders(lastOkRequest.headers);
+  const size = 500, maxPages = 50;
+  let page = 1, rows = [];
+
+  while (page <= maxPages) {
+    const u = builder(lastOkRequest.url, page);
+    const r = await fetch(u.toString(), { credentials:'include', headers });
+    if (!r.ok) break;
+    const j = await r.json();
+    const chunk = (j.items||j.content||j.data||j.results||j)||[];
+    rows.push(...chunk);
+    if (chunk.length < size) break;
+    page++;
+    await sleep(40);
   }
+  return rows;
+}
+async function fetchPagedWithTotal(builder){
+  if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
+  const headers = buildHeaders(lastOkRequest.headers);
+  const size = 500, maxPages = 50;
+  let page = 1, rows = [], totalKnown = null;
 
-  function cloneBaseUrl(base){
-    const u=new URL(base.href);
-    return u;
-  }
-
-  function buildUrlVariant(base, page, variantIdx){
-    const u = cloneBaseUrl(base);
-    const q = u.searchParams;
-    q.set('page', String(page));
-    q.set('pageSize','500');
-    stripPriorityParams(q);
-    const cand = PRIORITY_KEYS[variantIdx];
-    if (cand) q.set(cand.k, cand.v);
-    u.search = q.toString();
-    return u;
-  }
-
-  function buildUrlByParcelVariant(base, parcel, variantIdx){
-    const u = cloneBaseUrl(base);
-    const q = u.searchParams;
-    q.set('page','1');
-    q.set('pageSize','500');
-    q.set('parcelNumber', String(parcel));
-    stripPriorityParams(q);
-    const cand = PRIORITY_KEYS[variantIdx];
-    if (cand) q.set(cand.k, cand.v);
-    u.search = q.toString();
-    return u;
-  }
-
-  // Lädt alle Seiten – testet mehrere Varianten; bei 0 Treffern Fallback (ohne Priority)
-  async function fetchAll(){
-    if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
-    const headers = buildHeaders(lastOkRequest.headers);
-    const size = 500, maxPages = 50;
-
-    async function runVariant(variantIdx, useFallbackNoPriority=false){
-      let page=1, rows=[], totalKnown=null;
-      while(page<=maxPages){
-        const u = useFallbackNoPriority
-          ? (()=>{ const t=cloneBaseUrl(lastOkRequest.url); const q=t.searchParams; q.set('page', String(page)); q.set('pageSize','500'); stripPriorityParams(q); t.search=q.toString(); return t; })()
-          : buildUrlVariant(lastOkRequest.url, page, variantIdx);
-        const r = await fetch(u.toString(), { credentials:'include', headers });
-        if(!r.ok){ if(page===1) throw new Error(`HTTP ${r.status}`); break; }
-        const j = await r.json();
-        const chunk = (j.items||j.content||j.data||j.results||j)||[];
-        if (page===1){
-          const t  = Number(j.totalElements||j.total||j.count);
-          const tp = Number(j.totalPages);
-          if (Number.isFinite(t) && t >= 0) totalKnown = t;
-          if (Number.isFinite(tp) && tp > 0) totalKnown = totalKnown ?? tp * size;
-        }
-        rows.push(...chunk);
-        if (chunk.length < size) break;
-        page++; await sleep(40);
-      }
-      return {rows, total: totalKnown || rows.length};
+  while (page <= maxPages) {
+    const u = builder(lastOkRequest.url, page);
+    const r = await fetch(u.toString(), { credentials:'include', headers });
+    if (!r.ok) { if (page === 1) throw new Error(`HTTP ${r.status}`); break; }
+    const j = await r.json();
+    const chunk = (j.items||j.content||j.data||j.results||j)||[];
+    if (page === 1) {
+      const t  = Number(j.totalElements||j.total||j.count);
+      const tp = Number(j.totalPages);
+      if (Number.isFinite(t) && t >= 0) totalKnown = t;
+      if (Number.isFinite(tp) && tp > 0) totalKnown = totalKnown ?? tp * size;
     }
-
-    // 1) Varianten mit Priority versuchen – abbrechen, sobald EXPRESS_12 im Ergebnis auftaucht
-    for (let i=0;i<PRIORITY_KEYS.length;i++){
-      const {rows,total} = await runVariant(i,false);
-      const hasExp = rows.some(r=>isEXP12(r));
-      if (hasExp || rows.length>0) return {rows,total};
-    }
-
-    // 2) Fallback: ohne Priority-Parameter (UI-Query pur), danach clientseitig filtern
-    return await runVariant(0,true);
+    rows.push(...chunk);
+    if (chunk.length < size) break;
+    page++;
+    await sleep(40);
   }
+  return { rows, total: totalKnown || rows.length };
+}
 
-  // --------------------------------- Mapping / Regeln ---------------------------------
-  const isEXP12    = r => {
-    const p = String(r.priority||r.product||r.serviceType||r.service||'').toUpperCase();
-    return p === 'EXPRESS_12' || p === 'EXPRESS12';
-  };
+  // ---------- mapping + detection ----------
+
+ // Nur Zustellungen (keine Abholungen)
+const isDelivery = r => String(r?.orderType || '').toUpperCase() === 'DELIVERY';
+
+    // --- EXPRESS 12 Uhr ---
+const hasExpress12 = r => {
+  const el = r?.elements;
+  if (Array.isArray(el)) return el.map(String).includes('023');
+  return typeof el === 'string' ? /\b023\b/.test(el) : false;
+};
+
+// from2 als Date (du hast composeDateTime schon)
+const fromTime = r => r.from2 ? composeDateTime(r.date, r.from2) : null;
+
+// scanTime (falls Feld nicht immer vorhanden)
+const deliverScanTime = r => r.scanTime || r.deliveredTime || null;
+
+// Kriterium 1: spät geplant (from2 > 11:01)
+const isExpressLatePlanned = r => {
+  const ft = fromTime(r);
+  if (!ft) return false;
+  return (ft.getHours() > 11) || (ft.getHours() === 11 && ft.getMinutes() >= 1);
+};
+
+// Kriterium 2: bis 11:00 nicht zugestellt + kein Scan
+const isExpressUndeliveredBy11 = r => {
+  // wenn schon geliefert -> raus
+  if (delivered(r)) return false;
+  // 11:00 am Paketdatum
+  if (!r.date) return false;
+  const limit = new Date(`${r.date}T11:00:00`);
+  const now = new Date();
+  if (now < limit) return false;             // vor 11 Uhr noch nicht prüfen
+  const st = deliverScanTime(r);
+  return !st;                                 // kein scanTime/kein deliveredTime
+};
+
+
+  const isPRIO     = r => String(r.priority||'').toUpperCase()==='PRIO';
   const parcelId   = r => r.parcelNumber || (Array.isArray(r.parcelNumbers)&&r.parcelNumbers[0]) || r.id || '';
+  // geliefert? -> ausgeschlossen
   const delivered  = r => {
     const st = String(r.deliveryStatus || '').toUpperCase();
     return !!r.deliveredTime || st === 'DELIVERED' || st === 'DELIVERED_TO_PUDO';
   };
   const addCodes   = r => Array.isArray(r.additionalCodes)? r.additionalCodes.map(String): [];
+  const isCritCode = r => addCodes(r).some(c=>/^(041|061|032)$/.test(String(c)));
   const tourOf  = r => r.tour ? String(r.tour) : '';
   const addrOf  = r => [r.street, r.houseno].filter(Boolean).join(' ');
   const placeOf = r => [r.postalCode, r.city].filter(Boolean).join(' ');
@@ -396,7 +598,11 @@
     }
     return '';
   }
-  const commentOf = (r) => pickComment(r) || commentFromDomByParcel(parcelId(r));
+  const commentOf = (r) => {
+    const fromApi = pickComment(r);
+    if (fromApi) return fromApi;
+    return commentFromDomByParcel(parcelId(r));
+  };
 
   const composeDateTime = (dateStr, timeStr) => {
     if (!dateStr || !timeStr) return null;
@@ -405,126 +611,146 @@
     return isNaN(d) ? null : d;
   };
   const predictStart = r => r.from2 ? composeDateTime(r.date, r.from2) : null;
-  const predictEnd   = r => r.to2 ? composeDateTime(r.date, r.to2) : (r.from2 ? composeDateTime(r.date, r.from2) : null);
-
-  function isEndAtOrAfterNoon(r){
-    const end = predictEnd(r);
-    if (!end) return false; // nur Fälle mit Zeitfenster
-    const noon = new Date(end); noon.setHours(12,0,0,0);
-    return end.getTime() >= noon.getTime(); // 11:00–12:00 = true; 10:59–11:59 = false
-  }
-  function needs11Reminder(now, r){
+  const predictEnd   = r => {
+    if (r.to2) { const d=composeDateTime(r.date, r.to2); if (d) return d; }
+    const st = predictStart(r); return st ? new Date(st.getTime() + 60*60*1000) : null;
+  };
+  const etaScantime  = r => r.etaScanTime ? composeDateTime(r.date, r.etaScanTime) : null;
+  const isPredictOverdueNoETA = r => {
     if (delivered(r)) return false;
-    const t = now || new Date();
-    const eleven = new Date(t); eleven.setHours(11,0,0,0);
-    return t.getTime() >= eleven.getTime();
-  }
+    const end = predictEnd(r); if (!end) return false;
+    const now = new Date(); if (now <= end) return false;
+    return !etaScantime(r);
+  };
 
-  // --------------------------------- Comments autoload ---------------------------------
+  // ---------- comments autoload ----------
   async function fetchMissingComments(){
     if(!lastOkRequest) { addEvent({title:'Hinweis', meta:'Kein API-Request zum Klonen vorhanden.', sev:'info', read:true}); render(); return; }
     const headers = buildHeaders(lastOkRequest.headers);
-    const targets = state.events.filter(e => !e.hasComment && e.parcel);
-    if (!targets.length) return;
+    const toFill = state.events.filter(e => !e.hasComment && e.parcel);
+    if (toFill.length === 0) return;
 
     dimButtons(true);
     let filled = 0;
-    for (const ev of targets){
+    for (const ev of toFill){
       const p = ev.parcel;
       if (commentCache.has(p)) {
         const c = commentCache.get(p);
         if (c) { ev.comment = c; ev.hasComment = true; filled++; render(); }
         continue;
       }
-      // Varianten für Einzelabruf testen
-      let c='';
-      for (let i=0;i<PRIORITY_KEYS.length && !c;i++){
-        try{
-          const url = buildUrlByParcelVariant(lastOkRequest.url, p, i);
-          const res = await fetch(url.toString(), { credentials:'include', headers });
-          if (res.ok){
-            const j = await res.json();
-            const rows = (j.items||j.content||j.data||j.results||j)||[];
-            const r = rows.find(x => (parcelId(x) === p)) || rows[0];
-            if (r) c = pickComment(r) || commentFromDomByParcel(p);
-          }
-        }catch(e){ /* ignore */ }
-        await sleep(50);
-      }
-      commentCache.set(p, c);
-      if (c) { ev.comment = c; ev.hasComment = true; filled++; render(); }
-      await sleep(60);
+      try{
+        const url = buildUrlByParcel(lastOkRequest.url, p);
+        const res = await fetch(url.toString(), { credentials:'include', headers });
+        if (res.ok){
+          const j = await res.json();
+          const rows = (j.items||j.content||j.data||j.results||j)||[];
+          const r = rows.find(x => (parcelId(x) === p)) || rows[0];
+          let c = '';
+          if (r) c = pickComment(r) || commentFromDomByParcel(p);
+          commentCache.set(p, c);
+          if (c) { ev.comment = c; ev.hasComment = true; filled++; render(); }
+        }
+      }catch(e){ /* ignore */ }
+      await sleep(80);
     }
-    if (filled>0) addEvent({title:'Kommentare', meta:`Nachgeladen: ${filled}/${targets.length}`, sev:'info', read:true});
+    if (filled>0) addEvent({title:'Kommentare', meta:`Nachgeladen: ${filled}/${toFill.length}`, sev:'info', read:true});
     dimButtons(false);
     render();
   }
 
-  // --------------------------------- Refresh logic ---------------------------------
-  async function refreshViaApi(){
-    const { rows, total } = await fetchAll();
+  // ---------- refresh logic ----------
+ async function refreshViaApi(){
+  // PRIO – serverseitig gefiltert (mit total)
+  const { rows: prioRows, total: prioTotalRows } = await fetchPagedWithTotal(buildUrlPrio);
+const prioDeliveries = prioRows.filter(isDelivery);  // <— Filter hier
 
-    let inDel = 0, totalExp = 0, deliveredCount = 0;
-    const afterNoon=[], remindList=[];
-    const now = new Date();
+let prioIn = 0, prioDelivered = 0, prioTotal = 0;
+const reds = [], oranges = [];
+for (const r of prioDeliveries){
+  if (!isPRIO(r)) continue;             // Sicherheitsnetz
+  prioTotal++;
+  if (delivered(r)) { prioDelivered++; continue; } else { prioIn++; }
+  if (isCritCode(r)) reds.push(r);
+  else if (isPredictOverdueNoETA(r)) oranges.push(r);
+}
 
-    for(const r of rows){
-      if(!isEXP12(r)) continue;
-      totalExp++;
-      if (delivered(r)) { deliveredCount++; continue; } else { inDel++; }
 
-      if (isEndAtOrAfterNoon(r)) afterNoon.push(r);
-      if (needs11Reminder(now, r)) remindList.push(r);
-    }
+  // EXPRESS – serverseitig gefiltert (ohne total reicht)
+  const expRows = await fetchPaged((base,p)=>buildUrlElements(base,p,'023'));
+const expDeliveries = expRows.filter(isDelivery);                 // <— Filter hier
+const expLatePlanned    = expDeliveries.filter(isExpressLatePlanned);
+const expNoDeliveryBy11 = expDeliveries.filter(isExpressUndeliveredBy11);
 
-    setBadge(afterNoon.length + remindList.length);
-    setKpis(inDel, remindList.length);
+  // Badge & KPIs
+  setBadge(reds.length + oranges.length + expLatePlanned.length + expNoDeliveryBy11.length);
+  setKpis(prioIn, 0);
 
-    const newEvents = [];
-    const push = (ev)=> newEvents.push({
-      id: ++state.nextId,
-      title: ev.title, meta: ev.meta, sev: ev.sev || 'info',
-      ts: ev.ts || Date.now(), read: !!ev.read,
-      comment: ev.comment || '', hasComment: !!(ev.comment && ev.comment.trim()),
-      parcel: ev.parcel || ''
-    });
 
-    const mkWnd = (ps,pe)=> {
-      if(!ps && !pe) return '';
-      const f = d => d?.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) || '';
-      if (ps && pe) return `${f(ps)}–${f(pe)}`;
-      return f(pe||ps);
-    };
+    // ------------- Events neu füllen -------------
+  const newEvents = [];
+  const push = (ev)=> newEvents.push({
+  id: ++state.nextId,
+  title: ev.title,
+  meta: ev.meta,
+  sev: ev.sev || 'info',
+  ts: ev.ts || Date.now(),
+  read: !!ev.read,
+  comment: ev.comment || '',
+  hasComment: !!(ev.comment && ev.comment.trim()),
+  parcel: ev.parcel || '',
+  kind: ev.kind || ''          // <— WICHTIG: kind mitschreiben
+});
+  const mkWnd = (ps,pe)=> (ps&&pe) ? `${ps.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}–${pe.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}` : '';
 
-    for (const r of afterNoon){
-      const ps=predictStart(r), pe=predictEnd(r);
-      push({
-        title:`EXPRESS_12 (Fenster ≥ 12:00): ${parcelId(r) || 'Sendung'}`,
-        meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}${addCodes(r).length? ' • Zusatzcode '+addCodes(r).join(','):''}`,
-        sev:'warn', comment: commentOf(r), parcel: parcelId(r)
-      });
-    }
-
-    if (remindList.length){
-      for (const r of remindList){
-        const ps=predictStart(r), pe=predictEnd(r);
-        push({
-          title:`Erinnerung (>=11:00) nicht zugestellt: ${parcelId(r) || 'Sendung'}`,
-          meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}`,
-          sev:'info', comment: commentOf(r), parcel: parcelId(r)
-        });
-      }
-    }
-
+  // PRIO-Events (wie gehabt)
+  for (const r of reds){
+    const ps=predictStart(r), pe=predictEnd(r);
     push({
-      title:'Aktualisiert',
-      meta:`Nach 12: ${afterNoon.length} • Erinnerungen (>=11:00): ${remindList.length} • Geprüft: ${(total ? `${rows.length}/${total}` : `${rows.length}`)} • EXPRESS_12: ${totalExp} • in Zustellung: ${inDel} • geliefert: ${deliveredCount}`,
-      sev:'info', read:true
+      title:`PRIO kritisch (Code): ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zusatzcode ${addCodes(r).join(',')}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}`,
+      sev:'error', comment: commentOf(r), parcel: parcelId(r),
+      kind:'prioCode'
     });
-
-    state.events = newEvents;
+  }
+  for (const r of oranges){
+    const ps=predictStart(r), pe=predictEnd(r);
+    push({
+      title:`PRIO verspätet (Predict): ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''} • Zeitfenster überschritten • ${mkWnd(ps,pe) || 'Predict'}`,
+      sev:'warn', comment: commentOf(r), parcel: parcelId(r),
+      kind:'prioPredict'
+    });
   }
 
+  // EXPRESS-Events
+  for (const r of expLatePlanned){
+    const ps = fromTime(r), pe = predictEnd(r);
+    push({
+      title:`EXPRESS 12 Uhr – spät geplant: ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}`,
+      sev:'error', comment: commentOf(r), parcel: parcelId(r),
+      kind:'expLate'
+    });
+  }
+  for (const r of expNoDeliveryBy11){
+    const ps = fromTime(r), pe = predictEnd(r);
+    push({
+      title:`EXPRESS 12 Uhr – bis 11:00 nicht zugestellt: ${parcelId(r) || 'Sendung'}`,
+      meta:`${tourOf(r)?'Tour '+tourOf(r)+' • ':''}${addrOf(r)}${placeOf(r)?' ('+placeOf(r)+')':''}${whoOf(r)?' • '+whoOf(r):''}${mkWnd(ps,pe)?' • '+mkWnd(ps,pe):''}`,
+      sev:'error', comment: commentOf(r), parcel: parcelId(r),
+       kind:'expNo11'
+    });
+  }
+
+ push({
+  title:'Aktualisiert',
+  meta:`PRIO Rot: ${reds.length} • PRIO Orange: ${oranges.length} • EXPRESS spät geplant: ${expLatePlanned.length} • EXPRESS offen>11:00: ${expNoDeliveryBy11.length} • Geprüft (PRIO, DELIVERY): ${prioDeliveries.length}/${prioTotalRows}`,
+  sev:'info', read:true
+});
+
+  state.events = newEvents;
+}
   async function fullRefresh(){
     if (isBusy) return;
     try{
@@ -536,7 +762,7 @@
       isBusy = true;
       setLoading(true);
       dimButtons(true);
-      addEvent({title:'Aktualisiere (API)…', meta:'Alle Seiten, mehrere Priority-Varianten + Fallback', sev:'info', read:true});
+      addEvent({title:'Aktualisiere (API)…', meta:'Replay aktiver Filter (pageSize=500)', sev:'info', read:true}); 
       render();
 
       await refreshViaApi();
@@ -552,17 +778,23 @@
     }
   }
 
+  // ---------- auto refresh ----------
   function scheduleAuto(){
     try{
       if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
       if (!autoEnabled) return;
       if (document.hidden) return;
-      if (!lastOkRequest) return;
-      autoTimer = setInterval(()=>{ if (!lastOkRequest) return; fullRefresh().catch(()=>{}); }, 60_000);
+      if (!lastOkRequest) return; // nur wenn Vorlage vorhanden
+
+      autoTimer = setInterval(()=>{
+        if (!lastOkRequest) return;
+        fullRefresh().catch(()=>{});
+      }, 60_000);
     }catch{}
   }
   document.addEventListener('visibilitychange', ()=>scheduleAuto());
 
+  // ---------- boot ----------
   (function boot(){
     mountUI();
     scheduleAuto();
