@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eticor Prüfprotokoll (dynamische Boxen + sofortige Signatur)
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Erzeugt strukturiertes Prüfprotokoll (PDF) mit dynamischen Boxen und zuverlässiger Signatur. Button unter "Aufgabe nicht eingehalten" auf Detailseiten.
 // @match        https://www.eticor-portal.com/*
 // @require      https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js
@@ -165,14 +165,37 @@
 function extract(){
   const d = {};
 
-  // ID bevorzugt aus sichtbarem Span "ID 76"
-  let idSpan = document.querySelector('span.MuiTypography-body1.css-i3b3zd');
-  if (!idSpan) {
-    // allgemeiner Fallback: irgendein body1-Span, der mit "ID " beginnt
-    idSpan = Array.from(document.querySelectorAll('span.MuiTypography-body1, .MuiTypography-body1'))
-      .find(el => /^ID\s+\d+/.test((el.textContent || '').trim()));
+  // --- robuste ID-Erkennung ---
+(function setId(){
+  // 1) bevorzugt: genau "ID <zahl>"
+  const nodes = Array.from(document.querySelectorAll(
+    'span,div,p,li,h1,h2,h3,td,strong,b'
+  ));
+  // Helper: sichtbarer Text
+  const getText = el => (el && el.textContent || '').replace(/\s+/g,' ').trim();
+
+  // Kandidaten mit exakt "ID 123"
+  const exact = nodes.map(n => getText(n))
+    .filter(t => /^ID\s*\d+$/i.test(t));
+
+  // Kandidaten mit beginnend "ID 123 ..." (falls exact nicht gefunden)
+  const starts = nodes.map(n => getText(n))
+    .filter(t => /^ID\s*\d+/i.test(t));
+
+  let idText = exact[0] || starts[0] || '';
+
+  // Falls nur ein längerer String vorhanden war, auf "ID 123" kürzen
+  if (idText) {
+    const m = idText.match(/ID\s*(\d+)/i);
+    if (m) idText = `ID ${m[1]}`;
   }
-  d.id = idSpan ? idSpan.textContent.trim() : `ID ${location.pathname.split('/').pop()}`;
+
+  // Fallback auf URL
+  if (!idText) idText = `ID ${location.pathname.split('/').pop()}`;
+
+  d.id = idText;
+})();
+
 
   // Breadcrumb/Pfad
   const crumbs = Array.from(document.querySelectorAll('nav, [class*="Breadcrumb"]'))
@@ -267,6 +290,7 @@ function generatePdf(signatureDataUrl){
 
   y = startY + boxH + padBetween;     // weiter unterhalb der Box
 }
+
 
 
   // Start
