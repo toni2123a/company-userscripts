@@ -42,7 +42,7 @@
     },
     {
       "id": "tool-dispatcher.partner",
-      "name": "DPD Dispatcher – Partner-Report Mailer (v3.1.0, IndexedDB)",
+      "name": "DPD Dispatcher – Partner-Report Mailer (v5.0.0, IndexedDB)",
       "version": "5.0.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js",
       "match": [
