@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Partner-Report Mailer (v3.1.0, IndexedDB)
+// @name         DPD Dispatcher – Partner-Report Mailer (v5.0.0, IndexedDB)
 // @namespace    bodo.dpd.custom
 // @version      5.0.0
 // @description  Gesamtübersicht an Verteiler + pro Systempartner Detail-Mail; Empfänger lokal speichern (IndexedDB), Export/Import; EML-Download optional; per-Zeile Senden-Button.
