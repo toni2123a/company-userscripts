@@ -81,6 +81,19 @@
       "description": "Button robust einhängen, Hausnummern aus API (deliveryAddress.houseNo) sauber sortieren, Trackinglinks anzeigen."
     },
     {
+      "id": "tool.eticor-protokoll",
+      "name": "Eticor Prüfprotokoll (dynamische Boxen + sofortige Signatur)",
+      "version": "1.4",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.eticor-protokoll.user.js",
+      "match": [
+        "https://www.eticor-portal.com/*"
+      ],
+      "grants": [
+        "GM_addStyle"
+      ],
+      "description": "Erzeugt strukturiertes Prüfprotokoll (PDF) mit dynamischen Boxen und zuverlässiger Signatur. Button unter \"Aufgabe nicht eingehalten\" auf Detailseiten."
+    },
+    {
       "id": "tool-openpricer",
       "name": "OpenPricer: Abholdepot hinzufügen",
       "version": "2.2.0",
