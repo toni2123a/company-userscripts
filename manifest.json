@@ -41,6 +41,19 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tool-dispatcher.partner",
+      "name": "DPD Dispatcher – Partner-Report Mailer (v3.1.0, IndexedDB)",
+      "version": "5.0.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_xmlhttpRequest"
+      ],
+      "description": "Gesamtübersicht an Verteiler + pro Systempartner Detail-Mail; Empfänger lokal speichern (IndexedDB), Export/Import; EML-Download optional; per-Zeile Senden-Button."
+    },
+    {
       "id": "tool-dipatcher2prio",
       "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
       "version": "3.2.3",
