@@ -83,7 +83,7 @@
     {
       "id": "tool.eticor-protokoll",
       "name": "Eticor Prüfprotokoll (dynamische Boxen + sofortige Signatur)",
-      "version": "1.4",
+      "version": "1.5",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.eticor-protokoll.user.js",
       "match": [
         "https://www.eticor-portal.com/*"
