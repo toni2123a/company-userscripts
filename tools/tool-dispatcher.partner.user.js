@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Partner-Report Mailer (v5.0.0, IndexedDB)
+// @name         DPD Dispatcher – Partner-Report Mailer (v5.1.0, IndexedDB)
 // @namespace    bodo.dpd.custom
-// @version      5.0.0
+// @version      5.1.0
 // @description  Gesamtübersicht an Verteiler + pro Systempartner Detail-Mail; Empfänger lokal speichern (IndexedDB), Export/Import; EML-Download optional; per-Zeile Senden-Button.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -70,6 +70,31 @@
   for (const k of Object.keys(def)) if (!(k in cur)) cur[k] = def[k];
   await idbPut('settings', cur);
   return cur;
+}
+async function exportDb(){
+  try{
+    const settings = await idbGet('settings','global');
+    const partners = await idbAll('partners');
+
+    const data = {
+      version: '3.1.0',
+      exportedAt: new Date().toISOString(),
+      // nur die 3 sichtbaren Felder exportieren
+      settings: {
+        subjectPrefix: settings?.subjectPrefix || 'Aktueller Tour.Report',
+        distTo:        settings?.distTo || '',
+        distCc:        settings?.distCc || ''
+      },
+      partners: partners || []
+    };
+
+    const json = JSON.stringify(data, null, 2);
+    downloadFile(`fvpr_export_${dateStamp()}.json`, 'application/json', json);
+    toast('Export erstellt');
+  }catch(e){
+    console.error('[fvpr] Export fehlgeschlagen', e);
+    toast('Export fehlgeschlagen', false);
+  }
 }
 
 function getGridViewport(){
@@ -325,16 +350,17 @@ let cfgDirty=false;
       </div>
       <div id="${NS}content"></div>
       <div class="${NS}cfg" style="display:none" id="${NS}cfgbox">
-        <h4 style="margin:0 0 6px 0;font:700 14px system-ui">Globale Einstellungen</h4>
-        <div class="${NS}row"><label>Betreff-Prefix</label><input id="${NS}cfg-subj" type="text"></div>
-        <div class="${NS}row"><label>Verteiler „An“</label><input id="${NS}cfg-to" type="text" placeholder="kommagetrennt: a@b.de, c@d.de"></div>
-        <div class="${NS}row"><label>Verteiler „CC“</label><input id="${NS}cfg-cc" type="text" placeholder="optional"></div>
-                  <button class="${NS}btn-sm" data-act="cfg-save">Speichern</button>
-          <button class="${NS}btn-sm" data-act="cfg-hide">Schließen</button>
-          <button class="${NS}btn-sm" data-act="export">Export</button>
-          <button class="${NS}btn-sm" data-act="import">Import</button>
-          <button class="${NS}btn-sm" data-act="cfg-test">Test aus DB lesen</button>
-        </div>
+  <h4 style="margin:0 0 6px 0;font:700 14px system-ui">Globale Einstellungen</h4>
+  <div class="${NS}row"><label>Betreff-Prefix</label><input id="${NS}cfg-subj" type="text"></div>
+  <div class="${NS}row"><label>Verteiler „An“</label><input id="${NS}cfg-to" type="text" placeholder="kommagetrennt: a@b.de, c@d.de"></div>
+  <div class="${NS}row"><label>Verteiler „CC“</label><input id="${NS}cfg-cc" type="text" placeholder="optional"></div>
+
+  <button class="${NS}btn-sm" data-act="cfg-save">Speichern</button>
+  <button class="${NS}btn-sm" data-act="cfg-hide">Schließen</button>
+  <button class="${NS}btn-sm" data-act="export">Export</button>
+  <button class="${NS}btn-sm" data-act="import">Import</button>
+</div>
+
         <div class="${NS}note">Per-Partner: In der Tabelle eine Zeile anklicken oder „✉︎“ drücken, um An/CC/Alias zu pflegen bzw. direkt zu senden.</div>
         <input type="file" id="${NS}impfile" accept="application/json" style="display:none">
       </div>
