@@ -42,8 +42,8 @@
     },
     {
       "id": "tool-dispatcher.partner",
-      "name": "DPD Dispatcher – Partner-Report Mailer (v5.1.0, IndexedDB)",
-      "version": "5.1.0",
+      "name": "DPD Dispatcher – Partner-Report Mailer (v5.4.0 preview+confirm+save)",
+      "version": "5.4.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
@@ -51,7 +51,7 @@
       "grants": [
         "GM_xmlhttpRequest"
       ],
-      "description": "Gesamtübersicht an Verteiler + pro Systempartner Detail-Mail; Empfänger lokal speichern (IndexedDB), Export/Import; EML-Download optional; per-Zeile Senden-Button."
+      "description": "✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten."
     },
     {
       "id": "tool-dipatcher2prio",
