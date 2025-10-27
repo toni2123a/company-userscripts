@@ -68,8 +68,8 @@
     },
     {
       "id": "tool-dispatcher2am2",
-      "name": "DPD Dispatcher – Prio/Express12 Monitoring (v4.0.0)",
-      "version": "4.0.0",
+      "name": "DPD Dispatcher – Prio/Express12 Monitoring (v4.9.1 + Auge/Scanserver)",
+      "version": "4.9.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
@@ -77,7 +77,7 @@
       "grants": [
         "none"
       ],
-      "description": "PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis."
+      "description": "PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver."
     },
     {
       "id": "tool-dpd360ad",
