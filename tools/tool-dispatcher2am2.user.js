@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring (v4.9.1 + Auge/Scanserver)
 // @namespace    bodo.dpd.custom
-// @version      4.9.1
+// @version      4.9.2
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -77,7 +77,7 @@
   function buildScanserverUrl(psnRaw){
     let psn = String(psnRaw||'').replace(/\D+/g,'');
     if (psn.length === 13) psn = '0' + psn;
-    const base = 'https://scanserver-d0010195.ssw.dpdit.de/cgi-bin/pa.cgi';
+    const base = 'https://scanserver-d0010157.ssw.dpdit.de/cgi-bin/pa.cgi';
     const params = new URLSearchParams();
     params.set('_url','file');
     params.set('_passwd','1234');
