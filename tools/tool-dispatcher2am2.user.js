@@ -80,7 +80,7 @@
     const base = 'https://scanserver-d0010157.ssw.dpdit.de/cgi-bin/pa.cgi';
     const params = new URLSearchParams();
     params.set('_url','file');
-    params.set('_passwd','1234');
+    params.set('_passwd','87654321');
     params.set('_disp','3');
     params.set('_pivotxx','0');
     params.set('_rastert','4');
