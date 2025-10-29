@@ -68,7 +68,7 @@
     },
     {
       "id": "tool-dispatcher2am2",
-      "name": "DPD Dispatcher – Prio/Express12 Monitoring (v4.9.2 + Auge/Scanserver)",
+      "name": "DPD Dispatcher – Prio/Express12 Monitoring (v4.9.3 + Auge/Scanserver)",
       "version": "4.9.3",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
