@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Prio/Express12 Monitoring (v4.9.3 + Auge/Scanserver)
+// @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
 // @version      4.9.3
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
