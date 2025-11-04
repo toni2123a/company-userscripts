@@ -42,19 +42,16 @@
     },
     {
       "id": "tools-dispatcherabholer",
-      "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle (robust)",
-      "version": "1.2.0",
+      "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
+      "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
       "grants": [
-        "GM_getValue",
-        "GM_setValue",
-        "GM_listValues",
-        "GM_deleteValue"
+        "none"
       ],
-      "description": "Kundennummern robust in GM-Speicher sichern und Detail-Liste abrufen."
+      "description": "Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden."
     },
     {
       "id": "tool-dispatcher.partner",
