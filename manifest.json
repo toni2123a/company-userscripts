@@ -43,7 +43,7 @@
     {
       "id": "tools-dispatcher-abholer",
       "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
-      "version": "3.0.0",
+      "version": "3.1.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
@@ -51,7 +51,7 @@
       "grants": [
         "none"
       ],
-      "description": "Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden."
+      "description": "Kundennummern importieren/exportieren, komplette Tagesliste per API laden (ohne customerNo/customerNumbers) und anschließend client-seitig filtern."
     },
     {
       "id": "tool-dispatcher.partner",
