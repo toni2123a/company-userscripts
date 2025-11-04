@@ -41,6 +41,22 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tools-dispatcherabholer",
+      "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle (robust)",
+      "version": "1.2.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_getValue",
+        "GM_setValue",
+        "GM_listValues",
+        "GM_deleteValue"
+      ],
+      "description": "Kundennummern robust in GM-Speicher sichern und Detail-Liste abrufen."
+    },
+    {
       "id": "tool-dispatcher.partner",
       "name": "DPD Dispatcher – Partner-Report Mailer (v5.4.0 preview+confirm+save)",
       "version": "5.4.0",
@@ -118,19 +134,6 @@
         "none"
       ],
       "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu (nun ganz vorne)"
-    },
-    {
-      "id": "tools-dispatcherabholer",
-      "name": "tools-dispatcherabholer",
-      "version": "0.0.0",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
-      "match": [
-        "*://*/*"
-      ],
-      "grants": [
-        "none"
-      ],
-      "description": ""
     },
     {
       "id": "tool-zerberus",
