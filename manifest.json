@@ -43,7 +43,7 @@
     {
       "id": "tools-dispatcherabholer",
       "name": "DPD Dispatcher – Neu- Reklakunden Kontrolle",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
