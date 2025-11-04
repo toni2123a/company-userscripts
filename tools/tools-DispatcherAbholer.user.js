@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
+// @name         DPD Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
 // @version      2.0.0
 // @description  Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden.
