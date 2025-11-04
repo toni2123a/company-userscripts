@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      3.0.0
-// @description  Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden.
+// @version      3.1.0
+// @description  Kundennummern importieren/exportieren, komplette Tagesliste per API laden (ohne customerNo/customerNumbers) und anschließend client-seitig filtern.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        none
@@ -11,20 +11,20 @@
 (function(){
 'use strict';
 
-/* ======================= Basics & Storage (localStorage) ======================= */
+/* ======================= Basics & Storage ======================= */
 const NS = 'kn-';
 const LS_KEY = 'kn.saved.customers';
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const digits = s => String(s||'').replace(/\D+/g,'');
 const normShort = s => digits(s).replace(/^0+/,'');
+
 function loadList(){ try{ const a=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch{ return []; } }
 function saveList(arr){ const clean=[...new Set((arr||[]).map(normShort).filter(Boolean))]; localStorage.setItem(LS_KEY, JSON.stringify(clean)); renderList(); }
 
-/* ======================= Request-Capture wie PRIO/EXP12 ======================= */
+/* ======================= Request Capture (Headers+Basis-URL klonen) ======================= */
 let lastOkRequest = null;
 
-// fetch hook
 (function hook(){
   if (!window.__kn_fetch_hooked && window.fetch){
     const orig=window.fetch;
@@ -35,6 +35,7 @@ let lastOkRequest = null;
         if (urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
           const u = new URL(urlStr, location.origin);
           const q = u.searchParams;
+          // wir klonen NUR Listen-Requests (nicht parcelNumber)
           if (!q.get('parcelNumber')) {
             const h = {};
             const src = (init && init.headers) || (i && i.headers);
@@ -143,8 +144,8 @@ function mountUI(){
     </div>`;
   document.body.appendChild(panel);
 
-  // hidden file input
-  const fileInput=document.createElement('input'); fileInput.type='file'; fileInput.accept='.txt,.csv,.json'; fileInput.style.display='none'; fileInput.id=NS+'file';
+  const fileInput=document.createElement('input');
+  fileInput.type='file'; fileInput.accept='.txt,.csv,.json'; fileInput.style.display='none'; fileInput.id=NS+'file';
   document.body.appendChild(fileInput);
 
   // Events
@@ -209,7 +210,7 @@ function renderList(){
   });
 }
 
-/* ======================= API helpers (wie im PRIO/EXP12) ======================= */
+/* ======================= API: OHNE Kundennummern, danach client-seitig filtern ======================= */
 function buildHeaders(h){
   const H=new Headers();
   try{
@@ -223,23 +224,38 @@ function buildHeaders(h){
   }catch{}
   return H;
 }
-function buildUrlSameView(base, page){
+
+// baut eine minimal bereinigte URL ohne customerNo/customerNumbers
+function buildUrlAll(base, page){
   const u=new URL(base.href);
   const q=u.searchParams;
+
+  // ALLE kundenbezogenen Filter raus
+  ['customerNo','customerNumber','customerNumbers','name','city','pcode','street','houseno'].forEach(k=>q.delete(k));
+  // sonstige „Rauschen“-Filter, die gern leer bleiben – Schaden vermeiden
+  ['sort','scanCode','receiptId','insertUserName','modifyUserName','elements'].forEach(k=>q.delete(k));
+
   q.set('page', String(page));
   q.set('pageSize','500');
-  q.set('orderTypes', 'PICKUP'); // <<< nur Abhol-Aufträge
-  q.delete('parcelNumber'); // nur Listen
+  q.set('orderTypes','PICKUP');
+  q.set('active','true');
+
+  // Datum aus letztem Request übernehmen oder heute
+  const today = new Date().toISOString().slice(0,10);
+  q.set('dateFrom', u.searchParams.get('dateFrom') || today);
+  q.set('dateTo',   u.searchParams.get('dateTo')   || today);
+
   u.search=q.toString();
   return u;
 }
-async function fetchPaged(builder){
-  if(!lastOkRequest) throw new Error('Kein pickup-delivery Request erkannt. Bitte einmal die Liste laden.');
+
+async function fetchPagedAll(){
+  if(!lastOkRequest) throw new Error('Kein pickup-delivery Request erkannt. Bitte einmal die normale Liste laden.');
   const headers=buildHeaders(lastOkRequest.headers);
   const size=500, maxPages=60;
   let page=1, rows=[];
   while(page<=maxPages){
-    const u=builder(lastOkRequest.url, page);
+    const u=buildUrlAll(lastOkRequest.url, page);
     const r=await fetch(u.toString(), {credentials:'include', headers});
     if(!r.ok) break;
     const j=await r.json();
@@ -251,65 +267,10 @@ async function fetchPaged(builder){
   return rows;
 }
 
-/* ======================= DOM Map: Kundenname/Status/Zeitfenster ======================= */
-const lower = s => String(s||'').toLowerCase();
-const normTxt = s => String(s||'').replace(/\s+/g,' ').trim();
-
-function readDomMap(){
-  const map=new Map();
-  const thead=document.querySelector('thead[class*="Datagrid"]');
-  const tbody=thead?.parentElement?.parentElement?.querySelector('tbody');
-  if(!thead||!tbody) return map;
-
-  const ths=Array.from(thead.querySelectorAll('th')).filter(th=>th.className.includes('DraggableHeader__CustomTh'));
-  const labels=ths.map(th=>lower(normTxt(th.querySelector('label')?.textContent || th.textContent)));
-
-  const firstRow = tbody.querySelector('tr'); if(!firstRow) return map;
-  const tdsFirst = Array.from(firstRow.children);
-  const selectionOffset = (tdsFirst[0] && tdsFirst[0].querySelector('input[type="checkbox"]')) ? 1 : 0;
-
-  const colIndex={}; labels.forEach((label, idx)=> colIndex[label]=selectionOffset+idx);
-  const idx = name => (colIndex[lower(name)] ?? -1);
-
-  const C = {
-    kundennummer: idx('kundennummer'),
-    kundenname:   idx('Name'),
-    predict:      idx('predict-zeitfenster'),
-    standard:     idx('standard-zeitfenster'),
-    zeit1:        idx('zeitfenster 1 z / a'),
-    zeit2:        idx('zeitfenster 2 z / a'),
-    status:       idx('status')
-  };
-
-  const get = (tr,i)=> i>=0 ? normTxt(tr.children[i]?.textContent || '') : '';
-
-  function getStatus(tr){
-    if (C.status < 0) return '';
-    const cell = tr.children[C.status];
-    const title = cell?.querySelector('div[title]')?.getAttribute('title');
-    return normTxt(title || cell?.textContent || '');
-  }
-
-  for(const tr of Array.from(tbody.querySelectorAll('tr'))){
-    const raw = get(tr, C.kundennummer);
-    const key = normShort(raw);
-    if(!key) continue;
-    const name = get(tr, C.kundenname);
-    const pred = get(tr, C.predict) || get(tr, C.standard);
-    const pickup = [get(tr, C.zeit1), get(tr, C.zeit2)].filter(Boolean).join(' | ');
-    const status = getStatus(tr);
-    map.set(key, { name, pred, pickup, status });
-  }
-  return map;
-}
-
-/* ======================= Laden + Rendern ======================= */
-function getCustomerFromRow(r){
-  return r.customerNumber || r.customerNo || r.customer || r.customerId || r.kundennummer || '';
-}
+/* ======================= Feld-Getter (gemäß deiner API) ======================= */
 function hhmm(ts){
   if (!ts) return '';
-  if (typeof ts==='string' && /\d{1,2}:\d{2}/.test(ts)) return ts;
+  if (typeof ts==='string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(ts)) return ts.slice(0,5);
   const d=new Date(ts); if (isNaN(d)) return '';
   return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
 }
@@ -317,8 +278,34 @@ function buildWindow(from,to){
   const a=hhmm(from), b=hhmm(to);
   return (a||b) ? `${a}–${b}` : '';
 }
+
+function getCustomerFromRow(r){
+  // customerNo ist ein Array mit String
+  const raw = Array.isArray(r.customerNo) ? (r.customerNo[0] || '') :
+              (r.customerNumber || r.customer || r.customerId || '');
+  return String(raw);
+}
+function getName(r){ return r.name ?? (Array.isArray(r.customerName) ? r.customerName[0] : r.customerName) ?? ''; }
+function getStreet(r){
+  const s  = r.street ?? '';
+  const hn = r.houseno ?? r.houseNumber ?? '';
+  return [s, hn].filter(Boolean).join(' ');
+}
+function getPredict(r){
+  const a = r.from2 ?? r.timeFrom2 ?? '';
+  const b = r.to2   ?? r.timeTo2   ?? '';
+  return buildWindow(a,b);
+}
+function getPickup(r){
+  const w1 = buildWindow(r.timeFrom1, r.timeTo1);
+  const w2 = buildWindow(r.timeFrom2, r.timeTo2);
+  return [w1,w2].filter(Boolean).join(' | ');
+}
+function getStatus(r){ return r.pickupStatus ?? r.deliveryStatus ?? r.status ?? ''; }
+
+/* ======================= Filtern & Rendern ======================= */
 function matchesSaved(cellRaw, wantSet){
-  const raw=digits(cellRaw); const pure=raw.replace(/^0+/,'');
+  const raw=digits(cellRaw); const pure=raw.replace(/^0+/, '');
   for(const w of wantSet){
     if(!w) continue;
     if (pure===w) return true;
@@ -332,37 +319,34 @@ async function loadDetails(){
   const out=document.getElementById(NS+'out');
   out.innerHTML = '<div class="'+NS+'muted">Lade …</div>';
 
-  const wantSet=new Set(loadList().map(normShort));
-  if(!wantSet.size){ out.innerHTML='<div class="'+NS+'muted">Keine Nummern gespeichert.</div>'; return; }
+  const savedShorts = loadList().map(normShort).filter(Boolean);
+  if(!savedShorts.length){
+    out.innerHTML='<div class="'+NS+'muted">Keine Nummern gespeichert.</div>';
+    return;
+  }
+  const wantSet = new Set(savedShorts);
 
   let rowsApi=[];
   try{
-    rowsApi = await fetchPaged(buildUrlSameView);
-  }catch(e){
+    rowsApi = await fetchPagedAll(); // OHNE Kundennummern – komplette Tagesliste
+  }catch{
     out.innerHTML = `<div class="${NS}muted">Kein API-Request erkannt. Bitte einmal die normale Liste laden und erneut versuchen.</div>`;
     return;
   }
 
-  const domMap = readDomMap();
-
   const rows = rowsApi
     .filter(r => matchesSaved(getCustomerFromRow(r), wantSet))
-    .map(r=>{
-      const numRaw = getCustomerFromRow(r);
-      const key = normShort(numRaw);
-      const dom = domMap.get(key) || {};
-      return {
-        number: key,
-        tour: r.tour || '',
-        name: dom.name || r.customerName || r.name || '',
-        street: [r.street || r.addressLine1 || '', r.houseNumber || r.houseno || ''].filter(Boolean).join(' '),
-        plz: digits(r.postalCode || r.zip || ''),
-        ort: r.city || '',
-        predict: dom.pred || buildWindow(r.from2||r.predictFrom||r.predictStart, r.to2||r.predictTo||r.predictEnd),
-        pickup: dom.pickup || buildWindow(r.pickupFrom||r.pickupStart, r.pickupTo||r.pickupEnd),
-        status: dom.status || (r.statusName||r.statusText||r.stateText||r.status||r.deliveryStatus||r.parcelStatus||'—')
-      };
-    });
+    .map(r => ({
+      number: normShort(getCustomerFromRow(r)),
+      tour:   r.tour || '',
+      name:   getName(r)   || '—',
+      street: getStreet(r) || '—',
+      plz:    digits(r.postalCode || r.zip || ''),
+      ort:    r.city || '',
+      predict:getPredict(r) || '—',
+      pickup: getPickup(r)  || '—',
+      status: getStatus(r)  || '—'
+    }));
 
   renderTable(rows);
 }
@@ -378,7 +362,7 @@ function renderTable(rows){
   out.innerHTML = `
     <table class="${NS}tbl">
       <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${body.length? body.map(tr=>`<tr>${tr}</tr>`).join('') : `<tr><td colspan="10">Keine Treffer (prüf gespeicherte Nummern oder Ansicht).</td></tr>`}</tbody>
+      <tbody>${body.length? body.map(tr=>`<tr>${tr}</tr>`).join('') : `<tr><td colspan="10">Keine Treffer.</td></tr>`}</tbody>
     </table>`;
 }
 
