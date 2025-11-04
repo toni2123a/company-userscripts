@@ -120,6 +120,19 @@
       "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu (nun ganz vorne)"
     },
     {
+      "id": "tools-dispatcherabholer",
+      "name": "tools-dispatcherabholer",
+      "version": "0.0.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
+      "match": [
+        "*://*/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": ""
+    },
+    {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360",
       "version": "1.3c",
