@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Neu- Reklakunden Kontrolle
+// @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      2.0.1
+// @version      3.0.0
 // @description  Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -228,6 +228,7 @@ function buildUrlSameView(base, page){
   const q=u.searchParams;
   q.set('page', String(page));
   q.set('pageSize','500');
+  q.set('orderTypes', 'PICKUP'); // <<< nur Abhol-Aufträge
   q.delete('parcelNumber'); // nur Listen
   u.search=q.toString();
   return u;
@@ -272,7 +273,7 @@ function readDomMap(){
 
   const C = {
     kundennummer: idx('kundennummer'),
-    kundenname:   idx('kundenname'),
+    kundenname:   idx('Name'),
     predict:      idx('predict-zeitfenster'),
     standard:     idx('standard-zeitfenster'),
     zeit1:        idx('zeitfenster 1 z / a'),
@@ -352,7 +353,6 @@ async function loadDetails(){
       const dom = domMap.get(key) || {};
       return {
         number: key,
-        systempartner: r.depot || r.systemPartner || '',
         tour: r.tour || '',
         name: dom.name || r.customerName || r.name || '',
         street: [r.street || r.addressLine1 || '', r.houseNumber || r.houseno || ''].filter(Boolean).join(' '),
@@ -369,9 +369,9 @@ async function loadDetails(){
 
 function renderTable(rows){
   const out=document.getElementById(NS+'out');
-  const head=['Kundennr.','Systempartner','Tour','Kundenname','Straße','PLZ','Ort','Predict Zeitfenster','Zeitfenster Abholung','Status'];
+  const head=['Kundennr.','Tour','Kundenname','Straße','PLZ','Ort','Predict Zeitfenster','Zeitfenster Abholung','Status'];
   const body=(rows||[]).map(r=>[
-    r.number||'—', r.systempartner||'—', r.tour||'—', r.name||'—',
+    r.number||'—',  r.tour||'—', r.name||'—',
     r.street||'—', r.plz||'—', r.ort||'—', r.predict||'—', r.pickup||'—', r.status||'—'
   ].map(v=>`<td>${esc(v)}</td>`).join(''));
 
