@@ -41,10 +41,10 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
-      "id": "tools-dispatcherabholer",
+      "id": "tools-dispatcher-abholer",
       "name": "DPD Dispatcher – Neu- Reklakunden Kontrolle",
       "version": "2.0.1",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
