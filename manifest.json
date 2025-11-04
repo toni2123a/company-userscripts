@@ -42,7 +42,7 @@
     },
     {
       "id": "tools-dispatcherabholer",
-      "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
+      "name": "DPD Dispatcher – Neu-/Rekla-Kunden Kontrolle",
       "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-DispatcherAbholer.user.js",
       "match": [
