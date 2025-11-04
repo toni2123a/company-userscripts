@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OpenPricer: Abholdepot hinzufügen
 // @namespace    dpd-openpricer
-// @version      2.2.0
-// @description  Fügt eine Spalte "Abholdepot" in der Übersicht hinzu 
+// @version      2.3.0
+// @description  Fügt eine Spalte "Abholdepot" in der Übersicht hinzu (nun ganz vorne)
 // @match        https://dpdde.openpricer.com/app/rfq/list*
 // @run-at       document-idle
 // @grant        none
@@ -30,9 +30,6 @@
       function cacheSet(id,val){ try{ sessionStorage.setItem(cacheKey(id), JSON.stringify({v:val,t:Date.now()})); }catch{} }
 
       async function fetchAgency(id){
-        // 1) OPS/requirements (enthält Abholung)
-        // 2) Standardseite
-        // 3) SimpleQuote-Fallback
         const urls = [
           \`/app/rfq/\${encodeURIComponent(id)}/requirements\`,
           \`/app/rfq/\${encodeURIComponent(id)}\`,
@@ -53,11 +50,16 @@
       }
 
       function ensureColumn(go){
-        if (go.columnApi.getColumn(COL_FIELD)) return;
+        // Falls schon vorhanden: nach ganz vorne schieben
+        if (go.columnApi.getColumn(COL_FIELD)) {
+          try { go.columnApi.moveColumn(COL_FIELD, 0); } catch(e){}
+          return;
+        }
+        // Neue Column-Def an den Anfang setzen
         const defs = go.columnApi.getAllGridColumns().map(c => c.getColDef());
-        defs.push({
+        defs.unshift({
           colId: COL_FIELD,
-          field: COL_FIELD,            // wichtig: echtes Feld, kein valueGetter
+          field: COL_FIELD,            // echtes Feld
           headerName: COL_TITLE,
           cellClass: ' ag-left-aligned-cell ',
           sortable: true,
@@ -66,6 +68,8 @@
           width: 180
         });
         go.api.setColumnDefs(defs);
+        // Sicherheitshalber direkt an Position 0 schieben
+        try { go.columnApi.moveColumn(COL_FIELD, 0); } catch(e){}
       }
 
       function processRows(go){
@@ -107,8 +111,14 @@
         const go = gridOptionsAgGridrfqs;
         ensureColumn(go);
         processRows(go);
-        go.api.addEventListener('firstDataRendered', ()=>{ ensureColumn(go); processRows(go); });
-        go.api.addEventListener('modelUpdated',       ()=>{ ensureColumn(go); processRows(go); });
+        go.api.addEventListener('firstDataRendered', ()=>{
+          ensureColumn(go);
+          processRows(go);
+        });
+        go.api.addEventListener('modelUpdated', ()=>{
+          ensureColumn(go);
+          processRows(go);
+        });
       }
 
       (function wait(){
