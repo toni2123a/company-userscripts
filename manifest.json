@@ -109,7 +109,7 @@
     {
       "id": "tool-openpricer",
       "name": "OpenPricer: Abholdepot hinzufügen",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-OpenPricer.user.js",
       "match": [
         "https://dpdde.openpricer.com/app/rfq/list*"
@@ -117,7 +117,7 @@
       "grants": [
         "none"
       ],
-      "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu"
+      "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu (nun ganz vorne)"
     },
     {
       "id": "tool-zerberus",
