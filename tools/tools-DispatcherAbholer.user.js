@@ -1,83 +1,94 @@
 // ==UserScript==
-// @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle (robust)
+// @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      1.2.0
-// @description  Kundennummern robust in GM-Speicher sichern und Detail-Liste abrufen.
+// @version      2.0.0
+// @description  Kundennummern importieren/exportieren, per captured pickup-delivery-Request laden, DOM-Werte (Name/Status/Zeitfenster) mitverwenden.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_listValues
-// @grant        GM_deleteValue
+// @grant        none
 // ==/UserScript==
 
 (function(){
 'use strict';
 
-/* ======================= Grundkonstanten/Helper ======================= */
-const NS = 'kn-';                            // Namensraum (kollisionsfrei zu fvpr-)
-const GM_KEY_LIST = 'kn.saved.customers';    // Nummernliste
-const GM_KEY_CFG  = 'kn.config';             // Konfig
-const LS_KEY      = 'kn-saved-customers';    // Alt (Migration)
-const LS_CFG      = 'kn-config';             // Alt (Migration)
-
+/* ======================= Basics & Storage (localStorage) ======================= */
+const NS = 'kn-';
+const LS_KEY = 'kn.saved.customers';
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
-const fmtHHMM = d => d ? new Date(d).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : '';
+const digits = s => String(s||'').replace(/\D+/g,'');
+const normShort = s => digits(s).replace(/^0+/,'');
+function loadList(){ try{ const a=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch{ return []; } }
+function saveList(arr){ const clean=[...new Set((arr||[]).map(normShort).filter(Boolean))]; localStorage.setItem(LS_KEY, JSON.stringify(clean)); renderList(); }
 
-/* ======================= GM-Storage (robust) ========================= */
-const gmGet = (k, def=null) => { try { const v=GM_getValue(k); return (v==null||v==='')?def:JSON.parse(v); } catch { return def; } };
-const gmSet = (k, v) => { try { GM_setValue(k, JSON.stringify(v)); } catch {} };
-const gmDel = (k) => { try { GM_deleteValue(k); } catch {} };
+/* ======================= Request-Capture wie PRIO/EXP12 ======================= */
+let lastOkRequest = null;
 
-// Einmalige Migration von localStorage -> GM_*
-(function migrateOnce(){
-  const FLAG='kn.migrated.v1';
-  if (gmGet(FLAG,false)) return;
-  try{
-    let oldList=[]; let oldCfg=null;
-    try{ oldList=JSON.parse(localStorage.getItem(LS_KEY)||'[]')||[]; }catch{}
-    try{ oldCfg =JSON.parse(localStorage.getItem(LS_CFG)||'null'); }catch{}
-    if(Array.isArray(oldList)&&oldList.length) gmSet(GM_KEY_LIST, Array.from(new Set(oldList)));
-    if(oldCfg && typeof oldCfg==='object') gmSet(GM_KEY_CFG, oldCfg);
-    localStorage.removeItem(LS_KEY);
-    localStorage.removeItem(LS_CFG);
-  }catch{}
-  gmSet(FLAG,true);
+// fetch hook
+(function hook(){
+  if (!window.__kn_fetch_hooked && window.fetch){
+    const orig=window.fetch;
+    window.fetch = async function(i, init={}){
+      const res = await orig(i, init);
+      try{
+        const urlStr = typeof i==='string' ? i : (i && i.url) || '';
+        if (urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
+          const u = new URL(urlStr, location.origin);
+          const q = u.searchParams;
+          if (!q.get('parcelNumber')) {
+            const h = {};
+            const src = (init && init.headers) || (i && i.headers);
+            if (src){
+              if (src.forEach) src.forEach((v,k)=>h[String(k).toLowerCase()]=String(v));
+              else if (Array.isArray(src)) src.forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
+              else Object.entries(src).forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
+            }
+            if (!h['authorization']){
+              const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+              if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+            }
+            lastOkRequest = { url: u, headers: h };
+            const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
+          }
+        }
+      }catch{}
+      return res;
+    };
+    window.__kn_fetch_hooked = true;
+  }
+
+  if (!window.__kn_xhr_hooked && window.XMLHttpRequest){
+    const X=window.XMLHttpRequest;
+    const open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
+    X.prototype.open=function(m,u){ this.__kn_url=(typeof u==='string')?new URL(u,location.origin):null; this.__kn_headers={}; return open.apply(this,arguments); };
+    X.prototype.setRequestHeader=function(k,v){ try{ this.__kn_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this,arguments); };
+    X.prototype.send=function(){
+      const onload=()=>{
+        try{
+          if (this.__kn_url && this.__kn_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){
+            const q=this.__kn_url.searchParams;
+            if (!q.get('parcelNumber')){
+              if (!this.__kn_headers['authorization']){
+                const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+                if (m) this.__kn_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+              }
+              lastOkRequest = { url:this.__kn_url, headers:this.__kn_headers };
+              const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
+            }
+          }
+        }catch{}
+        this.removeEventListener('load', onload);
+      };
+      this.addEventListener('load', onload);
+      return send.apply(this,arguments);
+    };
+    window.__kn_xhr_hooked = true;
+  }
 })();
 
-function loadCfg(){
-  const base={ shrinkZeroBlocks:false };
-  const cur=gmGet(GM_KEY_CFG,null);
-  if(!cur || typeof cur!=='object'){ gmSet(GM_KEY_CFG, base); return base; }
-  for(const k of Object.keys(base)) if(!(k in cur)) cur[k]=base[k];
-  gmSet(GM_KEY_CFG, cur);
-  return cur;
-}
-function saveCfg(){ gmSet(GM_KEY_CFG, cfg); }
-
-function loadList(){
-  const arr=gmGet(GM_KEY_LIST, []);
-  return Array.isArray(arr)?arr:[];
-}
-function saveList(arr){
-  const clean=Array.from(new Set((arr||[]).filter(Boolean)));
-  gmSet(GM_KEY_LIST, clean);
-  renderList();
-}
-
-/* ======================= Nummern-Normalisierung ====================== */
-const stripLeadingZeros = s => String(s||'').replace(/\D+/g,'').replace(/^0+/,'');
-function shrinkZeroBlocks(s){ return String(s||'').replace(/0{5,}/g,'0'); } // „vor den füllenden Nullen“
-function normalizeCustomer(raw){
-  let x = stripLeadingZeros(raw);
-  if (cfg.shrinkZeroBlocks) x = shrinkZeroBlocks(x);
-  return x;
-}
-
-/* ======================= Styles ===================================== */
+/* ======================= Styles + UI ======================= */
 function ensureStyles(){
-  if(document.getElementById(NS+'style')) return;
+  if (document.getElementById(NS+'style')) return;
   const s=document.createElement('style'); s.id=NS+'style';
   s.textContent=`
   .${NS}wrap{position:fixed;top:8px;left:calc(50% - 240px);display:flex;gap:8px;z-index:2147483646}
@@ -91,184 +102,114 @@ function ensureStyles(){
   .${NS}tbl th,.${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top}
   .${NS}tbl th{position:sticky;top:0;background:#fafafa;text-align:left}
   .${NS}list{padding:8px 12px}
-  .${NS}muted{opacity:.7}`;
+  .${NS}muted{opacity:.7}
+  #fvpr-wrap{ left: calc(50% - 420px) !important; }
+  `;
   document.head.appendChild(s);
 }
 
-/* ======================= UI Mounting ================================= */
-const cfg = loadCfg();
-tryMountUI();
-setInterval(tryMountUI, 1500);
-new MutationObserver(()=>tryMountUI()).observe(document.documentElement,{childList:true,subtree:true});
+function mountUI(){
+  if (!document.body || document.getElementById(NS+'btn')) return;
 
-function tryMountUI(){
-  if (!document.body) return;
-  if (document.getElementById(NS+'btn')) return;
-
-  // Button direkt in fvpr-wrap setzen, falls vorhanden
   const fvprWrap = document.getElementById('fvpr-wrap');
-  const btn = document.createElement('button');
-  btn.id = NS+'btn';
-  btn.type = 'button';
-  btn.className = NS+'btn';
-  btn.textContent = 'Neu-/Rekla-Kunden Kontrolle';
+  const btn=document.createElement('button');
+  btn.id=NS+'btn'; btn.type='button'; btn.className=NS+'btn';
+  btn.textContent='Neu-/Rekla-Kunden Kontrolle';
   btn.addEventListener('click', ()=>togglePanel());
 
-  if (fvprWrap) {
-    fvprWrap.appendChild(btn);
-  } else {
-    // Fallback: eigener Wrap, gleiche Position/Optik wie fvpr
-    const wrap = document.createElement('div');
-    wrap.className = NS+'wrap';
-    wrap.appendChild(btn);
-    document.body.appendChild(wrap);
-  }
+  if (fvprWrap) fvprWrap.insertBefore(btn, fvprWrap.firstElementChild||null);
+  else { const wrap=document.createElement('div'); wrap.className=NS+'wrap'; wrap.appendChild(btn); document.body.appendChild(wrap); }
 
-  // Panel
-  const panel = document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
-  panel.innerHTML = `
+  const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
+  panel.innerHTML=`
     <div class="${NS}head">
       <div class="${NS}row">
         <span>Kundennummern:</span>
         <input id="${NS}add" class="${NS}inp" placeholder="Nummer eingeben, Enter zum Hinzufügen">
         <button class="${NS}btn" id="${NS}addBtn" type="button">Hinzufügen</button>
-        <button class="${NS}btn" id="${NS}fromDom" type="button">+ Aus Auswahl</button>
-        <button class="${NS}btn" id="${NS}paste" type="button">+ Aus Zwischenablage</button>
-        <button class="${NS}btn" id="${NS}clear" type="button">Liste leeren</button>
+        <button class="${NS}btn" id="${NS}import" type="button">Import</button>
+        <button class="${NS}btn" id="${NS}export" type="button">Export</button>
+        <button class="${NS}btn" id="${NS}clear"  type="button">Liste leeren</button>
       </div>
       <div class="${NS}row">
-        <label class="${NS}chip"><input type="checkbox" id="${NS}shrink"> Nullen-Block kürzen</label>
-        <button class="${NS}btn" id="${NS}load" type="button">Liste laden (API)</button>
+        <button class="${NS}btn" id="${NS}load"  type="button">Liste laden (API)</button>
         <button class="${NS}btn" id="${NS}close" type="button">Schließen</button>
       </div>
     </div>
     <div class="${NS}list">
-      <div class="${NS}row ${NS}muted" style="margin-bottom:8px">Hinweis: Einmal eine normale Suche/Liste in Dispatcher laden, damit ein API-Request geklont werden kann.</div>
+      <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Einmal die normale Liste laden. Der letzte pickup-delivery-Request wird geklont.</div>
       <div id="${NS}saved"></div>
       <div id="${NS}out"></div>
     </div>`;
   document.body.appendChild(panel);
+
+  // hidden file input
+  const fileInput=document.createElement('input'); fileInput.type='file'; fileInput.accept='.txt,.csv,.json'; fileInput.style.display='none'; fileInput.id=NS+'file';
+  document.body.appendChild(fileInput);
 
   // Events
   document.getElementById(NS+'close').onclick = ()=>togglePanel(false);
   document.getElementById(NS+'addBtn').onclick = onAdd;
   document.getElementById(NS+'add').addEventListener('keydown', e=>{ if(e.key==='Enter') onAdd(); });
   document.getElementById(NS+'clear').onclick = ()=>{ if(confirm('Liste wirklich leeren?')) saveList([]); };
-  document.getElementById(NS+'paste').onclick = onPaste;
-  document.getElementById(NS+'fromDom').onclick = addFromDom;
+  document.getElementById(NS+'import').onclick = ()=>fileInput.click();
+  document.getElementById(NS+'export').onclick = onExport;
+  fileInput.addEventListener('change', onImport);
   document.getElementById(NS+'load').onclick = loadDetails;
-  document.getElementById(NS+'shrink').checked = !!cfg.shrinkZeroBlocks;
-  document.getElementById(NS+'shrink').onchange = (e)=>{ cfg.shrinkZeroBlocks=!!e.target.checked; saveCfg(); };
 
   ensureStyles();
   renderList();
 }
 
 function togglePanel(force){
-  const panel=document.getElementById(NS+'panel');
-  const show = force!=null ? !!force : panel.style.display==='none';
-  panel.style.display = show ? '' : 'none';
+  const panel=document.getElementById(NS+'panel'); if(!panel) return;
+  const isHidden=getComputedStyle(panel).display==='none';
+  const show = force!=null ? !!force : isHidden;
+  panel.style.setProperty('display', show?'block':'none', 'important');
   if (show) renderList();
 }
+document.addEventListener('DOMContentLoaded', mountUI);
+new MutationObserver(()=>mountUI()).observe(document.documentElement,{childList:true,subtree:true});
 
-/* ======================= Eingabe / Liste ============================= */
+/* ======================= Import/Export ======================= */
 function onAdd(){
   const inp=document.getElementById(NS+'add');
-  const v=normalizeCustomer(inp.value);
-  if(!v) return;
-  const list=loadList(); list.push(v); saveList(list);
-  inp.value='';
+  const v=normShort(inp.value); if(!v) return;
+  const list=loadList(); list.push(v); saveList(list); inp.value='';
 }
-async function onPaste(){
+async function onImport(e){
+  const file=e.target.files && e.target.files[0]; e.target.value=''; if(!file) return;
   try{
-    const t = await navigator.clipboard.readText();
-    if (!t) return;
-    const found = Array.from(t.matchAll(/\d{6,}/g)).map(m=>normalizeCustomer(m[0]));
-    if (!found.length) return;
-    const list = loadList(); list.push(...found); saveList(list);
-  }catch(e){ alert('Zwischenablage nicht lesbar: ' + e); }
+    const txt=await file.text(); let nums=[];
+    try{ const j=JSON.parse(txt); if(Array.isArray(j)) nums=j.map(normShort); }catch{}
+    if(!nums.length) nums=[...String(txt).matchAll(/\d{5,}/g)].map(m=>normShort(m[0]));
+    if(!nums.length){ alert('Im Import keine Kundennummern gefunden.'); return; }
+    const list=loadList(); list.push(...nums); saveList(list);
+    alert(`Import OK: ${nums.length} Nummern.`);
+  }catch(err){ alert('Import fehlgeschlagen: '+(err&&err.message||err)); }
 }
-// Liest Kundennummern aus sichtbarer Tabelle/Zeilen
-function addFromDom(){
-  const rows = Array.from(document.querySelectorAll('tbody tr, [role="row"]'));
-  const nums = [];
-  for (const tr of rows){
-    const txt = (tr.textContent||'').trim();
-    const matches = txt.match(/\b\d{6,}\b/g);
-    if (matches) nums.push(...matches.map(normalizeCustomer));
-  }
-  if (!nums.length) { alert('Keine Kundennummern in der Tabelle erkannt.'); return; }
-  const list = loadList(); list.push(...nums); saveList(list);
+function onExport(){
+  const content=(loadList()).join('\n');
+  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download='kundennummern.txt'; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },0);
 }
 function renderList(){
   const saved=loadList();
   const box=document.getElementById(NS+'saved'); if(!box) return;
-  if(!saved.length){ box.innerHTML='<div class="'+NS+'muted">Noch keine Nummern gespeichert.</div>'; return; }
+  if(!saved.length){ box.innerHTML=`<div class="${NS}muted">Noch keine Nummern gespeichert.</div>`; return; }
   box.innerHTML=`
     <div style="margin-bottom:6px;font:600 12px system-ui">Gespeichert (${saved.length}):</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px">
       ${saved.map(n=>`<span class="${NS}chip" data-n="${esc(n)}">${esc(n)} <button title="entfernen" data-n="${esc(n)}">×</button></span>`).join('')}
     </div>`;
   box.querySelectorAll('button[data-n]').forEach(b=>{
-    b.onclick = ()=>{ const n=String(b.dataset.n||''); const arr=loadList().filter(x=>x!==n); saveList(arr); };
+    b.onclick = ()=>{ const n=String(b.dataset.n||''); saveList(loadList().filter(x=>x!==n)); };
   });
 }
 
-/* ======================= API-Hooks (clone) =========================== */
-// Klont letzte erfolgreiche Dispatcher-API-Anfrage (URL + Header inkl. JWT)
-let lastOkRequest=null;
-(function hook(){
-  if (!window.__kn_fetch_hooked && window.fetch) {
-    const orig=window.fetch;
-    window.fetch = async function(i, init={}){
-      const res = await orig(i, init);
-      try{
-        const uStr = typeof i==='string' ? i : (i&&i.url)||'';
-        if (uStr.includes('/dispatcher/api/') && res.ok) {
-          const u = new URL(uStr, location.origin);
-          const h = {};
-          const src = (init && init.headers) || (i && i.headers);
-          if (src) {
-            if (src.forEach) src.forEach((v,k)=>h[String(k).toLowerCase()]=String(v));
-            else if (Array.isArray(src)) src.forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
-            else Object.entries(src).forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
-          }
-          if (!h['authorization']) {
-            const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
-            if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
-          }
-          lastOkRequest = { url:u, headers:h };
-        }
-      }catch{}
-      return res;
-    };
-    window.__kn_fetch_hooked=true;
-  }
-  if (!window.__kn_xhr_hooked && window.XMLHttpRequest){
-    const X=window.XMLHttpRequest;
-    const open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
-    X.prototype.open=function(m,u){ this.__kn_url=(typeof u==='string')?new URL(u,location.origin):null; this.__kn_headers={}; return open.apply(this,arguments); };
-    X.prototype.setRequestHeader=function(k,v){ try{ this.__kn_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this,arguments); };
-    X.prototype.send=function(){
-      const onload=()=>{
-        try{
-          if (this.__kn_url && this.__kn_url.href.includes('/dispatcher/api/') && this.status>=200 && this.status<300){
-            if (!this.__kn_headers['authorization']) {
-              const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
-              if (m) this.__kn_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
-            }
-            lastOkRequest = { url:this.__kn_url, headers:this.__kn_headers };
-          }
-        }catch{}
-        this.removeEventListener('load', onload);
-      };
-      this.addEventListener('load', onload);
-      return send.apply(this,arguments);
-    };
-    window.__kn_xhr_hooked=true;
-  }
-})();
-
+/* ======================= API helpers (wie im PRIO/EXP12) ======================= */
 function buildHeaders(h){
   const H=new Headers();
   try{
@@ -282,95 +223,168 @@ function buildHeaders(h){
   }catch{}
   return H;
 }
-// Parameternamen-Kandidaten für „Kundennummer“
-function buildUrlByCustomer(base, customerNumber, page=1){
-  const candidates=['customerNumber','customerNo','customer','customerId'];
+function buildUrlSameView(base, page){
   const u=new URL(base.href);
   const q=u.searchParams;
   q.set('page', String(page));
-  q.set('pageSize','100');
-  ['parcelNumber','priority','elements'].forEach(k=>q.delete(k));
-  for(const k of candidates) q.set(k, customerNumber);
+  q.set('pageSize','500');
+  q.delete('parcelNumber'); // nur Listen
   u.search=q.toString();
   return u;
 }
-
-/* ======================= Daten holen + rendern ======================= */
-const pick = (o,...keys)=> keys.map(k=>o?.[k]).find(v=>v!=null && v!=='') || '';
-const parsePredict = r => {
-  const from=pick(r,'from2','predictFrom','predictStart');
-  const to  =pick(r,'to2','predictTo','predictEnd');
-  return (from||to)?`${fmtHHMM(from)}–${fmtHHMM(to)}`:'';
-};
-const parsePickup = r => {
-  const s=pick(r,'pickupFrom','pickupStart'); const e=pick(r,'pickupTo','pickupEnd');
-  return (s||e)?`${fmtHHMM(s)}–${fmtHHMM(e)}`:'';
-};
-const parseStatus = r => pick(r,'statusName','statusText','stateText','status','deliveryStatus','parcelStatus') || '—';
-
-async function fetchByCustomer(number){
-  if(!lastOkRequest) throw new Error('Kein API-Request zum Klonen gefunden.');
+async function fetchPaged(builder){
+  if(!lastOkRequest) throw new Error('Kein pickup-delivery Request erkannt. Bitte einmal die Liste laden.');
   const headers=buildHeaders(lastOkRequest.headers);
+  const size=500, maxPages=60;
   let page=1, rows=[];
-  while(page<=5){
-    const u=buildUrlByCustomer(lastOkRequest.url, number, page);
+  while(page<=maxPages){
+    const u=builder(lastOkRequest.url, page);
     const r=await fetch(u.toString(), {credentials:'include', headers});
     if(!r.ok) break;
     const j=await r.json();
     const chunk=(j.items||j.content||j.data||j.results||j)||[];
     rows.push(...chunk);
-    if(chunk.length<100) break;
-    page++; await sleep(50);
+    if(chunk.length<size) break;
+    page++; await sleep(30);
   }
   return rows;
 }
 
-async function loadDetails(){
-  const out=document.getElementById(NS+'out');
-  out.innerHTML='<div class="'+NS+'muted">Lade …</div>';
-  const nums=loadList();
-  if(!nums.length){ out.innerHTML='<div class="'+NS+'muted">Keine Nummern gespeichert.</div>'; return; }
-  if(!lastOkRequest){ out.innerHTML='<div class="'+NS+'muted">Bitte zuerst eine normale Dispatcher-Liste laden/suchen, damit ein API-Request geklont werden kann.</div>'; return; }
+/* ======================= DOM Map: Kundenname/Status/Zeitfenster ======================= */
+const lower = s => String(s||'').toLowerCase();
+const normTxt = s => String(s||'').replace(/\s+/g,' ').trim();
 
-  const allRows=[];
-  for(const n of nums){
-    try{
-      const rows=await fetchByCustomer(n);
-      const r=rows[0]||{};
-      allRows.push({
-        number:n,
-        systempartner: pick(r,'systemPartner','partnerName','partner'),
-        tour: pick(r,'tour','route','round'),
-        name: pick(r,'receiverName','customerName','name'),
-        street: [pick(r,'street','street1'), pick(r,'houseno','houseNumber')].filter(Boolean).join(' '),
-        plz: pick(r,'postalCode','zip','zipCode'),
-        ort: pick(r,'city','town'),
-        predict: parsePredict(r),
-        pickup: parsePickup(r),
-        status: parseStatus(r)
-      });
-    }catch(e){
-      allRows.push({number:n, systempartner:'', tour:'', name:'', street:'', plz:'', ort:'', predict:'', pickup:'', status:'(Fehler)'});
-    }
-    await sleep(60);
+function readDomMap(){
+  const map=new Map();
+  const thead=document.querySelector('thead[class*="Datagrid"]');
+  const tbody=thead?.parentElement?.parentElement?.querySelector('tbody');
+  if(!thead||!tbody) return map;
+
+  const ths=Array.from(thead.querySelectorAll('th')).filter(th=>th.className.includes('DraggableHeader__CustomTh'));
+  const labels=ths.map(th=>lower(normTxt(th.querySelector('label')?.textContent || th.textContent)));
+
+  const firstRow = tbody.querySelector('tr'); if(!firstRow) return map;
+  const tdsFirst = Array.from(firstRow.children);
+  const selectionOffset = (tdsFirst[0] && tdsFirst[0].querySelector('input[type="checkbox"]')) ? 1 : 0;
+
+  const colIndex={}; labels.forEach((label, idx)=> colIndex[label]=selectionOffset+idx);
+  const idx = name => (colIndex[lower(name)] ?? -1);
+
+  const C = {
+    kundennummer: idx('kundennummer'),
+    kundenname:   idx('kundenname'),
+    predict:      idx('predict-zeitfenster'),
+    standard:     idx('standard-zeitfenster'),
+    zeit1:        idx('zeitfenster 1 z / a'),
+    zeit2:        idx('zeitfenster 2 z / a'),
+    status:       idx('status')
+  };
+
+  const get = (tr,i)=> i>=0 ? normTxt(tr.children[i]?.textContent || '') : '';
+
+  function getStatus(tr){
+    if (C.status < 0) return '';
+    const cell = tr.children[C.status];
+    const title = cell?.querySelector('div[title]')?.getAttribute('title');
+    return normTxt(title || cell?.textContent || '');
   }
 
-  const head=['Kundennr.','Systempartner','Tour','Kundenname','Straße','PLZ','Ort','Predict Zeitfenster','Zeitfenster Abholung','Status'];
-  const body=allRows.map(r=>[
-    esc(r.number), esc(r.systempartner||'—'), esc(r.tour||'—'), esc(r.name||'—'),
-    esc(r.street||'—'), esc(r.plz||'—'), esc(r.ort||'—'),
-    esc(r.predict||'—'), esc(r.pickup||'—'), esc(r.status||'—')
-  ].map(v=>`<td>${v}</td>`).join(''));
+  for(const tr of Array.from(tbody.querySelectorAll('tr'))){
+    const raw = get(tr, C.kundennummer);
+    const key = normShort(raw);
+    if(!key) continue;
+    const name = get(tr, C.kundenname);
+    const pred = get(tr, C.predict) || get(tr, C.standard);
+    const pickup = [get(tr, C.zeit1), get(tr, C.zeit2)].filter(Boolean).join(' | ');
+    const status = getStatus(tr);
+    map.set(key, { name, pred, pickup, status });
+  }
+  return map;
+}
 
-  document.getElementById(NS+'out').innerHTML=`
+/* ======================= Laden + Rendern ======================= */
+function getCustomerFromRow(r){
+  return r.customerNumber || r.customerNo || r.customer || r.customerId || r.kundennummer || '';
+}
+function hhmm(ts){
+  if (!ts) return '';
+  if (typeof ts==='string' && /\d{1,2}:\d{2}/.test(ts)) return ts;
+  const d=new Date(ts); if (isNaN(d)) return '';
+  return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+}
+function buildWindow(from,to){
+  const a=hhmm(from), b=hhmm(to);
+  return (a||b) ? `${a}–${b}` : '';
+}
+function matchesSaved(cellRaw, wantSet){
+  const raw=digits(cellRaw); const pure=raw.replace(/^0+/,'');
+  for(const w of wantSet){
+    if(!w) continue;
+    if (pure===w) return true;
+    if (pure.endsWith(w)) return true;
+    if (raw.endsWith(w)) return true;
+  }
+  return false;
+}
+
+async function loadDetails(){
+  const out=document.getElementById(NS+'out');
+  out.innerHTML = '<div class="'+NS+'muted">Lade …</div>';
+
+  const wantSet=new Set(loadList().map(normShort));
+  if(!wantSet.size){ out.innerHTML='<div class="'+NS+'muted">Keine Nummern gespeichert.</div>'; return; }
+
+  let rowsApi=[];
+  try{
+    rowsApi = await fetchPaged(buildUrlSameView);
+  }catch(e){
+    out.innerHTML = `<div class="${NS}muted">Kein API-Request erkannt. Bitte einmal die normale Liste laden und erneut versuchen.</div>`;
+    return;
+  }
+
+  const domMap = readDomMap();
+
+  const rows = rowsApi
+    .filter(r => matchesSaved(getCustomerFromRow(r), wantSet))
+    .map(r=>{
+      const numRaw = getCustomerFromRow(r);
+      const key = normShort(numRaw);
+      const dom = domMap.get(key) || {};
+      return {
+        number: key,
+        systempartner: r.depot || r.systemPartner || '',
+        tour: r.tour || '',
+        name: dom.name || r.customerName || r.name || '',
+        street: [r.street || r.addressLine1 || '', r.houseNumber || r.houseno || ''].filter(Boolean).join(' '),
+        plz: digits(r.postalCode || r.zip || ''),
+        ort: r.city || '',
+        predict: dom.pred || buildWindow(r.from2||r.predictFrom||r.predictStart, r.to2||r.predictTo||r.predictEnd),
+        pickup: dom.pickup || buildWindow(r.pickupFrom||r.pickupStart, r.pickupTo||r.pickupEnd),
+        status: dom.status || (r.statusName||r.statusText||r.stateText||r.status||r.deliveryStatus||r.parcelStatus||'—')
+      };
+    });
+
+  renderTable(rows);
+}
+
+function renderTable(rows){
+  const out=document.getElementById(NS+'out');
+  const head=['Kundennr.','Systempartner','Tour','Kundenname','Straße','PLZ','Ort','Predict Zeitfenster','Zeitfenster Abholung','Status'];
+  const body=(rows||[]).map(r=>[
+    r.number||'—', r.systempartner||'—', r.tour||'—', r.name||'—',
+    r.street||'—', r.plz||'—', r.ort||'—', r.predict||'—', r.pickup||'—', r.status||'—'
+  ].map(v=>`<td>${esc(v)}</td>`).join(''));
+
+  out.innerHTML = `
     <table class="${NS}tbl">
       <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${body.map(tr=>`<tr>${tr}</tr>`).join('') || `<tr><td colspan="10">Keine Daten gefunden.</td></tr>`}</tbody>
+      <tbody>${body.length? body.map(tr=>`<tr>${tr}</tr>`).join('') : `<tr><td colspan="10">Keine Treffer (prüf gespeicherte Nummern oder Ansicht).</td></tr>`}</tbody>
     </table>`;
 }
 
-/* ======================= Start/Init ================================== */
-ensureStyles();
+/* ======================= Boot ======================= */
+function onReady(){ ensureStyles(); mountUI(); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onReady);
+else onReady();
 
 })();
-
