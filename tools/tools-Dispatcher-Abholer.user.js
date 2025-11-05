@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      3.7.0
+// @version      3.8.0
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -136,10 +136,36 @@ function ensureStyles(){
   .${NS}status-completed { color: #0a7a2a; font-weight: 700; }
   .${NS}th-sort{ cursor:pointer; user-select:none; }
   .${NS}th-sort .arrow{ margin-left:6px; font-size:10px; opacity:.6; }
-
+  .${NS}cust-collapser{display:flex;align-items:center;gap:8px;margin:8px 0 6px;font:600 12px system-ui;cursor:pointer;user-select:none}
+  .${NS}chev{display:inline-block;transition:transform .18s ease}
+  .${NS}chev.rot{transform:rotate(90deg)}
+  .${NS}cust-wrap{overflow:hidden;transition:max-height .18s ease}
+  .${NS}cust-wrap.collapsed{max-height:0}
   `;
   document.head.appendChild(s);
 }
+
+function initSavedCollapser(){
+  const wrap = document.getElementById(NS+'saved-wrap');
+  const chev = document.getElementById(NS+'saved-chev');
+  const toggle = document.getElementById(NS+'saved-toggle');
+  if (!wrap || !chev || !toggle) return;
+
+  const LSKEY = 'pm.savedCust.collapsed'; // key kann so bleiben
+  let collapsed = localStorage.getItem(LSKEY);
+  collapsed = collapsed == null ? '1' : collapsed; // default: zugeklappt
+
+  // Anfangszustand
+  wrap.classList.toggle('collapsed', collapsed === '1');
+  chev.classList.toggle('rot', collapsed !== '1');
+
+  toggle.onclick = () => {
+    const isColl = wrap.classList.toggle('collapsed');
+    chev.classList.toggle('rot', !isColl);
+    localStorage.setItem(LSKEY, isColl ? '1' : '0');
+  };
+}
+
 
 let latestRows = [];
 
@@ -249,6 +275,67 @@ function mountUI(){
   renderList();
 }
 
+
+
+
+
+    function mountCustomerSavedCollapser(){
+  try{
+    // 1) Container mit "Gespeichert (" + Chips finden
+    const labelNode = Array.from(document.querySelectorAll('div,section,header'))
+      .find(el => /\bGespeichert\s*\(\d+\)/i.test(el.textContent||''));
+    if (!labelNode) return;
+
+    // Prüfe, ob schon eingebaut
+    if (labelNode.__pm_collapser) return;
+
+    // Chips-Container bestimmen: gleiche Ebene oder nächstes Sibling mit vielen Chips
+    let chipsWrap = labelNode.nextElementSibling;
+    if (!chipsWrap || chipsWrap.children.length < 1) {
+      // Fallback: suche in Parent nach der Chipzeile
+      chipsWrap = Array.from(labelNode.parentElement?.children||[])
+        .find(el => el !== labelNode && (el.querySelector('.MuiChip-root,[data-testid="CancelIcon"],[class*="Chip"]') || '').length !== undefined) || null;
+    }
+    if (!chipsWrap) return;
+
+    // Wrapper bauen
+    const collapser = document.createElement('div');
+    collapser.className = NS+'cust-collapser';
+    const chev = document.createElement('span'); chev.className = NS+'chev'; chev.textContent = '▸';
+    const title = document.createElement('span'); title.textContent = (labelNode.textContent||'Gespeichert').trim();
+    collapser.append(chev, title);
+
+    // Chipbereich in Hüll-Wrapper legen
+    const wrap = document.createElement('div');
+    wrap.className = NS+'cust-wrap';
+    chipsWrap.parentNode.insertBefore(wrap, chipsWrap);
+    wrap.appendChild(chipsWrap);
+
+    // State laden: default collapsed = true
+    const LSKEY = 'pm.savedCust.collapsed';
+    let collapsed = localStorage.getItem(LSKEY);
+    collapsed = collapsed == null ? '1' : collapsed; // default 1
+    if (collapsed === '1') { wrap.classList.add('collapsed'); chev.classList.remove('rot'); }
+    else { chev.classList.add('rot'); }
+
+    // Collapser einfügen (über dem Wrapper)
+    wrap.parentNode.insertBefore(collapser, wrap);
+
+    // Toggle
+    const apply = ()=> {
+      const isColl = wrap.classList.toggle('collapsed');
+      chev.classList.toggle('rot', !isColl);
+      localStorage.setItem(LSKEY, isColl ? '1':'0');
+    };
+    collapser.addEventListener('click', apply);
+
+    // Merker, damit wir nicht doppelt mounten
+    labelNode.__pm_collapser = true;
+  } catch(e){ /* silent */ }
+}
+
+
+
 function togglePanel(force){
   const panel=document.getElementById(NS+'panel'); if(!panel) return;
   const isHidden=getComputedStyle(panel).display==='none';
@@ -283,17 +370,38 @@ function onExport(){
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },0);
 }
 function renderList(){
-  const saved=loadList();
-  const box=document.getElementById(NS+'saved'); if(!box) return;
-  if(!saved.length){ box.innerHTML=`<div class="${NS}muted">Noch keine Nummern gespeichert.</div>`; return; }
-  box.innerHTML=`
-    <div style="margin-bottom:6px;font:600 12px system-ui">Gespeichert (${saved.length}):</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${saved.map(n=>`<span class="${NS}chip" data-n="${esc(n)}">${esc(n)} <button title="entfernen" data-n="${esc(n)}">×</button></span>`).join('')}
-    </div>`;
+  const saved = loadList();
+  const box = document.getElementById(NS+'saved');
+  if (!box) return;
+
+  if (!saved.length){
+    box.innerHTML = `<div class="${NS}muted">Noch keine Nummern gespeichert.</div>`;
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="${NS}cust-collapser" id="${NS}saved-toggle" style="margin-bottom:6px;">
+      <span class="${NS}chev" id="${NS}saved-chev">▸</span>
+      <span>Gespeichert (${saved.length}):</span>
+    </div>
+
+    <div class="${NS}cust-wrap" id="${NS}saved-wrap">
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${saved.map(n=>`<span class="${NS}chip" data-n="${esc(n)}">${esc(n)} <button title="entfernen" data-n="${esc(n)}">×</button></span>`).join('')}
+      </div>
+    </div>
+  `;
+
+  // Entfernen-Buttons wie gehabt
   box.querySelectorAll('button[data-n]').forEach(b=>{
-    b.onclick = ()=>{ const n=String(b.dataset.n||''); saveList(loadList().filter(x=>x!==n)); };
+    b.onclick = ()=>{
+      const n = String(b.dataset.n||'');
+      saveList(loadList().filter(x=>x!==n));
+    };
   });
+
+  // Toggle initialisieren (liest/setzt localStorage + Pfeil)
+  initSavedCollapser();
 }
 
 /* ======================= API-Header ======================= */
