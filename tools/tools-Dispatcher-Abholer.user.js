@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      3.5.0
+// @version      3.6.0
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -105,7 +105,24 @@ function ensureStyles(){
   const s=document.createElement('style'); s.id=NS+'style';
   s.textContent=`
   .${NS}btn{border:1px solid rgba(0,0,0,.12);background:#fff;padding:6px 12px;border-radius:999px;font:600 12px system-ui;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-  .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1200px,95vw);max-height:78vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100001;display:none}
+  .${NS}panel{
+  position:fixed;
+  top:72px;
+  left:50%;
+  transform:translateX(-50%);
+  /* vorher: width:min(1200px,95vw); */
+  width:min(1800px,98vw);          /* deutlich breiter */
+  max-height:85vh;                 /* etwas höher */
+  overflow-y:auto;                 /* NUR vertikales Scrollen */
+  overflow-x:hidden;               /* horizontal aus */
+  background:#fff;
+  border:1px solid rgba(0,0,0,.12);
+  box-shadow:0 12px 28px rgba(0,0,0,.18);
+  border-radius:12px;
+  z-index:100001;
+  display:none
+}
+
   .${NS}head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
   .${NS}row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .${NS}inp{padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);font:13px system-ui}
@@ -388,6 +405,110 @@ function getPhone(r){
   if (Array.isArray(r.addressPhone) && r.addressPhone.length) return String(r.addressPhone[0]);
   return r.phone || r.contactPhone || '';
 }
+/* ======================= Letzter Scan + Tracking (tour-basiert) ======================= */
+// kleine Helfer
+
+ // ---- letzter Scan aus einem Tracking-Stopp bestimmen ----
+function _toDateSafe(v){ if(!v) return null; const d=new Date(v); return isNaN(d)?null:d; }
+function lastScanFromStop(s){
+  // bevorzugt: scanDate + scanTime (so kommt es bei dir)
+  if (s.scanDate && s.scanTime) {
+    const d = new Date(`${s.scanDate}T${s.scanTime}`);
+    if (!isNaN(d)) return d;
+  }
+  // Fallbacks
+  const cands = [
+    _toDateSafe(s.deliveredTime),
+    _toDateSafe(s.modifyDate),
+    (s.firstStopHandlingScanTime && s.scanDate) ? _toDateSafe(`${s.scanDate}T${s.firstStopHandlingScanTime}`) : null,
+  ].filter(Boolean);
+  if(!cands.length) return null;
+  return cands.reduce((a,b)=> a>b ? a : b);
+}
+function toDate(v, dateStr=null){
+  if (!v) return null;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(v) && dateStr) return new Date(`${dateStr}T${v}`);
+  const d = new Date(v);
+  return isNaN(d) ? null : d;
+}
+function lastScanInfo(r){
+  const cands = [
+    toDate(r.deliveredTime),
+    toDate(r.etaScanTime, r.scanDate),
+    toDate(r.firstStopHandlingScanTime, r.scanDate),
+    toDate(r.scanTime, r.scanDate),
+    toDate(r.modifyDate)
+  ].filter(Boolean);
+  if (!cands.length) return { dateTime:null, source:null };
+  const max = cands.reduce((a,b)=> a>b ? a : b);
+  let source = 'modifyDate';
+  if (max.getTime() === toDate(r.deliveredTime)?.getTime()) source = 'deliveredTime';
+  else if (max.getTime() === toDate(r.etaScanTime, r.scanDate)?.getTime()) source = 'etaScanTime';
+  else if (max.getTime() === toDate(r.firstStopHandlingScanTime, r.scanDate)?.getTime()) source = 'firstStopHandlingScanTime';
+  else if (max.getTime() === toDate(r.scanTime, r.scanDate)?.getTime()) source = 'scanTime';
+  return { dateTime:max, source };
+}
+function gmapsDirections(lat, lon, address, country='DE'){
+  const origin = (lat!=null && lon!=null) ? `${lat},${lon}` : '';
+  const dest = encodeURIComponent([address, country].filter(Boolean).join(', '));
+  return origin
+    ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`
+    : `https://www.google.com/maps/search/?api=1&query=${dest}`;
+}
+function getFirstParcel(r){
+  return r.parcelNumber || (Array.isArray(r.parcelNumbers) ? r.parcelNumbers[0] : '');
+}
+
+// Holt das Tracking für EINE Tour und gibt nur den aktuellsten Scan (GPS) dieser Tour zurück.
+async function fetchTrackingByTour(depot, tour, dateStr){
+  if(!lastOkRequest) throw new Error('Kein Auth-Kontext. Bitte einmal die normale Liste laden.');
+  const headers = buildHeaders(lastOkRequest.headers);
+
+  // Depot
+  let dep = String(depot || '').trim();
+  if (!dep) dep = lastOkRequest?.url?.searchParams?.get('depot') || '';
+  if (!dep) { console.warn('[tracking] Kein Depot -> übersprungen'); return null; }
+
+  // Tour 3-stellig
+  const tourPadded = String(tour ?? '').trim().replace(/^0+/, '').padStart(3,'0');
+
+  // URL
+  const u = new URL('https://dispatcher2-de.geopost.com/dispatcher/api/vehicle-overview/tracking');
+  u.searchParams.set('depot', dep);
+  u.searchParams.set('tour', tourPadded);
+  const d = (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) ? dateStr : new Date().toISOString().slice(0,10);
+  u.searchParams.set('date', d);
+
+  const r = await fetch(u.toString(), { credentials:'include', headers });
+  if (!r.ok) { console.warn('[tracking] Request fehlgeschlagen', r.status); return null; }
+
+  const json = await r.json();
+  const stops = Array.isArray(json?.stops) ? json.stops
+              : Array.isArray(json) ? json
+              : (json?.items || json?.content || json?.data || json?.results || []);
+
+  if (!stops || !stops.length) return null;
+
+  // Jüngsten Stopp der Tour finden
+  let latest = null, latestTs = null;
+  for (const s of stops){
+    const ts = lastScanFromStop(s);
+    if(!ts) continue;
+    if(!latestTs || ts > latestTs){
+      latestTs = ts;
+      latest = s;
+    }
+  }
+  if (!latest) return null;
+
+  // GPS des letzten Scans
+  const lat = latest.gpsLat ?? latest.gpslat ?? latest.latitude ?? latest.plannedCoordinateLat ?? null;
+  const lon = latest.gpsLong ?? latest.gpsLon ?? latest.gpslon ?? latest.longitude ?? latest.plannedCoordinateLong ?? null;
+
+  return { lastScan: latestTs, lat, lon, tour: tourPadded };
+}
+
+
 
 /* ======================= Filtern & Rendern ======================= */
 function matchesSaved(cellRaw, wantSet){
@@ -413,7 +534,6 @@ async function loadDetails(){
 
   let rowsApi=[], driverMap=null;
   try{
-    // parallel laden
     const [rows, map] = await Promise.all([fetchPagedAll(), fetchDriverPhoneMap()]);
     rowsApi = rows;
     driverMap = map;
@@ -422,23 +542,59 @@ async function loadDetails(){
     return;
   }
 
-  const rows = rowsApi
-    .filter(r => matchesSaved(getCustomerFromRow(r), wantSet))
-    .map(r => {
-      const status = getStatus(r) || '—';
-      const warnPredict = predictOutsidePickup(r);
-      const {soon, closed} = closingHints(r);
-      const hints=[];
-      if (warnPredict) hints.push('Predict außerhalb Abholfenster');
-      if (closed) hints.push('bereits geschlossen');
-      else if (soon) hints.push('schließt in ≤30 Min');
+  // Zuerst auf gespeicherte Kunden filtern (damit wir nur nötige Touren fürs Tracking ziehen)
+  const filteredSrc = rowsApi.filter(r => matchesSaved(getCustomerFromRow(r), wantSet));
 
-      const tour = String(r.tour || '').trim();
-let drv = null;
-for (const k of tourKeys(tour)) { if (driverMap && driverMap.has(k)) { drv = driverMap.get(k); break; } }
+// --- Tracking pro Tour holen: wir wollen NUR den letzten Scan je Tour ---
+const depotFromCtx = lastOkRequest?.url?.searchParams?.get('depot') || '';
+const tourSet = new Set(filteredSrc.map(r => String(r.tour||'').trim()).filter(Boolean));
+const latestByTour = new Map();
+
+for (const t of tourSet) {
+  const one = filteredSrc.find(r => String(r.tour||'').trim() === t);
+  const depotGuess = String(one?.depot || depotFromCtx || '').trim();
+  const dateGuess  = (one?.date && /^\d{4}-\d{2}-\d{2}$/.test(one.date)) ? one.date : null;
+
+  try{
+    const info = await fetchTrackingByTour(depotGuess, t, dateGuess);
+    if (info) latestByTour.set(String(t).trim(), info);
+  }catch(e){
+    console.warn('[tracking] Fehler für Tour', t, e);
+  }
+}
 
 
-      return {
+
+  const rows = filteredSrc.map(r => {
+    const status = getStatus(r) || '—';
+    const warnPredict = predictOutsidePickup(r);
+    const {soon, closed} = closingHints(r);
+    const hints=[];
+    if (warnPredict) hints.push('Predict außerhalb Abholfenster');
+    if (closed) hints.push('bereits geschlossen');
+    else if (soon) hints.push('schließt in ≤30 Min');
+
+    // Fahrer-Infos per Tour
+    const tour = String(r.tour || '').trim();
+    let drv = null;
+    for (const k of tourKeys(tour)) { if (driverMap && driverMap.has(k)) { drv = driverMap.get(k); break; } }
+
+// tracking für diese Tour
+const tkey = String(r.tour || '').trim();
+const tinfo = latestByTour.get(tkey) || null;
+
+// Zieladresse (Kunde)
+const address = [
+  getStreet(r),
+  [digits(r.postalCode || r.zip || ''), r.city || ''].filter(Boolean).join(' ')
+].filter(Boolean).join(', ');
+
+// Google-Maps: von letzter Scan-Position (Fahrer) zum Kunden
+const gmaps = (tinfo && tinfo.lat != null && tinfo.lon != null)
+  ? `https://www.google.com/maps/dir/?api=1&origin=${tinfo.lat},${tinfo.lon}&destination=${encodeURIComponent(address)}&travelmode=driving`
+  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+
+return {
   number: normShort(getCustomerFromRow(r)),
   tour,
   name:   getName(r)   || '—',
@@ -446,20 +602,26 @@ for (const k of tourKeys(tour)) { if (driverMap && driverMap.has(k)) { drv = dri
   plz:    digits(r.postalCode || r.zip || ''),
   ort:    r.city || '',
   phone:  getPhone(r) || '—',
-
-  // >>> NEU / KORRIGIERT <<<
   driverName:  (drv && drv.name)  ? drv.name  : '—',
   driverPhone: (drv && drv.phone) ? drv.phone : '—',
-
   predict: getPredict(r) || '—',
   pickup:  getPickup(r)  || '—',
   status,
   isCompleted: String(status).toUpperCase()==='COMPLETED',
   warnRow: warnPredict,
-  hintText: hints.join(' • ') || '—'
+  hintText: hints.join(' • ') || '—',
+
+  // NEU: pro Tour einheitlich
+  lastScan: tinfo?.lastScan
+  ? tinfo.lastScan.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  : '—',
+
+  gpsLat: tinfo?.lat ?? '',
+  gpsLon: tinfo?.lon ?? '',
+  gmaps
 };
 
-    });
+  });
 
   latestRows = rows;
   renderTable(applyTourFilter(latestRows));
@@ -467,15 +629,42 @@ for (const k of tourKeys(tour)) { if (driverMap && driverMap.has(k)) { drv = dri
 
 function renderTable(rows){
   const out=document.getElementById(NS+'out');
-  const head=['Kundennr.','Tour','Kundenname','Straße','PLZ','Ort','Telefon','Fahrer','Fahrer Telefon','Predict Zeitfenster','Zeitfenster Abholung','Status','Hinweise'];
+  const head=[
+    'Kundennr.','Tour','Kundenname','Straße','PLZ','Ort','Telefon',
+    'Fahrer','Fahrer Telefon',
+    'Predict Zeitfenster','Zeitfenster Abholung','Status','Hinweise',
+    'Letzter Scan','Karte'
+  ];
+
   const body=(rows||[]).map(r=>{
-    const statusHtml = r.isCompleted ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>` : esc(r.status||'—');
+    const statusHtml = r.isCompleted
+      ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>`
+      : esc(r.status||'—');
+
+    const linkHtml = r.gmaps
+      ? `<a href="${esc(r.gmaps)}" target="_blank" rel="noopener" title="${esc(r.gpsLat||'')}, ${esc(r.gpsLon||'')}">Karte</a>`
+      : '—';
+
     const tds = [
-  r.number||'—',  r.tour||'—', r.name||'—',
-  r.street||'—', r.plz||'—', r.ort||'—', r.phone||'—',
-  r.driverName||'—', r.driverPhone||'—',
-  r.predict||'—', r.pickup||'—', statusHtml, esc(r.hintText||'—')
-].map((v,i)=> i===11 ? `<td>${v}</td>` : `<td>${esc(v)}</td>`).join(''); // i===11: Status ist HTML
+  esc(r.number || '—'),
+  esc(r.tour || '—'),
+  esc(r.name || '—'),
+  esc(r.street || '—'),
+  esc(r.plz || '—'),
+  esc(r.ort || '—'),
+  esc(r.phone || '—'),
+  esc(r.driverName || '—'),
+  esc(r.driverPhone || '—'),
+  esc(r.predict || '—'),
+  esc(r.pickup || '—'),
+  statusHtml,                // HTML
+  esc(r.hintText || '—'),
+  esc(r.lastScan || '—'),    // Zeigt den letzten Scan
+  linkHtml                   // Zeigt den Google Maps Link
+].map((v, i) => (i === 11 || i === 14) ? `<td>${v}</td>` : `<td>${v}</td>`).join('');
+
+
+
     const trClass = r.warnRow ? ` class="${NS}warn-row"` : '';
     return `<tr${trClass}>${tds}</tr>`;
   }).join('');
@@ -483,7 +672,7 @@ function renderTable(rows){
   out.innerHTML = `
     <table class="${NS}tbl">
       <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${body || `<tr><td colspan="13">Keine Treffer.</td></tr>`}</tbody>
+      <tbody>${body || `<tr><td colspan="15">Keine Treffer.</td></tr>`}</tbody>
     </table>`;
 }
 
