@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      3.6.0
+// @version      3.7.0
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -134,11 +134,58 @@ function ensureStyles(){
   .${NS}muted{opacity:.7}
   .${NS}warn-row { background: #fff3cd; }
   .${NS}status-completed { color: #0a7a2a; font-weight: 700; }
+  .${NS}th-sort{ cursor:pointer; user-select:none; }
+  .${NS}th-sort .arrow{ margin-left:6px; font-size:10px; opacity:.6; }
+
   `;
   document.head.appendChild(s);
 }
 
 let latestRows = [];
+
+let sortState = { key: null, dir: 1 }; // dir: 1=asc, -1=desc
+const collator = new Intl.Collator('de-DE', { numeric: true, sensitivity: 'base' });
+
+// Welche Spalte liest welchen Wert aus einem Zeilenobjekt?
+const sortGetters = {
+  number:       r => r.number,
+  tour:         r => r.tour,
+  name:         r => r.name,
+  street:       r => r.street,
+  plz:          r => Number(r.plz) || 0,
+  ort:          r => r.ort,
+  phone:        r => r.phone,
+  driverName:   r => r.driverName,
+  driverPhone:  r => r.driverPhone,
+  predict:      r => r.predict,
+  pickup:       r => r.pickup,
+  status:       r => r.status,
+  hintText:     r => r.hintText,
+  lastScanRaw:  r => r.lastScanRaw ?? new Date(0) // Date-Objekt (s. unten)
+};
+
+function sortRows(rows){
+  if (!sortState.key) return rows;
+  const get = sortGetters[sortState.key];
+  if (!get) return rows;
+  const dir = sortState.dir;
+  return [...rows].sort((a,b)=>{
+    const va = get(a), vb = get(b);
+    // Datum?
+    if (va instanceof Date || vb instanceof Date){
+      const ta = va instanceof Date ? va : new Date(va);
+      const tb = vb instanceof Date ? vb : new Date(vb);
+      return dir * (ta - tb);
+    }
+    // Zahl?
+    if (typeof va === 'number' || typeof vb === 'number'){
+      return dir * ((Number(va)||0) - (Number(vb)||0));
+    }
+    // natürlicher String-Vergleich (de-DE, numerisch)
+    return dir * collator.compare(String(va ?? ''), String(vb ?? ''));
+  });
+}
+
 
 function mountUI(){
   ensureStyles();
@@ -615,7 +662,7 @@ return {
   lastScan: tinfo?.lastScan
   ? tinfo.lastScan.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
   : '—',
-
+  lastScanRaw: tinfo?.lastScan ?? null,   // <— für Sortierung (Date)
   gpsLat: tinfo?.lat ?? '',
   gpsLon: tinfo?.lon ?? '',
   gmaps
@@ -628,52 +675,92 @@ return {
 }
 
 function renderTable(rows){
-  const out=document.getElementById(NS+'out');
-  const head=[
-    'Kundennr.','Tour','Kundenname','Straße','PLZ','Ort','Telefon',
-    'Fahrer','Fahrer Telefon',
-    'Predict Zeitfenster','Zeitfenster Abholung','Status','Hinweise',
-    'Letzter Scan','Karte'
+  const out = document.getElementById(NS+'out');
+
+  // Spaltendefinitionen: Label + Schlüssel für Sortierung (key=null => nicht sortierbar)
+  const cols = [
+    {label:'Kundennr.',            key:'number'},
+    {label:'Tour',                 key:'tour'},
+    {label:'Kundenname',           key:'name'},
+    {label:'Straße',               key:'street'},
+    {label:'PLZ',                  key:'plz'},
+    {label:'Ort',                  key:'ort'},
+    {label:'Telefon',              key:'phone'},
+    {label:'Fahrer',               key:'driverName'},
+    {label:'Fahrer Telefon',       key:'driverPhone'},
+    {label:'Predict Zeitfenster',  key:'predict'},
+    {label:'Zeitfenster Abholung', key:'pickup'},
+    {label:'Status',               key:'status'},    // HTML in Zelle, Sort über Text
+    {label:'Hinweise',             key:'hintText'},
+    {label:'Letzter Scan',         key:'lastScanRaw'},
+    {label:'Karte',                key:null}         // nicht sortierbar (Link)
   ];
 
-  const body=(rows||[]).map(r=>{
+  // Header HTML inkl. Pfeil
+  const headHtml = cols.map(c=>{
+    if (!c.key) return `<th>${esc(c.label)}</th>`;
+    const isSorted = sortState.key === c.key;
+    const arrow = isSorted ? (sortState.dir === 1 ? '▲' : '▼') : '';
+    return `<th class="${NS}th-sort" data-key="${esc(c.key)}">${esc(c.label)}<span class="arrow">${arrow}</span></th>`;
+  }).join('');
+
+  // Vor dem Rendern sortieren
+  const rowsSorted = sortRows(rows || []);
+
+  // Body
+  const bodyHtml = (rowsSorted||[]).map(r=>{
     const statusHtml = r.isCompleted
       ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>`
       : esc(r.status||'—');
-
     const linkHtml = r.gmaps
       ? `<a href="${esc(r.gmaps)}" target="_blank" rel="noopener" title="${esc(r.gpsLat||'')}, ${esc(r.gpsLon||'')}">Karte</a>`
       : '—';
 
-    const tds = [
-  esc(r.number || '—'),
-  esc(r.tour || '—'),
-  esc(r.name || '—'),
-  esc(r.street || '—'),
-  esc(r.plz || '—'),
-  esc(r.ort || '—'),
-  esc(r.phone || '—'),
-  esc(r.driverName || '—'),
-  esc(r.driverPhone || '—'),
-  esc(r.predict || '—'),
-  esc(r.pickup || '—'),
-  statusHtml,                // HTML
-  esc(r.hintText || '—'),
-  esc(r.lastScan || '—'),    // Zeigt den letzten Scan
-  linkHtml                   // Zeigt den Google Maps Link
-].map((v, i) => (i === 11 || i === 14) ? `<td>${v}</td>` : `<td>${v}</td>`).join('');
-
-
+    // Reihenfolge MUSS zu 'cols' passen
+    const cells = [
+      esc(r.number||'—'),
+      esc(r.tour||'—'),
+      esc(r.name||'—'),
+      esc(r.street||'—'),
+      esc(r.plz||'—'),
+      esc(r.ort||'—'),
+      esc(r.phone||'—'),
+      esc(r.driverName||'—'),
+      esc(r.driverPhone||'—'),
+      esc(r.predict||'—'),
+      esc(r.pickup||'—'),
+      statusHtml,                 // HTML
+      esc(r.hintText||'—'),
+      esc(r.lastScan||'—'),
+      linkHtml                    // HTML
+    ];
 
     const trClass = r.warnRow ? ` class="${NS}warn-row"` : '';
-    return `<tr${trClass}>${tds}</tr>`;
+    // Status (index 11) & Karte (index 14) sind HTML – NICHT escapen
+    const html = cells.map((v,i)=> (i===11 || i===14) ? `<td>${v}</td>` : `<td>${v}</td>`).join('');
+    return `<tr${trClass}>${html}</tr>`;
   }).join('');
 
   out.innerHTML = `
     <table class="${NS}tbl">
-      <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${body || `<tr><td colspan="15">Keine Treffer.</td></tr>`}</tbody>
+      <thead><tr>${headHtml}</tr></thead>
+      <tbody>${bodyHtml || `<tr><td colspan="${cols.length}">Keine Treffer.</td></tr>`}</tbody>
     </table>`;
+
+  // Click-Handler für Sortierung
+  out.querySelectorAll('th[data-key]').forEach(th=>{
+    th.onclick = () => {
+      const k = th.getAttribute('data-key');
+      if (sortState.key === k) {
+        sortState.dir = -sortState.dir;   // Toggle
+      } else {
+        sortState.key = k;
+        sortState.dir = 1;
+      }
+      // Neu rendern (mit evtl. aktivem Tour-Filter)
+      renderTable(applyTourFilter(latestRows));
+    };
+  });
 }
 
 /* ======================= Boot ======================= */
