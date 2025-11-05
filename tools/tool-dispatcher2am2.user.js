@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      4.9.4
+// @version      5.0.0
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -17,6 +17,7 @@
   const fmt = ts => { try { return new Date(ts||Date.now()).toLocaleString('de-DE'); } catch { return String(ts||''); } };
 
   const state={
+      filterExpress: 'all',   // 'all' | '12' | '18'
     events:[], nextId:1, _bootShown:false,
     _prioAllList:[], _prioOpenList:[],
     _expAllList:[],  _expOpenList:[],
@@ -111,7 +112,7 @@
     if (document.getElementById(NS+'wrap') && document.getElementById(NS+'panel')) return true;
 
     const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'fixed-wrap';
-    const btn=document.createElement('button'); btn.id=NS+'btn'; btn.className=NS+'btn'; btn.textContent='Prio/Express12 Monitoring'; btn.type='button';
+    const btn=document.createElement('button'); btn.id=NS+'btn'; btn.className=NS+'btn'; btn.textContent='Prio/Express Monitoring'; btn.type='button';
     const badge=document.createElement('span'); badge.id=NS+'badge'; badge.className=NS+'badge'; badge.textContent='0';
     wrap.appendChild(btn); wrap.appendChild(badge);
     document.body.appendChild(wrap);
@@ -123,8 +124,9 @@
         <div class="${NS}kpis">
           <span class="${NS}kpi" id="${NS}chip-prio-all"  data-action="showPrioAll">PRIO in Ausrollung: <b id="${NS}kpi-prio-all">0</b></span>
           <span class="${NS}kpi" id="${NS}chip-prio-open" data-action="showPrioOpen">PRIO noch nicht zugestellt: <b id="${NS}kpi-prio-open">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS12 in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS12 noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
+
         </div>
         <div class="${NS}actions">
           <div class="${NS}filter">
@@ -135,6 +137,15 @@
               <option value="without">nur ohne</option>
             </select>
           </div>
+          <div class="${NS}filter">
+  <span>Express:</span>
+  <select id="${NS}filter-express">
+    <option value="all">alle</option>
+    <option value="18">nur 18er</option>
+    <option value="12">nur 12er</option>
+  </select>
+</div>
+
           <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
           <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
           <button class="${NS}btn-sm" data-action="showExpLate11">Falsch einsortierte EXPRESS12 >11:01</button>
@@ -171,6 +182,23 @@
       if(a==='refreshApi'){ await fullRefresh().catch(console.error); }
       if(a==='showExpLate11'){ showExpLate11(); }
     });
+const expSel = document.getElementById(NS+'filter-express');
+if (expSel) {
+  expSel.addEventListener('change', ()=>{
+    state.filterExpress = expSel.value || 'all';
+    // Falls ein Express-Modal offen ist, neu rendern:
+    if (document.getElementById(NS+'modal')?.style.display === 'flex') {
+      if (state._modal.title.startsWith('Express')) {
+        // Entscheide anhand des Titels, welche Liste offen war
+        if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
+        else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
+        else showExpAll();
+      }
+    }
+      updateKpisForCurrentState();
+  });
+}
+
 
     // Modal: Schließen + Auge
     modal.addEventListener('click',(e)=>{
@@ -225,6 +253,14 @@
     if (Array.isArray(el)) return el.map(String).includes('023');
     return typeof el === 'string' ? /\b023\b/.test(el) : false;
   };
+  const hasExpress18 = r => {
+  const el = r?.elements;
+  if (Array.isArray(el)) return el.map(String).includes('010'); // 010 = EXPRESS 18 (bei euch)
+  return typeof el === 'string' ? /\b010\b/.test(el) : false;
+};
+const hasExpressAny = r => hasExpress12(r) || hasExpress18(r);
+const expressTypeOf = r => hasExpress12(r) ? '12' : (hasExpress18(r) ? '18' : '');
+
   const addCodes   = r => Array.isArray(r.additionalCodes)? r.additionalCodes.map(String): [];
 
   // ---- STATUS (DOM bevorzugt, Fallback Mapping)
@@ -566,12 +602,58 @@
       });
     });
   }
+  function filterByExpressSelection(rows){
+  if (state.filterExpress === '12') return rows.filter(hasExpress12);
+  if (state.filterExpress === '18') return rows.filter(hasExpress18);
+  return rows;
+}
+  function getFilteredExpressCounts(){
+  const f = state.filterExpress;
+  const filt = f==='12' ? hasExpress12 : f==='18' ? hasExpress18 : null;
+
+  const expAllList  = filt ? state._expAllList.filter(filt)  : state._expAllList;
+  const expOpenList = filt ? state._expOpenList.filter(filt) : state._expOpenList;
+
+  return { expAllCount: expAllList.length, expOpenCount: expOpenList.length };
+}
+
+function updateKpisForCurrentState(){
+  const { expAllCount, expOpenCount } = getFilteredExpressCounts();
+  setKpis({
+    prioAll:  state._prioAllList.length,
+    prioOpen: state._prioOpenList.length,
+    expAll:   expAllCount,
+    expOpen:  expOpenCount
+  });
+}
 
   function showPrioAll(){  const rows=state._prioAllList;  const html=buildTable(rows); openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`, html, rows, {showPredict:false}); }
   function showPrioOpen(){ const rows=state._prioOpenList; const html=buildTable(rows,{showPredict:true}); openModal(`PRIO – noch nicht zugestellt · ${rows.length}`, html, rows, {showPredict:true}); }
-  function showExpAll(){   const rows=state._expAllList;   const html=buildTable(rows); openModal(`Express 12 – in Ausrollung (alle) · ${rows.length}`, html, rows, {showPredict:false}); }
-  function showExpOpen(){  const rows=state._expOpenList;  const html=buildTable(rows,{showPredict:true}); openModal(`Express 12 – noch nicht zugestellt · ${rows.length}`, html, rows, {showPredict:true}); }
-  function showExpLate11(){ const rows=state._expLate11List; const html=buildTable(rows,{showPredict:true}); openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, html, rows, {showPredict:true}); }
+  function showExpAll(){
+  const src = state._expAllList;
+  const rows = filterByExpressSelection(src);
+  const sel = state.filterExpress==='12'?' (12)':
+              state.filterExpress==='18'?' (18)':'';
+  const html=buildTable(rows);
+  openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`, html, rows, {showPredict:false});
+}
+
+function showExpOpen(){
+  const src = state._expOpenList;
+  const rows = filterByExpressSelection(src);
+  const sel = state.filterExpress==='12'?' (12)':
+              state.filterExpress==='18'?' (18)':'';
+  const html=buildTable(rows,{showPredict:true});
+  openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`, html, rows, {showPredict:true});
+}
+
+function showExpLate11(){
+  // bleibt nur für 12er
+  const rows = state._expLate11List.slice();
+  const html=buildTable(rows,{showPredict:true});
+  openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, html, rows, {showPredict:true});
+}
+
 
   // ---------- render ----------
   function render(){
@@ -633,36 +715,55 @@
   }
 
   // ---------- refresh ----------
-  async function refreshViaApi(){
-    const { rows: prioRows } = await fetchPagedWithTotal(buildUrlPrio);
-    const prioDeliveries = prioRows.filter(isDelivery).filter(isPRIO);
-    const prioAll  = prioDeliveries;
-    const prioOpen = prioDeliveries.filter(r=>!delivered(r));
+  // ---------- refresh ----------
+async function refreshViaApi(){
+  const { rows: prioRows } = await fetchPagedWithTotal(buildUrlPrio);
+  const prioDeliveries = prioRows.filter(isDelivery).filter(isPRIO);
+  const prioAll  = prioDeliveries;
+  const prioOpen = prioDeliveries.filter(r=>!delivered(r));
 
-    const expRows = await fetchPaged((base,p)=>buildUrlElements(base,p,'023'));
-    const expDeliveries = expRows.filter(isDelivery).filter(hasExpress12);
-    const expAll  = expDeliveries;
-    const expOpen = expDeliveries.filter(r=>!delivered(r));
-    const expLate11 = expDeliveries.filter(isExpressLateAfter11);
+  // Express 12 (023) + Express 18 (010) laden
+  const exp12Rows = await fetchPaged((base,p)=>buildUrlElements(base,p,'023')); // Express 12
+  const exp18Rows = await fetchPaged((base,p)=>buildUrlElements(base,p,'010')); // Express 18 (010)
+  const expRows   = [...exp12Rows, ...exp18Rows];
 
-    state._prioAllList = prioAll.slice();
-    state._prioOpenList= prioOpen.slice();
-    state._expAllList  = expAll.slice();
-    state._expOpenList = expOpen.slice();
-    state._expLate11List = expLate11.slice();
-
-    setKpis({
-      prioAll: prioAll.length, prioOpen: prioOpen.length,
-      expAll:  expAll.length,  expOpen:  expOpen.length
+  // DE-Duplizieren MUSS vor der Nutzung deklariert werden
+  const seen = new Set();
+  const expDeliveries = expRows
+    .filter(isDelivery)
+    .filter(hasExpressAny)
+    .filter(r=>{
+      const id = parcelId(r);
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
     });
 
-    state.events = [{
-      id: ++state.nextId,
-      title:'Aktualisiert',
-      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS12: in Ausrollung ${expAll.length} • offen ${expOpen.length} • „>11:01“-Liste: ${expLate11.length}`,
-      sev:'info', read:true, ts:Date.now()
-    }];
-  }
+  const expAll    = expDeliveries;
+  const expOpen   = expDeliveries.filter(r=>!delivered(r));
+  // >11:01 bleibt fachlich nur für 12er
+  const expLate11 = expDeliveries.filter(hasExpress12).filter(isExpressLateAfter11);
+
+  state._prioAllList   = prioAll.slice();
+  state._prioOpenList  = prioOpen.slice();
+  state._expAllList    = expAll.slice();
+  state._expOpenList   = expOpen.slice();
+  state._expLate11List = expLate11.slice();
+  const { expAllCount, expOpenCount } = getFilteredExpressCounts();
+  setKpis({
+  prioAll:  prioAll.length,
+  prioOpen: prioOpen.length,
+  expAll:   expAllCount,
+  expOpen:  expOpenCount
+});
+
+  state.events = [{
+    id: ++state.nextId,
+    title:'Aktualisiert',
+    meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpen.length} • „>11:01“-Liste (12er): ${expLate11.length}`,
+    sev:'info', read:true, ts:Date.now()
+  }];
+}
 
   async function fullRefresh(){
     if (isBusy) return;
