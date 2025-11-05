@@ -82,7 +82,7 @@
     {
       "id": "tool-dispatcher2am2",
       "name": "DPD Dispatcher – Prio/Express12 Monitoring",
-      "version": "4.9.4",
+      "version": "5.0.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
