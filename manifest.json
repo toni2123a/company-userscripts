@@ -67,19 +67,6 @@
       "description": "✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten."
     },
     {
-      "id": "tool-dipatcher2prio",
-      "name": "DPD Dispatcher – Prio Monitoring (v3.2.3)",
-      "version": "3.2.3",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dipatcher2Prio.user.js",
-      "match": [
-        "https://dispatcher2-de.geopost.com/*"
-      ],
-      "grants": [
-        "none"
-      ],
-      "description": "PRIO-Monitoring mit API-Replay, Tour-Gruppierung, Kommentar-Nachladen, Auto-Refresh (sicher), Tracking-Link, Loading-Hinweis."
-    },
-    {
       "id": "tool-dispatcher2am2",
       "name": "DPD Dispatcher – Prio/Express12 Monitoring",
       "version": "5.1.0",
