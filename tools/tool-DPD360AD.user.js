@@ -2,6 +2,8 @@
 // @name         DPD360 – AD klärung Abfrage letzte Zustellung aus Depotportal 
 // @namespace    dpd360.tools
 // @version      1.6.1
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-DPD360AD.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-DPD360AD.user.js
 // @description  Button robust einhängen, Hausnummern aus API (deliveryAddress.houseNo) sauber sortieren, Trackinglinks anzeigen.
 // @match        https://dpd360.dpd.de/ops/notification_new.aspx*
 // @grant        GM.xmlHttpRequest
