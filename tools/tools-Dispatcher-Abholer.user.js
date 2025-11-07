@@ -2,6 +2,8 @@
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
 // @version      3.9.0
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
