@@ -2,6 +2,8 @@
 // @name         Eticor Prüfprotokoll (dynamische Boxen + sofortige Signatur)
 // @namespace    http://tampermonkey.net/
 // @version      1.5
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.eticor-protokoll.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.eticor-protokoll.user.js
 // @description  Erzeugt strukturiertes Prüfprotokoll (PDF) mit dynamischen Boxen und zuverlässiger Signatur. Button unter "Aufgabe nicht eingehalten" auf Detailseiten.
 // @match        https://www.eticor-portal.com/*
 // @require      https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js
