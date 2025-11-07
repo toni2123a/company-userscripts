@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
-// @version      1.3.3
+// @version      1.3.4
 // @description  Zentrales Panel mit Buttons für Module (lazy run) • Close-Others • zuverlässiges Toggle beim erneuten Klick
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
