@@ -120,6 +120,22 @@
       "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu (nun ganz vorne)"
     },
     {
+      "id": "tool.dispatcher.site",
+      "name": "Site Tools Panel (Loader)",
+      "version": "1.0.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_addStyle",
+        "GM_getValue",
+        "GM_setValue",
+        "unsafeWindow"
+      ],
+      "description": "Zentrales Panel mit Buttons für einzelne Module (lazy run)"
+    },
+    {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360",
       "version": "1.3c",
