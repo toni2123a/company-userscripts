@@ -2,6 +2,7 @@
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
 // @version      5.3.0
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
 // @match        https://dispatcher2-de.geopost.com/*
