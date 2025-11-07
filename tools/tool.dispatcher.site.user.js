@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Dispatcher Site Tool Loader (hellgrau, flat)
+// @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
 // @version      1.3.7
 // @description  Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite
