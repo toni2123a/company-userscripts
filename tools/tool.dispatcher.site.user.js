@@ -1,16 +1,12 @@
 // ==UserScript==
-// @name         Dispatcher Site Tool Loader
+// @name         Dispatcher Site Tool Loader (hellgrau, flat)
 // @namespace    bodo.tools
-// @version      1.3.4
-// @description  Zentrales Panel mit Buttons für Module (lazy run) • Close-Others • zuverlässiges Toggle beim erneuten Klick
+// @version      1.3.7
+// @description  Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js
 // @grant        GM_addStyle
-// @grant        GM_getValue
-// @grant        GM_setValue
 // @grant        unsafeWindow
 // ==/UserScript==
 
@@ -20,12 +16,9 @@
   const QUEUE_KEY = '__tmQueue';
   const global = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
-  // Bekannte Panels + generische Heuristik (Loader selbst NICHT schließen!)
   const DEFAULT_PANEL_SELECTORS = [
-    '#pm-panel',        // Prio/Express
-    '#kn-panel',        // Neu-/Rekla-Kunden
-    '#tools-panel',     // evtl. weitere
-    '[id$="-panel"]:not(#tm-tools-panel)' // generisch: alles mit -panel
+    '#pm-panel', '#kn-panel', '#tools-panel',
+    '[id$="-panel"]:not(#tm-tools-panel)'
   ];
 
   const $all = (sel, root=document) => Array.from(root.querySelectorAll(sel));
@@ -45,101 +38,78 @@
     return arr;
   }
 
-  /* ================= Panel UI ================ */
+  /* ===== UI: hellgrau, wie Tabs der Website ===== */
   function ensurePanel() {
-  if (document.getElementById('tm-tools-panel')) return;
+    if (document.getElementById('tm-tools-panel')) return;
 
-  GM_addStyle(`
-    /* Container: oben zentriert, fixe Position */
-    #tm-tools-panel{
-      position:fixed;
-      top:8px;
-      left:50%;
-      transform:translateX(-50%);
-      z-index:2147483648 ;
-      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-      display:block;
-      pointer-events:auto;
-    }
+    GM_addStyle(`
+      #tm-tools-panel{
+        position:fixed;
+        top:8px;
+        left:50%;
+        transform:translateX(-50%);
+        z-index:2147483648;
+        font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+        --tm-btn-bg:#e5e7eb;       /* hellgrau */
+        --tm-btn-bd:#d1d5db;       /* Rahmen leicht dunkler */
+        --tm-btn-fg:#111827;       /* dunkelgraue Schrift */
+        --tm-btn-hover:#f3f4f6;    /* leicht heller beim Hover */
+        --tm-btn-active:#d1d5db;   /* leicht dunkler beim Klick */
+        --tm-radius:8px;
+      }
+      #tm-tools-panel .tm-card{
+        display:inline-flex;
+        background:transparent;
+        padding:0;
+        width:max-content;
+        max-width:96vw;
+      }
+      #tm-tools-panel .tm-row{
+        display:flex;
+        align-items:center;
+        gap:6px;
+        overflow-x:auto;
+        overflow-y:hidden;
+        scrollbar-width:thin;
+        padding:2px;
+      }
+      #tm-tools-panel button.tm-btn{
+        all:unset;
+        padding:6px 12px;
+        border-radius:var(--tm-radius);
+        border:1px solid var(--tm-btn-bd);
+        background:var(--tm-btn-bg);
+        color:var(--tm-btn-fg);
+        font-size:12px;
+        line-height:1;
+        white-space:nowrap;
+        cursor:pointer;
+        box-shadow:0 1px 2px rgba(0,0,0,.05);
+        transition:background-color .12s ease, transform .02s ease, box-shadow .12s ease;
+      }
+      #tm-tools-panel button.tm-btn:hover{
+        background:var(--tm-btn-hover);
+        box-shadow:0 2px 4px rgba(0,0,0,.08);
+      }
+      #tm-tools-panel button.tm-btn:active{
+        background:var(--tm-btn-active);
+        transform:translateY(1px);
+        box-shadow:inset 0 1px 2px rgba(0,0,0,.1);
+      }
+      #tm-tools-panel button.tm-btn:focus-visible{
+        outline:2px solid rgba(59,130,246,.4);
+        outline-offset:2px;
+      }
+    `);
 
-    /* Karte: Breite wächst mit Inhalt, aber nicht über 96vw */
-    #tm-tools-panel .tm-card{
-      display:inline-flex;
-      flex-direction:column;
-      gap:6px;
-      background:#111827cc;
-      backdrop-filter:blur(6px);
-      color:#f9fafb;
-      border:1px solid #374151;
-      border-radius:12px;
-      box-shadow:0 6px 18px rgba(0,0,0,.25);
-      padding:8px 10px;
-      width:max-content;           /* <— wächst mit Inhalt */
-      max-width:96vw;              /* <— klemmt an der Viewportbreite */
-      position: relative;
-      z-index: 2147483649 !important;   /* sicher über eventuellen Overlays */
-    }
-
-    /* Header nur Info – kein Drag mehr */
-    #tm-tools-panel .tm-header{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:8px;
-      user-select:none;
-      font-size:12px;
-      opacity:.9;
-      cursor:default;              /* <— kein Move-Cursor */
-    }
-    #tm-tools-panel .tm-title{font-weight:600;letter-spacing:.2px}
-
-    /* Buttonreihe: einzeilig, horizontal scrollbar wenn zu lang */
-    #tm-tools-panel .tm-row{
-      display:flex;
-      flex-wrap:nowrap;            /* <— keine Zeilenumbrüche */
-      align-items:center;
-      gap:6px;
-      margin-top:4px;
-      overflow-x:auto;             /* <— Scrollbar falls zu schmal */
-      overflow-y:hidden;
-      scrollbar-width:thin;
-    }
-
-    #tm-tools-panel button.tm-btn{
-      all:unset;
-      padding:6px 10px;
-      border-radius:8px;
-      border:1px solid #4b5563;
-      background:#1f2937;
-      font-size:12px;
-      line-height:1;
-      white-space:nowrap;
-      cursor:pointer
-    }
-    #tm-tools-panel button.tm-btn:hover{background:#374151}
-    #tm-tools-panel .tm-subtle{opacity:.75;font-size:11px}
-  `);
-
-  const root = document.createElement('div');
-  root.id = 'tm-tools-panel';
-  root.innerHTML = `
-    <div class="tm-card" id="tm-card">
-      <div class="tm-header">
-        <div class="tm-title">Dispatcher Tools</div>
-        <div class="tm-subtle" id="tm-count">0 Module</div>
+    const root = document.createElement('div');
+    root.id = 'tm-tools-panel';
+    root.innerHTML = `
+      <div class="tm-card" id="tm-card">
+        <div class="tm-row" id="tm-row"></div>
       </div>
-      <div class="tm-row" id="tm-row"></div>
-    </div>
-  `;
-  document.body.appendChild(root);
-
-  // Keine Drag- oder Positions-Persistenz mehr nötig
-}
-
-
-  function updateCount() {
-    const el = document.getElementById('tm-count');
-    if (el) el.textContent = `${TM.modules.size} Modul${TM.modules.size===1?'':'e'}`;
+    `;
+    document.body.appendChild(root);
   }
 
   function addButton({ id, label, run }) {
@@ -154,16 +124,12 @@
 
     btn.addEventListener('click', async () => {
       try {
-        // Toggle: wenn offen (Flag ODER DOM) -> schließen
         if (TM._openFlag[id] || TM.isOpen(id)) {
           TM.close(id);
           return;
         }
-        // Sonst andere schließen …
         TM.closeAllExcept(id);
-        // … und starten
         await Promise.resolve(run());
-        // Offenen-Flag setzen
         TM._openFlag[id] = true;
       } catch (err) {
         console.error(`[TM] Modul "${id}" Fehler:`, err);
@@ -172,98 +138,56 @@
     });
 
     row.appendChild(btn);
-    updateCount();
   }
 
-  /* ================= Registry / API ================ */
+  /* ===== Registry / API ===== */
   const TM = {
     modules: new Map(),
     _openFlag: Object.create(null),
 
-    /**
-     * register({ id, label, run, close?, isOpen?, panels? })
-     */
     register(def) {
       const { id, label, run } = def || {};
-      if (!id || !label || typeof run !== 'function') {
-        console.warn('[TM] Ungültige Modul-Registrierung', def);
-        return;
-      }
-      if (TM.modules.has(id)) {
-        console.warn(`[TM] Modul "${id}" bereits registriert – übersprungen.`);
-        return;
-      }
-      TM.modules.set(id, {
-        id, label, run,
-        close:  (typeof def.close  === 'function') ? def.close  : null,
-        isOpen: (typeof def.isOpen === 'function') ? def.isOpen : null,
-        panels: Array.isArray(def.panels) ? def.panels.slice() : []
-      });
+      if (!id || !label || typeof run !== 'function') return;
+      if (TM.modules.has(id)) return;
+      TM.modules.set(id, def);
       addButton({ id, label, run });
-      console.log('[TM] Modul registriert:', id);
     },
 
-    // DOM-Open-Erkennung (optional + heuristisch)
     isOpen(id) {
       const mod = TM.modules.get(id);
       if (!mod) return false;
-
-      // eigene isOpen
       if (typeof mod.isOpen === 'function') {
         try { return !!mod.isOpen(); } catch {}
       }
-
-      // Panels aus Registrierung
-      const cand = (mod.panels && mod.panels.length) ? mod.panels.slice() : [];
-
-      // Heuristik für dieses Modul
-      cand.push(...guessPanelsFor(id));
-
-      // Sichtbar?
+      const cand = (mod.panels || []).concat(guessPanelsFor(id));
       return cand.some(sel => $all(sel).some(isShown));
     },
 
-    // Modul schließen (robust)
     close(id) {
       const mod = TM.modules.get(id);
-      // 1) modul-spezifische Close-Logik
       try { if (mod && typeof mod.close === 'function') mod.close(); } catch {}
-
-      // 2) gezielte Panels des Moduls schließen
       if (mod && mod.panels && mod.panels.length) hideBySelectors(mod.panels);
-
-      // 3) Heuristik-Panels des Moduls schließen
       hideBySelectors(guessPanelsFor(id));
-
-      // 4) aggressiver Fallback: alle bekannten -panel schließen (außer Loader)
       hideBySelectors(DEFAULT_PANEL_SELECTORS);
-
-      // Flag zurücksetzen
       TM._openFlag[id] = false;
     },
 
     closeAllExcept(exceptId) {
       TM.modules.forEach((_, id) => { if (id !== exceptId) TM.close(id); });
-      // Nichts am exceptId ändern – das öffnet der Button gleich
     },
   };
 
-  // global sichtbar
   global.TM = TM;
   global.tm  = TM;
 
-  // Queue (Module, die vor dem Loader kamen)
   if (!Array.isArray(global[QUEUE_KEY])) global[QUEUE_KEY] = [];
   setTimeout(() => {
     const queued = global[QUEUE_KEY];
     if (Array.isArray(queued) && queued.length) {
-      console.log('[TM] Queue gefunden, registriere', queued.length, 'Modul(e)…');
       queued.forEach(def => { try { TM.register(def); } catch (e) { console.error(e); } });
       queued.length = 0;
-      updateCount();
     }
   }, 0);
 
   ensurePanel();
-  console.log('[TM] Loader bereit. global.TM vorhanden?', !!global.TM);
 })();
