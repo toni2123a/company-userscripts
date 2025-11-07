@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
-// @version      1.3.7
+// @version      1.3.8
 // @description  Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
