@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      5.1.0
+// @version      5.3.0
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -1011,7 +1011,13 @@ const driverOf = r => {
                 if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
               }
               lastOkRequest = { url: u, headers: h };
-              const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+                const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+
+                // >>> NEU: Auto-Refresh aktivieren, sobald wir einen gültigen Request haben
+                try { scheduleAuto(); } catch {}
+                // Optional: initial gleich laden, statt 60s zu warten
+                try { if (autoEnabled && !isBusy && !document.hidden) { fullRefresh().catch(()=>{}); } } catch {}
+
             }
           }
         } catch {}
@@ -1045,7 +1051,12 @@ const driverOf = r => {
                   if (m) this.__pm_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
                 }
                 lastOkRequest = { url: this.__pm_url, headers: this.__pm_headers };
-                const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+                  const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
+
+                  // >>> NEU
+                  try { scheduleAuto(); } catch {}
+                  try { if (autoEnabled && !isBusy && !document.hidden) { fullRefresh().catch(()=>{}); } } catch {}
+
               }
             }
           } catch {}
@@ -1363,6 +1374,11 @@ async function refreshViaApi(){
        await tryBuildTourDriverMapFromDom();   // <-- NEU
 
       await fetchMissingComments();
+        document.addEventListener('visibilitychange', ()=>{
+  scheduleAuto();
+  if (!document.hidden && autoEnabled && lastOkRequest) { fullRefresh().catch(()=>{}); }
+});
+
     } catch(e){
       console.error(e);
       addEvent({title:'Fehler (API)', meta:String(e && e.message || e), sev:'warn'});
