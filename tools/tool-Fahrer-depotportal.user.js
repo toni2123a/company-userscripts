@@ -2,6 +2,8 @@
 // @name         Anzeige der Fahrernamen im Depotportal 
 // @namespace    bodo.tools
 // @version      1.6
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Fahrer-depotportal.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Fahrer-depotportal.user.js
 // @description  Button neben "Beleg" -> Fahrer aus DPD360 nur bei Klick laden
 // @match        https://depotportal.dpd.com/*/tracking/parcels/*
 // @grant        GM_xmlhttpRequest
