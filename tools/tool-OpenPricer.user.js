@@ -2,6 +2,8 @@
 // @name         OpenPricer: Abholdepot hinzufügen
 // @namespace    dpd-openpricer
 // @version      2.3.0
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-OpenPricer.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-OpenPricer.user.js
 // @description  Fügt eine Spalte "Abholdepot" in der Übersicht hinzu (nun ganz vorne)
 // @match        https://dpdde.openpricer.com/app/rfq/list*
 // @run-at       document-idle
