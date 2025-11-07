@@ -6,6 +6,8 @@
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @noframes
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
