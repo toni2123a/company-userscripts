@@ -2,6 +2,8 @@
 // @name         Zerberus → DPD360  
 // @namespace    https://dpd.de/
 // @version      1.3c
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Zerberus.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Zerberus.user.js
 // @description  Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an. Eimalige Anmeldung (Tag) in dpd360 erforderlich
 // @author       Thiemo Schöler
 // @match        https://zerberus-dpd-02.csf.blujaysolutions.net/*
