@@ -2,6 +2,8 @@
 // @name         ASEA incl. letzter Lagerscan
 // @namespace    http://tampermonkey.net/
 // @version      1.4.4
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-SSW-letzter08.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-SSW-letzter08.user.js
 // @description  Zeigt den letzten Lagerscan aus den Scanserver-Daten an.
 // @author       Thiemo Schöler
 // Läuft auf allen passenden scanserver-d001#### Hosts:
