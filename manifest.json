@@ -54,6 +54,22 @@
       "description": "Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap."
     },
     {
+      "id": "tool.dispatcher.site",
+      "name": "Dispatcher Site Tool Loader",
+      "version": "1.0.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_addStyle",
+        "GM_getValue",
+        "GM_setValue",
+        "unsafeWindow"
+      ],
+      "description": "Zentrales Panel mit Buttons für einzelne Module (lazy run)"
+    },
+    {
       "id": "tool-dispatcher.partner",
       "name": "DPD Dispatcher – Partner-Report Mailer (v5.4.0 preview+confirm+save)",
       "version": "5.4.0",
@@ -118,22 +134,6 @@
         "none"
       ],
       "description": "Fügt eine Spalte \"Abholdepot\" in der Übersicht hinzu (nun ganz vorne)"
-    },
-    {
-      "id": "tool.dispatcher.site",
-      "name": "Site Tools Panel (Loader)",
-      "version": "1.0.2",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.site.user.js",
-      "match": [
-        "https://dispatcher2-de.geopost.com/*"
-      ],
-      "grants": [
-        "GM_addStyle",
-        "GM_getValue",
-        "GM_setValue",
-        "unsafeWindow"
-      ],
-      "description": "Zentrales Panel mit Buttons für einzelne Module (lazy run)"
     },
     {
       "id": "tool-zerberus",
