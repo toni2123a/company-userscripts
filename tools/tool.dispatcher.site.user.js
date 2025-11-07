@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
-// @version      1.3.2
+// @version      1.3.3
 // @description  Zentrales Panel mit Buttons für Module (lazy run) • Close-Others • zuverlässiges Toggle beim erneuten Klick
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -56,7 +56,7 @@
       top:8px;
       left:50%;
       transform:translateX(-50%);
-      z-index:999999;
+      z-index:2147483648 ;
       font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
       display:block;
       pointer-events:auto;
@@ -76,6 +76,8 @@
       padding:8px 10px;
       width:max-content;           /* <— wächst mit Inhalt */
       max-width:96vw;              /* <— klemmt an der Viewportbreite */
+      position: relative;
+      z-index: 2147483649 !important;   /* sicher über eventuellen Overlays */
     }
 
     /* Header nur Info – kein Drag mehr */
