@@ -1,22 +1,26 @@
-/* ====== TEIL 1/12 – Metadaten + Start IIFE (NICHT ÄNDERN) ====== */
+/* ====== TEIL 1/12 – Metadaten + Start IIFE (LOADER-fähig) ====== */
 
 // ==UserScript==
-// @name         DPD Dispatcher – Partner-Report Mailer (v5.4.0 preview+confirm+save)
+// @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.0
+// @version      5.4.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten.
+// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      10.14.7.169
 // ==/UserScript==
 
 (function(){
 'use strict';
 if (window.__FVPR_RUNNING) return; window.__FVPR_RUNNING = true;
+// ganz oben bei den Konstanten
+const ENABLE_STANDALONE = false; // <- kein eigener Button
 
+const USE_LOADER = !!(window.TM && typeof window.TM.register === 'function'); // <— NEU
 const NS='fvpr-', PANEL_ID='#fvpr-panel', OFFSET_PX=-240;
 const REFRESH_MS=60_000, RENDER_DEBOUNCE=300, SCAN_MAX_STEPS=40, SCAN_STAG_LIMIT=2;
 const GATEWAY_DEFAULT='http://10.14.7.169/mail.php', GATEWAY_API_KEY='fvpr-SECRET-123';
@@ -25,105 +29,33 @@ const DEBUG = localStorage.getItem('fvpr-debug')==='1';
 const LOG=(...a)=>{ if(DEBUG) console.log('[fvpr]',...a); };
 
 const norm=s=>String(s||'').replace(/\s+/g,' ').trim();
-const parsePct=s=>{
-  if(s==null)return null;
-  const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim();
-  if(!t)return null;
-  const v=parseFloat(t);
-  return Number.isFinite(v)?v:null;
-};
-const parseIntDe=s=>{
-  if(s==null)return null;
-  const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim();
-  if(!t)return null;
-  const v=Math.round(parseFloat(t));
-  return Number.isFinite(v)?v:null;
-};
+const parsePct=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=parseFloat(t); return Number.isFinite(v)?v:null; };
+const parseIntDe=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=Math.round(parseFloat(t)); return Number.isFinite(v)?v:null; };
 const fmtPct=v=>Number.isFinite(v)?String(v.toFixed(1)).replace('.',','):'—';
 const fmtInt=v=>v==null?'—':String(Math.round(v||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 
 const todayStr=()=>new Date().toLocaleDateString('de-DE');
 const pad2=n=>String(n).padStart(2,'0');
-const timeHM=()=>{
-  const d=new Date();
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-};
-const dateStamp=()=>{
-  const d=new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
-};
+const timeHM=()=>{ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const dateStamp=()=>{ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
 
 const sum = (vs,proj)=>vs.reduce((a,v)=>a+(proj(v)||0),0);
 const avg = (vs,proj)=>{ const arr=vs.map(proj).filter(x=>x!=null); return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0; };
 
-const groupByPartner=rows=>{
-  const m=new Map();
-  for(const r of rows){ if(!m.has(r.partner)) m.set(r.partner,[]); m.get(r.partner).push(r); }
-  return m;
-};
+const groupByPartner=rows=>{ const m=new Map(); for(const r of rows){ if(!m.has(r.partner)) m.set(r.partner,[]); m.get(r.partner).push(r); } return m; };
 
 const qsaMain=sel=>Array.from(document.querySelectorAll(sel)).filter(el=>!el.closest(PANEL_ID));
-
-function toast(msg, ok=true){
-  const el=document.createElement('div');
-  el.style.cssText='position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:10px;font:600 13px system-ui;color:#fff;z-index:2147483647;'+(ok?'background:#16a34a':'background:#b91c1c');
-  el.textContent=msg;
-  document.body.appendChild(el);
-  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 1400);
-}
-
+function toast(msg, ok=true){ const el=document.createElement('div'); el.style.cssText='position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:10px;font:600 13px system-ui;color:#fff;z-index:2147483647;'+(ok?'background:#16a34a':'background:#b91c1c'); el.textContent=msg; document.body.appendChild(el); setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 1400); }
 
 /* ====== TEIL 2/12 – IndexedDB ====== */
 
 const IDB_NAME='fvpr_db', IDB_VER=1;
 
-function idbOpen(){
-  return new Promise((res,rej)=>{
-    const req=indexedDB.open(IDB_NAME,IDB_VER);
-    req.onupgradeneeded=()=>{
-      const db=req.result;
-      if(!db.objectStoreNames.contains('partners')) db.createObjectStore('partners',{keyPath:'name'});
-      if(!db.objectStoreNames.contains('settings')){
-        const s=db.createObjectStore('settings',{keyPath:'id'});
-        s.put({id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:'', apiKey:''});
-      }
-    };
-    req.onsuccess=()=>res(req.result);
-    req.onerror=()=>rej(req.error);
-  });
-}
-async function idbGet(store,key){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readonly').objectStore(store).get(key);
-    r.onsuccess=()=>res(r.result||null);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbPut(store,val){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readwrite').objectStore(store).put(val);
-    r.onsuccess=()=>res(true);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbDel(store,key){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readwrite').objectStore(store).delete(key);
-    r.onsuccess=()=>res(true);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbAll(store){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readonly').objectStore(store).getAll();
-    r.onsuccess=()=>res(r.result||[]);
-    r.onerror=()=>rej(r.error);
-  });
-}
+function idbOpen(){ return new Promise((res,rej)=>{ const req=indexedDB.open(IDB_NAME,IDB_VER); req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains('partners')) db.createObjectStore('partners',{keyPath:'name'}); if(!db.objectStoreNames.contains('settings')){ const s=db.createObjectStore('settings',{keyPath:'id'}); s.put({id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:'', apiKey:''}); } }; req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
+async function idbGet(store,key){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readonly').objectStore(store).get(key); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); }); }
+async function idbPut(store,val){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readwrite').objectStore(store).put(val); r.onsuccess=()=>res(true); r.onerror=()=>rej(r.error); }); }
+async function idbDel(store,key){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readwrite').objectStore(store).delete(key); r.onsuccess=()=>res(true); r.onerror=()=>rej(r.error); }); }
+async function idbAll(store){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readonly').objectStore(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
 
 async function ensureSettingsRecord(){
   const def={id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:GATEWAY_DEFAULT, apiKey:GATEWAY_API_KEY};
@@ -147,19 +79,11 @@ async function exportDb(){
     const json=JSON.stringify(data,null,2);
     const blob=new Blob([json],{type:'application/json'});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download=`fvpr_export_${dateStamp()}.json`;
-    document.body.appendChild(a);
-    a.click();
+    const a=document.createElement('a'); a.href=url; a.download=`fvpr_export_${dateStamp()}.json`; document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },200);
     toast('Export erstellt');
-  }catch(e){
-    console.error('[fvpr] Export',e);
-    alert('Export fehlgeschlagen (Konsole ansehen).');
-  }
+  }catch(e){ console.error('[fvpr] Export',e); alert('Export fehlgeschlagen (Konsole ansehen).'); }
 }
-
 
 /* ====== TEIL 3/12 – Grid/Tabelle Erkennung ====== */
 
@@ -180,9 +104,7 @@ function getAnyTable(){
   }
   return null;
 }
-// Hilfsfunktionen zur Header-Erkennung
 const includesAll=(s,arr)=>arr.every(w=>new RegExp(w,'i').test(s||''));
-
 
 /* ====== TEIL 4/12 – Datagrid: Spalten finden ====== */
 
@@ -227,26 +149,17 @@ function findColumnsDatagrid(){
   const driver = byEither(s=>/(zustellername|fahrername|fahrer|driver)/.test(s));
   const eta = byEither(s=>/(^eta\b|eta\s*%)/.test(s));
   const status = byEither(s=>/\bstatus\b/.test(s));
-
-  // Standardzahlen
   const stopsTotal = byEither(s=>includesAll(s, [/zustell?stopps?/, /gesamt/]));
   const stopsOpen  = byEither(s=>includesAll(s, [/offen/, /zustell?stopps?/]));
   const pkgsTotal  = byEither(s=>includesAll(s, [/pakete|geplante/, /(gesamt|zustell)/]));
   const obstacles  = byEither(s=>/\bzustellhindernisse\b/.test(s)||/\bhinderniss?e?\b/.test(s));
-
-  // Offene Abholstops
-  const pickupOpen = (()=>{
-    const i1=byEither(s=>includesAll(s, [/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/]));
-    if (i1>=0) return i1;
-    return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s));
-  })();
+  const pickupOpen = (()=>{ const i1=byEither(s=>includesAll(s, [/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/])); if (i1>=0) return i1; return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s)); })();
 
   const cols={sys,tour,driver,eta,status,stopsTotal,stopsOpen,pkgsTotal,obstacles,pickupOpen,_hdrCount:ths.length};
   if (cols.sys<0) return null;
   CACHED_COLS=cols;
   return cols;
 }
-
 
 /* ====== TEIL 5/12 – Datagrid lesen (inkl. Status-Farben) ====== */
 
@@ -292,7 +205,6 @@ function readRowsDatagrid(){
     const partner=norm(tds[C.sys]?.textContent||'');
     if(!partner) continue;
 
-    // Statuszelle + Farben übernehmen
     let statusText='', statusBg='', statusFg='';
     if (C.status>=0) {
       const cell=tds[C.status];
@@ -310,7 +222,7 @@ function readRowsDatagrid(){
       tour:    C.tour>=0?norm(tds[C.tour]?.textContent):'',
       driver:  C.driver>=0?norm((tds[C.driver]?.querySelector('div[title]')?.getAttribute('title'))||tds[C.driver]?.textContent):'',
       status:  statusText || '',
-      statusBg, statusFg,                         // <- Farben mitgeben
+      statusBg, statusFg,
       eta:     C.eta>=0?parsePct(tds[C.eta]?.textContent):null,
       stops:   C.stopsTotal>=0?parseIntDe(tds[C.stopsTotal]?.textContent):null,
       open:    C.stopsOpen>=0?parseIntDe(tds[C.stopsOpen]?.textContent):null,
@@ -321,7 +233,6 @@ function readRowsDatagrid(){
   }
   return {ok:true,rows:out};
 }
-
 
 /* ====== TEIL 6/12 – Plain-Table Reader (inkl. Status-Farben) ====== */
 
@@ -366,11 +277,7 @@ function readRowsPlainTable(){
     stopsOpen: idx(['offene stopps','offene zustellstopps']),
     pkgsTotal: idx(['pakete gesamt','geplante zustellpakete']),
     obstacles: idx(['zustellhindernisse','hindernis']),
-    pickupOpen: (()=>{
-      const i1=idx(['offene abholstops','offene abholstopps','abholungen offen','open pickups','pickup open']);
-      if(i1>=0) return i1;
-      return idx(['abholstops','abholstopps','abholung']);
-    })()
+    pickupOpen: (()=>{ const i1=idx(['offene abholstops','offene abholstopps','abholungen offen','open pickups','pickup open']); if(i1>=0) return i1; return idx(['abholstops','abholstopps','abholung']); })()
   };
   if (C.sys<0) return {ok:false,rows:[]};
 
@@ -417,7 +324,6 @@ async function readAllRows(){
   return {ok:false, rows:[]};
 }
 
-
 /* ====== TEIL 7/12 – Styles ====== */
 
 function ensureStyles(){
@@ -454,7 +360,7 @@ function ensureStyles(){
   document.head.appendChild(s);
 }
 
-/* ====== TEIL 8/12 – UI (Panel/Buttons/Import-Export) + Sortier-Helper + Kopier-/Vorschau-Buttons ====== */
+/* ====== TEIL 8/12 – UI (Panel/Buttons/Import-Export) + Sortier-Helper ====== */
 let PANEL, CONTENT, CFGBOX;
 
 // Unterdrückung von Auto-Render nach Nutzersortierung (ms)
@@ -468,77 +374,24 @@ function makeTableSortable(root){
   const tbody = table.querySelector('tbody');
   if(!thead || !tbody) return;
 
-  // Markiere echte Datenzeilen explizit (nicht Footer)
-  Array.from(tbody.querySelectorAll('tr')).forEach(tr=>{
-    tr.setAttribute('data-row','1');
-  });
+  Array.from(tbody.querySelectorAll('tr')).forEach(tr=>{ tr.setAttribute('data-row','1'); });
 
   const ths = Array.from(thead.querySelectorAll('th'));
 
-  const parseVal=(txt)=>{
-    const t = String(txt||'').trim();
-    const clean = t.replace(/\./g,'').replace(',', '.').replace(/[^\d.\-]/g,'').trim();
-    if(clean!=='' && !isNaN(clean)) return parseFloat(clean);
-    return t.toLowerCase();
-  };
+  const parseVal=(txt)=>{ const t = String(txt||'').trim(); const clean = t.replace(/\./g,'').replace(',', '.').replace(/[^\d.\-]/g,'').trim(); if(clean!=='' && !isNaN(clean)) return parseFloat(clean); return t.toLowerCase(); };
 
-  const updateIndicators=(col,dir)=>{
-    ths.forEach((th,i)=>{
-      th.querySelector(`span.${NS}sort-ind`)?.remove();
-      th.dataset.sortDir = '0';
-      if(i===col){
-        const sp=document.createElement('span');
-        sp.className=`${NS}sort-ind`;
-        sp.textContent = dir>0 ? '▲' : '▼';
-        th.appendChild(sp);
-        th.dataset.sortDir = String(dir);
-      }
-    });
-  };
+  const updateIndicators=(col,dir)=>{ ths.forEach((th,i)=>{ th.querySelector(`span.${NS}sort-ind`)?.remove(); th.dataset.sortDir = '0'; if(i===col){ const sp=document.createElement('span'); sp.className=`${NS}sort-ind`; sp.textContent = dir>0 ? '▲' : '▼'; th.appendChild(sp); th.dataset.sortDir = String(dir); } }); };
 
-  ths.forEach((th, colIndex)=>{
-    th.style.cursor='pointer';
-    th.addEventListener('click', ()=>{
-      LAST_USER_SORT_TS = Date.now();
-
-      const asc = (Number(th.dataset.sortDir||'0') !== 1);
-      const dir = asc ? 1 : -1;
-
-      const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]'));
-      rows.sort((a,b)=>{
-        const aText = a.children[colIndex]?.textContent ?? '';
-        const bText = b.children[colIndex]?.textContent ?? '';
-        const aVal = parseVal(aText);
-        const bVal = parseVal(bText);
-        if(typeof aVal==='number' && typeof bVal==='number'){
-          return (aVal - bVal)*dir;
-        }
-        return aText.localeCompare(bText,'de',{numeric:true})*dir;
-      });
-      rows.forEach(r=>tbody.appendChild(r));
-      updateIndicators(colIndex, dir);
-
-      LAST_USER_SORT_TS = Date.now();
-    },{passive:true});
-  });
+  ths.forEach((th, colIndex)=>{ th.style.cursor='pointer'; th.addEventListener('click', ()=>{ LAST_USER_SORT_TS = Date.now(); const asc = (Number(th.dataset.sortDir||'0') !== 1); const dir = asc ? 1 : -1; const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]')); rows.sort((a,b)=>{ const aText = a.children[colIndex]?.textContent ?? ''; const bText = b.children[colIndex]?.textContent ?? ''; const aVal = parseVal(aText); const bVal = parseVal(bText); if(typeof aVal==='number' && typeof bVal==='number'){ return (aVal - bVal)*dir; } return aText.localeCompare(bText,'de',{numeric:true})*dir; }); rows.forEach(r=>tbody.appendChild(r)); updateIndicators(colIndex, dir); LAST_USER_SORT_TS = Date.now(); },{passive:true}); });
 }
 
-function mountUI(){
-  if (document.getElementById(NS+'wrap')) return;
+function mountUI(forLoader=false){
+  if (document.getElementById(NS+'wrap') && document.getElementById(NS+'panel')) return;
 
-  const wrap=document.createElement('div');
-  wrap.id=NS+'wrap';
-  wrap.className=NS+'wrap';
-
-  const btn=document.createElement('button');
-  btn.className=NS+'btn';
-  btn.textContent='Partner-Report';
-  wrap.append(btn);
-  document.body.appendChild(wrap);
-
+  // — PANEL immer erstellen (für Loader geschlossen starten)
   PANEL=document.createElement('div');
   PANEL.className=NS+'panel';
-  PANEL.style.display='none';
+  PANEL.style.display = forLoader ? 'none' : '';
   PANEL.id=PANEL_ID.slice(1);
   PANEL.innerHTML= `
     <div class="${NS}hdr">
@@ -567,11 +420,19 @@ function mountUI(){
   CONTENT=PANEL.querySelector('#'+NS+'content');
   CFGBOX=PANEL.querySelector('#'+NS+'cfgbox');
 
-  btn.addEventListener('click',()=>{ const will=PANEL.style.display==='none'; PANEL.style.display=will?'':'none'; if(will) fillCfg(); },{passive:true});
+  // — Standalone-Fallback: eigenen Button nur erstellen, wenn KEIN Loader aktiv
+  if (!forLoader && ENABLE_STANDALONE){
+    if (!document.getElementById(NS+'wrap')){
+      const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'wrap';
+      const btn=document.createElement('button'); btn.className=NS+'btn'; btn.textContent='Partner-Report';
+      wrap.append(btn); document.body.appendChild(wrap);
+      btn.addEventListener('click',()=>{ const will=PANEL.style.display==='none'; PANEL.style.display=will?'':'none'; if(will) fillCfg(); },{passive:true});
+    }
+  }
 
+  // Actions
   PANEL.addEventListener('click', async e=>{
-    const b=e.target.closest('button[data-act]');
-    if(!b) return;
+    const b=e.target.closest('button[data-act]'); if(!b) return;
     if(b.dataset.act==='refresh') render(true);
     if(b.dataset.act==='send-partner-and-total') await sendPartnerAndTotalConfirm();
     if(b.dataset.act==='send-total-only') await sendTotalOnlyConfirm();
@@ -599,97 +460,45 @@ function mountUI(){
       alert('Import erfolgreich.');
       await fillCfg();
       render(true);
-    }catch(e){
-      console.error(e);
-      alert('Import fehlgeschlagen (ungültiges JSON).');
-    }
+    }catch(e){ console.error(e); alert('Import fehlgeschlagen (ungültiges JSON).'); }
   },{passive:true});
 
   // Delegation: ✉ / 👁 / ⧉ in Zeilen + Gesamtleiste
   PANEL.addEventListener('click', e=>{
-    const sendBtn=e.target.closest('button[data-sp]');
-    if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
-
-    const eyeBtn=e.target.closest('button[data-eye]');
-    if(eyeBtn){ e.preventDefault(); openPreview(eyeBtn.dataset.eye); return; }
-
-    const copyBtn=e.target.closest('button[data-copy]');
-    if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
-
-    const totalEye=e.target.closest('button[data-total-eye]');
-    if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
-
-    const totalCopy=e.target.closest('button[data-total-copy]');
-    if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
-
-    const totalBtn=e.target.closest('button[data-total-send]');
-    if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
-
-    // Zeilenklick = Vorschau (zusätzlich)
-    const row=e.target.closest('tr[data-partner]');
-    if(row && !e.target.closest('button')){ e.preventDefault(); openPreview(row.getAttribute('data-partner')); }
+    const sendBtn=e.target.closest('button[data-sp]'); if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
+    const eyeBtn=e.target.closest('button[data-eye]'); if(eyeBtn){ e.preventDefault(); openPreview(eyeBtn.dataset.eye); return; }
+    const copyBtn=e.target.closest('button[data-copy]'); if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
+    const totalEye=e.target.closest('button[data-total-eye]'); if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
+    const totalCopy=e.target.closest('button[data-total-copy]'); if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
+    const totalBtn=e.target.closest('button[data-total-send]'); if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
+    const row=e.target.closest('tr[data-partner]'); if(row && !e.target.closest('button')){ e.preventDefault(); openPreview(row.getAttribute('data-partner')); }
   },{passive:false});
 }
 
-async function copyPartnerHtml(partner){
-  const agg=await getAggregates(); if(!agg) return;
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner); if(!p) return;
-  const html=partnerHtml(partner, p.list, g.signature||'');
-  const ok=await copyHtmlToClipboard(html);
-  toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
+/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog ====== */
+function removeStandaloneButton(){
+  const wrap = document.getElementById(NS+'wrap');
+  if (wrap) wrap.remove();
 }
 
-// Gesamt-Preview (Auge im Footer)
-async function openTotalPreview(){
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt</h3>
-    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${html}</div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  // Sortierbar machen
-  const innerTable = ov.querySelector('table');
-  if(innerTable) makeTableSortable(innerTable.parentElement);
-  ov.addEventListener('click', e=>{ if(e.target.closest('button[data-act="close"]')) ov.remove(); },{passive:false});
-}
+function modal(html){ const ov=document.createElement('div'); ov.className=NS+'modal'; ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`; document.body.appendChild(ov); return ov; }
+function softenColor(rgb, alpha=0.18){ if(!rgb) return ''; const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i); if(!m) return ''; const [_,r,g,b]=m; return `rgba(${r},${g},${b},${alpha})`; }
+function etaBg(v){ if(v==null) return ''; if(v>=100) return 'rgba(22,163,74,0.18)'; if(v>=94) return 'rgba(202,138,4,0.18)'; return 'rgba(185,28,28,0.18)'; }
 
-// Gesamt-HTML kopieren (⧉ im Footer)
-async function copyTotalHtml(){
-  const agg=await getAggregates(); if(!agg) return;
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ok=await copyHtmlToClipboard(html);
-  toast(ok?'Gesamt in Zwischenablage':'Kopieren fehlgeschlagen', ok);
-}
+/* (… ALLES aus deinem Original ab hier unverändert …)
+   — openPreview, openConfirm, openPartnerDialog, Mail/Clipboard/Gateway,
+   — HTML-Builder (partnerHtml, summaryHtml, mailPartnerHtml, mailSummaryHtml),
+   — getAggregates, sendSinglePartnerConfirm, sendTotalOnlyConfirm, sendPartnerAndTotalConfirm
+   — render()
+   (Ich lasse die Funktionskörper unverändert, nur der Platz ist hier knapp.)
+   ↓ Die Funktionen stehen vollständig in deinem ursprünglichen Codeblock – ich kürze nur diese Erklärung.
+*/
 
-async function fillCfg(){
-  const g=await ensureSettingsRecord();
-  const el=PANEL.querySelector('#'+NS+'cfg-subj');
-  if(el) el.value=g.subjectPrefix||'Aktueller Tour.Report';
+/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog (komplett) ====== */
+function removeStandaloneButton(){
+  const wrap = document.getElementById(NS+'wrap');
+  if (wrap) wrap.remove();
 }
-async function saveCfgFromUI(){
-  try{
-    const cur=await ensureSettingsRecord();
-    await idbPut('settings',{
-      id:'global',
-      subjectPrefix:(PANEL.querySelector('#'+NS+'cfg-subj')?.value||'').trim(),
-      signature:cur.signature||'',
-      httpGateway:cur.httpGateway||GATEWAY_DEFAULT,
-      apiKey:cur.apiKey||GATEWAY_API_KEY
-    });
-    toast('Einstellungen gespeichert');
-  }catch(e){
-    console.error(e); toast('Fehler beim Speichern',false);
-  }
-}
-
-/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog (Vorschau sortierbar) ====== */
-
 function modal(html){
   const ov=document.createElement('div');
   ov.className=NS+'modal';
@@ -697,7 +506,6 @@ function modal(html){
   document.body.appendChild(ov);
   return ov;
 }
-
 function softenColor(rgb, alpha=0.18){
   if(!rgb) return '';
   const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i);
@@ -707,104 +515,12 @@ function softenColor(rgb, alpha=0.18){
 }
 function etaBg(v){
   if(v==null) return '';
-  if(v>=100) return 'rgba(22,163,74,0.18)';   // grün
-  if(v>=94)  return 'rgba(202,138,4,0.18)';   // gelb
-  return 'rgba(185,28,28,0.18)';              // rot
+  if(v>=100) return 'rgba(22,163,74,0.18)';
+  if(v>=94)  return 'rgba(202,138,4,0.18)';
+  return 'rgba(185,28,28,0.18)';
 }
 
-// Vorschau der Partner-Mail (nach dem Render sortierbar machen)
-async function openPreview(partner){
-  const agg=await getAggregates();
-  if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner);
-  if(!p){ alert('Partner nicht gefunden.'); return; }
-
-  const content=partnerHtml(partner, p.list, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
-    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-
-  // Tabelle in der Vorschau sortierbar
-  const innerTable = ov.querySelector('table');
-  if(innerTable) makeTableSortable(innerTable.parentElement);
-
-  ov.addEventListener('click', e=>{
-    const btn=e.target.closest('button[data-act]'); if(!btn) return;
-    if(btn.dataset.act==='close') ov.remove();
-    if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
-  },{passive:false});
-}
-
-// Versand-Bestätigung mit Speichern
-function openConfirm({title, subject, to, cc, saveKey, onOk}){
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${title||'Bestätigen'}</h3>
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
-      <label>Betreff</label><input id="${NS}cf-subj" type="text" value="${subject||''}">
-      <label>An</label><input id="${NS}cf-to" type="text" value="${to||''}">
-      <label>CC</label><input id="${NS}cf-cc" type="text" value="${cc||''}">
-    </div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
-      <button class="${NS}btn-sm" data-act="ok">OK</button>
-      <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
-    </div>
-  `);
-  ov.addEventListener('click', async e=>{
-    const b=e.target.closest('button[data-act]'); if(!b) return;
-    const subj=ov.querySelector('#'+NS+'cf-subj').value.trim();
-    const toV =ov.querySelector('#'+NS+'cf-to').value.trim();
-    const ccV =ov.querySelector('#'+NS+'cf-cc').value.trim();
-    if(b.dataset.act==='cancel'){ ov.remove(); return; }
-    if(b.dataset.act==='save'){
-      const key = saveKey || 'gesamt';
-      const cur = await idbGet('partners', key) || {name:key, alias:''};
-      await idbPut('partners', { name:key, to:toV, cc:ccV, alias:cur.alias||'' });
-      toast('Adressen gespeichert');
-      return;
-    }
-    if(b.dataset.act==='ok'){ onOk({subject:subj, to:toV, cc:ccV}); ov.remove(); }
-  },{passive:false});
-}
-
-// Partner-Einstellungen (separat)
-async function openPartnerDialog(partner){
-  const key=(partner==='gesamt')?'gesamt':partner;
-  const cur=await idbGet('partners',key)||{name:key,to:'',cc:'',alias:''};
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Einstellungen – ${partner}</h3>
-    <div class="${NS}row"><label>Alias (optional)</label><input id="${NS}pd-alias" type="text" value="${cur.alias||''}"></div>
-    <div class="${NS}row"><label>An</label><input id="${NS}pd-to" type="text" value="${cur.to||''}" placeholder="a@b.de, c@d.de"></div>
-    <div class="${NS}row"><label>CC</label><input id="${NS}pd-cc" type="text" value="${cur.cc||''}" placeholder="optional"></div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="save">Speichern</button>
-      <button class="${NS}btn-sm" data-act="clear">Löschen</button>
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  ov.addEventListener('click', async e=>{
-    const btn=e.target.closest('button[data-act]'); if(!btn) return;
-    if(btn.dataset.act==='close'){ ov.remove(); return; }
-    if(btn.dataset.act==='clear'){ await idbDel('partners',key); ov.remove(); return; }
-    if(btn.dataset.act==='save'){
-      const to=ov.querySelector('#'+NS+'pd-to').value.trim();
-      const cc=ov.querySelector('#'+NS+'pd-cc').value.trim();
-      const alias=ov.querySelector('#'+NS+'pd-alias').value.trim();
-      await idbPut('partners',{name:key,to,cc,alias});
-      alert('Gespeichert.'); ov.remove();
-    }
-  },{passive:false});
-}
-
-
-/* ====== TEIL 10/12 – Versand (Gateway/Clipboard/Mailto) ====== */
-
+/* ====== Mail/Clipboard/Helpers ====== */
 function splitEmails(raw){ return (raw||'').split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean); }
 function isEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
 function normalizeEmailList(raw){
@@ -867,28 +583,7 @@ async function deliverMail({subject, html, to, cc}){
   alert('Entwurf geöffnet. HTML ist in der Zwischenablage – Strg+V drücken.');
 }
 
-/* ====== TEIL 11/12 – HTML (UI + MAIL getrennt, Partnerseiten ohne „SP“ & „Status“) ====== */
-
-// ===== Helper für Farben =====
-function softenColor(rgb, alpha=0.18){
-  if(!rgb) return '';
-  const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i);
-  if(!m) return '';
-  const [_,r,g,b]=m;
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-function etaBg(v){
-  if(v==null) return '';
-  if(v>=100) return 'rgba(22,163,74,0.16)';   // grün
-  if(v>=94)  return 'rgba(202,138,4,0.16)';   // gelb
-  return 'rgba(185,28,28,0.16)';              // rot
-}
-
-// ======================================================================
-// ===============   UI-HTML (mit Icons in der Übersicht)   =============
-// ======================================================================
-// Hinweis: Diese Funktion wird für die PARTNER-VORSCHAU genutzt.
-// Gewünscht: KEIN „SP“, KEIN „Status“ in Partner-Tabellen.
+/* ====== HTML-Builder ====== */
 function partnerHtml(partner,list,signature){
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
@@ -904,7 +599,6 @@ function partnerHtml(partner,list,signature){
         <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
       </tr>`;
   }).join('');
-
   const totals={
     tours:list.length,
     etaAvg:avg(list,r=>r.eta),
@@ -915,7 +609,6 @@ function partnerHtml(partner,list,signature){
     pOpen:sum(list,r=>r.pOpen)
   };
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
@@ -930,9 +623,7 @@ function partnerHtml(partner,list,signature){
         <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA</th>
         <th style="padding:6px 8px;border:1px solid #e5e7eb;">offene Abholstops</th>
       </tr></thead>
-      <tbody>
-        ${rows}
-      </tbody>
+      <tbody>${rows}</tbody>
       <tfoot>
         <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
           <td style="padding:8px;border:1px solid #e5e7eb;"></td>
@@ -949,8 +640,6 @@ function partnerHtml(partner,list,signature){
     ${signatureHtml}
   </div>`;
 }
-
-// Die Übersicht (summaryHtml) bleibt wie zuvor – mit Icons in der UI.
 function summaryHtml(per,totals,signature){
   const head=`
     <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
@@ -964,7 +653,6 @@ function summaryHtml(per,totals,signature){
       <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
       <th style="padding:6px 8px;border:1px solid #e5e7eb;">Aktion</th>
     </tr></thead>`;
-
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
     return `
@@ -984,7 +672,6 @@ function summaryHtml(per,totals,signature){
         </td>
       </tr>`;
   }).join('');
-
   const foot=`
     <tfoot><tr>
       <td>Gesamt (alle)</td>
@@ -1001,9 +688,7 @@ function summaryHtml(per,totals,signature){
         <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
       </td>
     </tr></tfoot>`;
-
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
@@ -1013,11 +698,6 @@ function summaryHtml(per,totals,signature){
     ${signatureHtml}
   </div>`;
 }
-
-// ======================================================================
-// =======================   MAIL-HTML (ohne Icons)   ====================
-// ======================================================================
-// Partner-Mail ohne „SP“ und ohne „Status“.
 function mailPartnerHtml(partner,list,signature){
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
@@ -1033,7 +713,6 @@ function mailPartnerHtml(partner,list,signature){
         <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
       </tr>`;
   }).join('');
-
   const totals={
     tours:list.length,
     etaAvg:avg(list,r=>r.eta),
@@ -1044,7 +723,6 @@ function mailPartnerHtml(partner,list,signature){
     pOpen:sum(list,r=>r.pOpen)
   };
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-
   return `
   <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
     <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
@@ -1062,9 +740,7 @@ function mailPartnerHtml(partner,list,signature){
             <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offene Abholstops</th>
           </tr>
         </thead>
-        <tbody>
-          ${rows}
-        </tbody>
+        <tbody>${rows}</tbody>
         <tfoot>
           <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
             <td style="padding:8px;border:1px solid #e5e7eb;"></td>
@@ -1082,8 +758,6 @@ function mailPartnerHtml(partner,list,signature){
     ${signatureHtml}
   </div>`;
 }
-
-// Gesamt-Mail (Summary) bleibt wie zuvor – ohne Icons, mit Farben.
 function mailSummaryHtml(per,totals,signature){
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
@@ -1099,9 +773,7 @@ function mailSummaryHtml(per,totals,signature){
         <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.pOpen)}</td>
       </tr>`;
   }).join('');
-
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-
   return `
   <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
     <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
@@ -1119,11 +791,9 @@ function mailSummaryHtml(per,totals,signature){
             <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
           </tr>
         </thead>
-        <tbody>
-          ${body}
-        </tbody>
+        <tbody>${body}</tbody>
         <tfoot>
-          <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
+          <tr style="background:#e0f2ff;color:#00366;font-weight:700;">
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(totals.etaAvg)}</td>
@@ -1140,11 +810,10 @@ function mailSummaryHtml(per,totals,signature){
   </div>`;
 }
 
-// ---------- Aggregation ----------
+/* ---------- Aggregation + Flows ---------- */
 async function getAggregates(){
   const {ok,rows}=await readAllRows();
   if(!ok||rows.length===0) return null;
-
   const groups=groupByPartner(rows);
   const per=[];
   for(const [partner,list] of groups){
@@ -1171,11 +840,138 @@ async function getAggregates(){
   };
   return {per, totals};
 }
+async function copyPartnerHtml(partner){
+  const agg=await getAggregates(); if(!agg) return;
+  const g=await ensureSettingsRecord();
+  const p=agg.per.find(x=>x.partner===partner); if(!p) return;
+  const html=partnerHtml(partner, p.list, g.signature||'');
+  const ok=await copyHtmlToClipboard(html);
+  toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
+}
+async function openTotalPreview(){
+  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
+  const g=await ensureSettingsRecord();
+  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
+  const ov=modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt</h3>
+    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${html}</div>
+    <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="close">Schließen</button>
+    </div>
+  `);
+  const innerTable = ov.querySelector('table');
+  if(innerTable) makeTableSortable(innerTable.parentElement);
+  ov.addEventListener('click', e=>{ if(e.target.closest('button[data-act="close"]')) ov.remove(); },{passive:false});
+}
+async function copyTotalHtml(){
+  const agg=await getAggregates(); if(!agg) return;
+  const g=await ensureSettingsRecord();
+  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
+  const ok=await copyHtmlToClipboard(html);
+  toast(ok?'Gesamt in Zwischenablage':'Kopieren fehlgeschlagen', ok);
+}
+async function fillCfg(){
+  const g=await ensureSettingsRecord();
+  const el=PANEL.querySelector('#'+NS+'cfg-subj');
+  if(el) el.value=g.subjectPrefix||'Aktueller Tour.Report';
+}
+async function saveCfgFromUI(){
+  try{
+    const cur=await ensureSettingsRecord();
+    await idbPut('settings',{
+      id:'global',
+      subjectPrefix:(PANEL.querySelector('#'+NS+'cfg-subj')?.value||'').trim(),
+      signature:cur.signature||'',
+      httpGateway:cur.httpGateway||GATEWAY_DEFAULT,
+      apiKey:cur.apiKey||GATEWAY_API_KEY
+    });
+    toast('Einstellungen gespeichert');
+  }catch(e){
+    console.error(e); toast('Fehler beim Speichern',false);
+  }
+}
+async function openPreview(partner){
+  const agg=await getAggregates();
+  if(!agg){ alert('Keine Daten gefunden.'); return; }
+  const g=await ensureSettingsRecord();
+  const p=agg.per.find(x=>x.partner===partner);
+  if(!p){ alert('Partner nicht gefunden.'); return; }
+  const content=partnerHtml(partner, p.list, g.signature||'');
+  const ov=modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
+    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
+    <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
+      <button class="${NS}btn-sm" data-act="close">Schließen</button>
+    </div>
+  `);
+  const innerTable = ov.querySelector('table');
+  if(innerTable) makeTableSortable(innerTable.parentElement);
+  ov.addEventListener('click', e=>{
+    const btn=e.target.closest('button[data-act]'); if(!btn) return;
+    if(btn.dataset.act==='close') ov.remove();
+    if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
+  },{passive:false});
+}
+function openConfirm({title, subject, to, cc, saveKey, onOk}){
+  const ov=modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${title||'Bestätigen'}</h3>
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
+      <label>Betreff</label><input id="${NS}cf-subj" type="text" value="${subject||''}">
+      <label>An</label><input id="${NS}cf-to" type="text" value="${to||''}">
+      <label>CC</label><input id="${NS}cf-cc" type="text" value="${cc||''}">
+    </div>
+    <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
+      <button class="${NS}btn-sm" data-act="ok">OK</button>
+      <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
+    </div>
+  `);
+  ov.addEventListener('click', async e=>{
+    const b=e.target.closest('button[data-act]'); if(!b) return;
+    const subj=ov.querySelector('#'+NS+'cf-subj').value.trim();
+    const toV =ov.querySelector('#'+NS+'cf-to').value.trim();
+    const ccV =ov.querySelector('#'+NS+'cf-cc').value.trim();
+    if(b.dataset.act==='cancel'){ ov.remove(); return; }
+    if(b.dataset.act==='save'){
+      const key = saveKey || 'gesamt';
+      const cur = await idbGet('partners', key) || {name:key, alias:''};
+      await idbPut('partners', { name:key, to:toV, cc:ccV, alias:cur.alias||'' });
+      toast('Adressen gespeichert');
+      return;
+    }
+    if(b.dataset.act==='ok'){ onOk({subject:subj, to:toV, cc:ccV}); ov.remove(); }
+  },{passive:false});
+}
+async function openPartnerDialog(partner){
+  const key=(partner==='gesamt')?'gesamt':partner;
+  const cur=await idbGet('partners',key)||{name:key,to:'',cc:'',alias:''};
+  const ov=modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Einstellungen – ${partner}</h3>
+    <div class="${NS}row"><label>Alias (optional)</label><input id="${NS}pd-alias" type="text" value="${cur.alias||''}"></div>
+    <div class="${NS}row"><label>An</label><input id="${NS}pd-to" type="text" value="${cur.to||''}" placeholder="a@b.de, c@d.de"></div>
+    <div class="${NS}row"><label>CC</label><input id="${NS}pd-cc" type="text" value="${cur.cc||''}" placeholder="optional"></div>
+    <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="save">Speichern</button>
+      <button class="${NS}btn-sm" data-act="clear">Löschen</button>
+      <button class="${NS}btn-sm" data-act="close">Schließen</button>
+    </div>
+  `);
+  ov.addEventListener('click', async e=>{
+    const btn=e.target.closest('button[data-act]'); if(!btn) return;
+    if(btn.dataset.act==='close'){ ov.remove(); return; }
+    if(btn.dataset.act==='clear'){ await idbDel('partners',key); ov.remove(); return; }
+    if(btn.dataset.act==='save'){
+      const to=ov.querySelector('#'+NS+'pd-to').value.trim();
+      const cc=ov.querySelector('#'+NS+'pd-cc').value.trim();
+      const alias=ov.querySelector('#'+NS+'pd-alias').value.trim();
+      await idbPut('partners',{name:key,to,cc,alias});
+      alert('Gespeichert.'); ov.remove();
+    }
+  },{passive:false});
+}
 
-
-/* ====== TEIL 12/12 – Versand-Flows + Render (Mail nutzt jetzt mail*-Funktionen) ====== */
-
-// ---------- Versand-Flows mit Bestätigung ----------
+/* ====== Versand-Flows ====== */
 async function sendSinglePartnerConfirm(partner){
   if(partner==='gesamt'){ await sendTotalOnlyConfirm(); return; }
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
@@ -1184,7 +980,6 @@ async function sendSinglePartnerConfirm(partner){
   const rec=await idbGet('partners', partner)||{};
   const alias=rec.alias||partner;
   const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${alias} – ${todayStr()}`;
-  // *** Mail-HTML ohne UI-Icons ***
   const html=mailPartnerHtml(partner, p.list, g.signature||'');
   openConfirm({
     title:`Senden an ${alias}?`,
@@ -1197,7 +992,6 @@ async function sendTotalOnlyConfirm(){
   const g=await ensureSettingsRecord();
   const rec=await idbGet('partners','gesamt')||{};
   const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-  // *** Mail-HTML ohne UI-Icons ***
   const html=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
   openConfirm({
     title:'Gesamtübersicht senden?',
@@ -1215,7 +1009,6 @@ async function sendPartnerAndTotalConfirm(){
   }
   const rec=await idbGet('partners','gesamt')||{};
   const subjectTotal=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-
   const ov=modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Sammelversand bestätigen</h3>
     <div style="font:13px;margin-bottom:10px">Es werden <b>${ready.length}</b> Partner-Mails gesendet (nur mit gültiger Adresse) und <b>1</b> Gesamt-Mail an „gesamt“.</div>
@@ -1245,12 +1038,10 @@ async function sendPartnerAndTotalConfirm(){
       for(const pname of ready){
         const ovRec=await idbGet('partners', pname);
         const part=agg.per.find(x=>x.partner===pname);
-        // *** Mail-HTML ohne UI-Icons ***
         const html=mailPartnerHtml(pname, part.list, g.signature||'');
         const subjP=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${(ovRec.alias||pname)} – ${todayStr()}`;
         await deliverMail({subject:subjP, html, to:ovRec.to||'', cc:ovRec.cc||''});
       }
-      // Gesamt-Mail zuletzt
       const htmlTot=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
       await deliverMail({subject:subj, html:htmlTot, to, cc});
       ov.remove();
@@ -1258,7 +1049,7 @@ async function sendPartnerAndTotalConfirm(){
   },{passive:false});
 }
 
-// ---------- Render (UI bleibt mit Icons) ----------
+// ---------- Render ----------
 let renderTimer=null;
 async function render(force=false){
   if(Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS && !force) return;
@@ -1272,7 +1063,6 @@ async function render(force=false){
       return;
     }
     const {per, totals}=res;
-    // UI-HTML (mit Icons / sortierbar)
     const html = summaryHtml(per, totals, '');
     CONTENT.innerHTML = html;
     makeTableSortable(CONTENT);
@@ -1280,25 +1070,64 @@ async function render(force=false){
   if(force) await run(); else renderTimer=setTimeout(run, RENDER_DEBOUNCE);
 }
 
-// ---------- Boot ----------
-async function init(){
-  try{ ensureStyles(); mountUI(); await ensureSettingsRecord(); await render(true); }
-  catch(e){ console.error('[fvpr] init',e); }
-}
-let mo=null, refreshInterval=null;
-init();
-if(!mo){
-  mo=new MutationObserver(()=>{
-    if(Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return;
-    render();
-  });
-  mo.observe(document.body,{childList:true,subtree:true});
-}
-if(!refreshInterval){
-  refreshInterval=setInterval(()=>{
-    if(Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return;
-    render();
-  }, REFRESH_MS);
-}
-})();
+/* ====== TEIL 12/12 – Boot + Loader-Integration ====== */
 
+function openPanel(){
+  try { ensureStyles(); } catch {}
+  try { if (!document.querySelector(PANEL_ID)) mountUI(true); } catch {}
+  const p = document.querySelector(PANEL_ID);
+  if (p) p.style.display = '';
+  try { fillCfg(); } catch {}
+  try { render(true); } catch {}
+}
+
+function closePanel(){
+  const p = document.querySelector(PANEL_ID);
+  if (p) p.style.display = 'none';
+}
+
+async function bootStandalone(){
+  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await render(true); }
+  catch(e){ console.error('[fvpr] init', e); }
+  let mo = null, refreshInterval = null;
+  if (!mo){
+    mo = new MutationObserver(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); });
+    mo.observe(document.body, { childList:true, subtree:true });
+  }
+  if (!refreshInterval){
+    refreshInterval = setInterval(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); }, REFRESH_MS);
+  }
+}
+
+// ====== Start ======
+function registerWithLoader(){
+  const def = {
+    id: 'partner-report',
+    label: 'Partner-Report',
+    panels: [PANEL_ID],
+    run: () => {
+      const el = document.querySelector(PANEL_ID);
+      if (el && getComputedStyle(el).display !== 'none') closePanel();
+      else openPanel();
+    }
+  };
+  const G = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+  if (G.TM && typeof G.TM.register === 'function'){
+    G.TM.register(def);
+    removeStandaloneButton();        // <- Button sicher entfernen
+  } else {
+    const KEY='__tmQueue';
+    G[KEY] = Array.isArray(G[KEY]) ? G[KEY] : [];
+    G[KEY].push(def);                // <- nur vormerken, KEIN bootStandalone()
+  }
+  G.fvpr_open = openPanel;
+  G.fvpr_close = closePanel;
+}
+
+// Nur registrieren (und ggf. Button entfernen). KEIN bootStandalone() mehr!
+registerWithLoader();
+
+
+
+
+})();
