@@ -2,6 +2,8 @@
 // @name         ASEA 🚀 Optimierte Barcode- & Google-Links
 // @namespace    http://tampermonkey.net/
 // @version      5.1
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEA_Erweiterung.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEA_Erweiterung.user.js
 // @description  Scanserver ASEA Erweiterung. Fügt Barcode-, Google Maps- & Google Search-Spalten hinzu (schneller & stabiler)
 // @author       Thiemo Schöler
 // Läuft auf allen Standorten (z. B. 0157, 0160, ...):
