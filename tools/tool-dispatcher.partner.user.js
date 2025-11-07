@@ -4,6 +4,8 @@
 // @name         DPD Dispatcher – Partner-Report Mailer (v5.4.0 preview+confirm+save)
 // @namespace    bodo.dpd.custom
 // @version      5.4.0
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
