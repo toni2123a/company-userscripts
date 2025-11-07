@@ -125,7 +125,7 @@
   root.innerHTML = `
     <div class="tm-card" id="tm-card">
       <div class="tm-header">
-        <div class="tm-title">Site Tools</div>
+        <div class="tm-title">Dispatcher Tools</div>
         <div class="tm-subtle" id="tm-count">0 Module</div>
       </div>
       <div class="tm-row" id="tm-row"></div>
