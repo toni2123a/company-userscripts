@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
-// @version      1.3.1
+// @version      1.3.2
 // @description  Zentrales Panel mit Buttons für Module (lazy run) • Close-Others • zuverlässiges Toggle beim erneuten Klick
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -47,54 +47,93 @@
 
   /* ================= Panel UI ================ */
   function ensurePanel() {
-    if (document.getElementById('tm-tools-panel')) return;
+  if (document.getElementById('tm-tools-panel')) return;
 
-    GM_addStyle(`
-      #tm-tools-panel{position:fixed;bottom:16px;left:16px;display:flex;flex-direction:column;gap:8px;z-index:999999;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
-      #tm-tools-panel .tm-card{background:#111827cc;backdrop-filter:blur(6px);color:#f9fafb;border:1px solid #374151;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.25);padding:8px;min-width:260px;max-width:90vw;}
-      #tm-tools-panel .tm-header{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:move;user-select:none;font-size:12px;opacity:.9}
-      #tm-tools-panel .tm-title{font-weight:600;letter-spacing:.2px}
-      #tm-tools-panel .tm-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
-      #tm-tools-panel button.tm-btn{all:unset;padding:6px 10px;border-radius:8px;border:1px solid #4b5563;background:#1f2937;font-size:12px;line-height:1;white-space:nowrap;cursor:pointer}
-      #tm-tools-panel button.tm-btn:hover{background:#374151}
-      #tm-tools-panel .tm-subtle{opacity:.75;font-size:11px}
-    `);
+  GM_addStyle(`
+    /* Container: oben zentriert, fixe Position */
+    #tm-tools-panel{
+      position:fixed;
+      top:8px;
+      left:50%;
+      transform:translateX(-50%);
+      z-index:999999;
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      display:block;
+      pointer-events:auto;
+    }
 
-    const root = document.createElement('div');
-    root.id = 'tm-tools-panel';
-    root.innerHTML = `
-      <div class="tm-card" id="tm-card">
-        <div class="tm-header" id="tm-drag">
-          <div class="tm-title">Site Tools</div>
-          <div class="tm-subtle" id="tm-count">0 Module</div>
-        </div>
-        <div class="tm-row" id="tm-row"></div>
+    /* Karte: Breite wächst mit Inhalt, aber nicht über 96vw */
+    #tm-tools-panel .tm-card{
+      display:inline-flex;
+      flex-direction:column;
+      gap:6px;
+      background:#111827cc;
+      backdrop-filter:blur(6px);
+      color:#f9fafb;
+      border:1px solid #374151;
+      border-radius:12px;
+      box-shadow:0 6px 18px rgba(0,0,0,.25);
+      padding:8px 10px;
+      width:max-content;           /* <— wächst mit Inhalt */
+      max-width:96vw;              /* <— klemmt an der Viewportbreite */
+    }
+
+    /* Header nur Info – kein Drag mehr */
+    #tm-tools-panel .tm-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      user-select:none;
+      font-size:12px;
+      opacity:.9;
+      cursor:default;              /* <— kein Move-Cursor */
+    }
+    #tm-tools-panel .tm-title{font-weight:600;letter-spacing:.2px}
+
+    /* Buttonreihe: einzeilig, horizontal scrollbar wenn zu lang */
+    #tm-tools-panel .tm-row{
+      display:flex;
+      flex-wrap:nowrap;            /* <— keine Zeilenumbrüche */
+      align-items:center;
+      gap:6px;
+      margin-top:4px;
+      overflow-x:auto;             /* <— Scrollbar falls zu schmal */
+      overflow-y:hidden;
+      scrollbar-width:thin;
+    }
+
+    #tm-tools-panel button.tm-btn{
+      all:unset;
+      padding:6px 10px;
+      border-radius:8px;
+      border:1px solid #4b5563;
+      background:#1f2937;
+      font-size:12px;
+      line-height:1;
+      white-space:nowrap;
+      cursor:pointer
+    }
+    #tm-tools-panel button.tm-btn:hover{background:#374151}
+    #tm-tools-panel .tm-subtle{opacity:.75;font-size:11px}
+  `);
+
+  const root = document.createElement('div');
+  root.id = 'tm-tools-panel';
+  root.innerHTML = `
+    <div class="tm-card" id="tm-card">
+      <div class="tm-header">
+        <div class="tm-title">Site Tools</div>
+        <div class="tm-subtle" id="tm-count">0 Module</div>
       </div>
-    `;
-    document.body.appendChild(root);
+      <div class="tm-row" id="tm-row"></div>
+    </div>
+  `;
+  document.body.appendChild(root);
 
-    // Drag + persist
-    const drag = document.getElementById('tm-drag');
-    const pos = GM_getValue('tm_panel_pos', { left: 16, bottom: 16 });
-    root.style.left = `${pos.left}px`;
-    root.style.bottom = `${pos.bottom}px`;
+  // Keine Drag- oder Positions-Persistenz mehr nötig
+}
 
-    let dragging=false, startX=0, startY=0, startLeft=0, startBottom=0;
-    function onDown(e){ dragging=true;
-      const r=root.getBoundingClientRect(); startX=e.clientX; startY=e.clientY; startLeft=r.left; startBottom=window.innerHeight-r.bottom;
-      document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
-    }
-    function onMove(e){ if(!dragging) return;
-      const dx=e.clientX-startX, dy=e.clientY-startY;
-      root.style.left=`${Math.max(0,Math.min(startLeft+dx,window.innerWidth-100))}px`;
-      root.style.bottom=`${Math.max(0,Math.min(startBottom-dy,window.innerHeight-40))}px`;
-    }
-    function onUp(){ dragging=false;
-      GM_setValue('tm_panel_pos',{left:parseInt(root.style.left||'16',10),bottom:parseInt(root.style.bottom||'16',10)});
-      document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp);
-    }
-    drag.addEventListener('mousedown',onDown);
-  }
 
   function updateCount() {
     const el = document.getElementById('tm-count');
