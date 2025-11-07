@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      3.8.0
+// @version      3.9.0
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -141,6 +141,9 @@ function ensureStyles(){
   .${NS}chev.rot{transform:rotate(90deg)}
   .${NS}cust-wrap{overflow:hidden;transition:max-height .18s ease}
   .${NS}cust-wrap.collapsed{max-height:0}
+  .${NS}dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:#ccc;vertical-align:middle}
+  .${NS}dot.on{background:#2ecc71}
+
   `;
   document.head.appendChild(s);
 }
@@ -168,6 +171,36 @@ function initSavedCollapser(){
 
 
 let latestRows = [];
+
+/* ======================= Auto-Refresh ======================= */
+const AUTO_KEY = NS + 'auto.enabled';
+const AUTO_MS  = 60 * 1000; // 60s
+let autoTimer  = null;
+
+function autoIsOn(){ return localStorage.getItem(AUTO_KEY) !== '0'; } // Default: EIN
+function autoStart(){
+  autoStop();
+  autoTimer = setInterval(() => { try{ loadDetails(); }catch{} }, AUTO_MS);
+}
+function autoStop(){
+  if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
+}
+function autoSet(on){
+  localStorage.setItem(AUTO_KEY, on ? '1' : '0');
+  on ? autoStart() : autoStop();
+  updateAutoBtn();
+}
+function updateAutoBtn(){
+  const b = document.getElementById(NS+'auto');
+  if (!b) return;
+  const on = autoIsOn();
+  b.innerHTML = `<span class="${NS}dot ${on ? 'on' : ''}"></span> Auto 60s`;
+  b.title = on ? 'Auto-Refresh ist EIN (alle 60s). Klicken zum Ausschalten.'
+               : 'Auto-Refresh ist AUS. Klicken zum Einschalten.';
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+window.addEventListener('beforeunload', autoStop);
+
 
 let sortState = { key: null, dir: 1 }; // dir: 1=asc, -1=desc
 const collator = new Intl.Collator('de-DE', { numeric: true, sensitivity: 'base' });
@@ -230,7 +263,6 @@ function mountUI(){
   btn.id=NS+'btn'; btn.type='button'; btn.className=NS+'btn';
   btn.textContent='Neu-/Rekla-Kunden Kontrolle';
   btn.addEventListener('click', ()=>togglePanel());
-
   host.appendChild(btn);
 
   const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
@@ -247,6 +279,7 @@ function mountUI(){
       <div class="${NS}row">
         <input id="${NS}tour" class="${NS}inp" placeholder="Tour-Filter (optional)">
         <button class="${NS}btn" id="${NS}load"  type="button">Liste laden (API)</button>
+        <button class="${NS}btn" id="${NS}auto" type="button" aria-pressed="true"></button>
         <button class="${NS}btn" id="${NS}close" type="button">Schließen</button>
       </div>
     </div>
@@ -269,10 +302,19 @@ function mountUI(){
   fileInput.addEventListener('change', onImport);
   document.getElementById(NS+'load').onclick = loadDetails;
 
+  // >>> Auto-Button ERST JETZT verdrahten (existiert nun im DOM)
+  const autoBtn = document.getElementById(NS+'auto');
+  if (autoBtn){
+    autoBtn.onclick = () => autoSet(!autoIsOn());
+    updateAutoBtn();
+  }
+
   // Live-Filter nach Tour
   document.getElementById(NS+'tour').addEventListener('input', ()=>renderTable(applyTourFilter(latestRows)));
 
   renderList();
+
+  if (autoIsOn()) autoStart();
 }
 
 
