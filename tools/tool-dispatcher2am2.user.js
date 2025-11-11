@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.3.0
+// @version      6.3.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -620,24 +620,25 @@
     };
   }
 
-  // ---- FAST Paging ----
-  async function fetchPagedFast(builder, {concurrency=6, size=500, hardMaxPages=200}={}){
-    if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
-    const headers = buildHeaders(lastOkRequest.headers);
+ // --- FIXED: FAST Pager mit Fallback-Probing, wenn Totals fehlen ---
+async function fetchPagedFast(builder, {concurrency=6, size=500, hardMaxPages=200}={}) {
+  if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
+  const headers = buildHeaders(lastOkRequest.headers);
 
-    // Seite 1
-    const u1 = builder(lastOkRequest.url, 1);
-    const r1 = await fetch(u1.toString(), { credentials:'include', headers });
-    if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
-    const j1 = await r1.json();
+  // Seite 1
+  const u1 = builder(lastOkRequest.url, 1);
+  const r1 = await fetch(u1.toString(), { credentials:'include', headers });
+  if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
+  const j1 = await r1.json();
+  const chunk1 = pickArray(j1);
 
-    const chunk1 = pickArray(j1);
-    const { totalElements, totalPages: tpRaw } = pickTotals(j1, size);
-    let totalPages = tpRaw || (chunk1.length ? Math.ceil((totalElements||chunk1.length)/size) : 1);
-    totalPages = Math.max(1, Math.min(totalPages, hardMaxPages));
+  // Totals lesen (können bei PRIO fehlen)
+  const { totalElements, totalPages: tpRaw } = pickTotals(j1, size);
+  let totalPages = tpRaw || 0;
 
-    if (totalPages <= 1 || chunk1.length < size) return chunk1;
-
+  // Fall A: Totals bekannt → Parallel-Fetch wie gehabt
+  if (totalPages > 1) {
+    totalPages = Math.min(totalPages, hardMaxPages);
     const pages = [];
     for (let p=2; p<=totalPages; p++) pages.push(p);
 
@@ -653,6 +654,7 @@
         const j = await res.json();
         const arr = pickArray(j);
         if (arr.length) out.push(...arr);
+        // Wenn unerwartet doch dünn → früh abbrechen
         if (arr.length < size){ idx = pages.length; break; }
       }
     }
@@ -660,6 +662,27 @@
     await Promise.all(workers);
     return out;
   }
+
+  // Fall B: Totals unbekannt
+  // - Wenn Seite 1 < size, gibt's nur 1 Seite → fertig
+  if (chunk1.length < size) return chunk1;
+
+  // - Wenn Seite 1 == size → sequentiell weiterprobieren bis erste "dünne" Page
+  const out = chunk1.slice();
+  let page = 2;
+  while (page <= hardMaxPages) {
+    const u = builder(lastOkRequest.url, page);
+    const r = await fetch(u.toString(), { credentials:'include', headers });
+    if (!r.ok) break;
+    const j = await r.json();
+    const arr = pickArray(j);
+    if (!arr.length) break;
+    out.push(...arr);
+    if (arr.length < size) break; // letzte Seite erreicht
+    page++;
+  }
+  return out;
+}
 
   async function fetchAllFast(){
     const [prioRows, exp12Rows, exp18Rows] = await Promise.all([
