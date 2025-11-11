@@ -1,18 +1,20 @@
 // ==UserScript==
 // @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      4.0.0
+// @version      5.0.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
 // @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // ==/UserScript==
 
 
 (function () {
   'use strict';
+
+
 
   // ---------- Modul-Metadaten für das Hauptpanel ----------
   const def = {
@@ -31,6 +33,20 @@
 
   // ============== AB HIER: dein ursprüngliches Script – auf Lazy-Start umgebaut ==============
   const NS = 'kn-'; // Klassen-/ID-Präfix beibehalten
+
+  try {
+   const s = sessionStorage.getItem(NS + 'lastReq');
+   if (s) {
+     const o = JSON.parse(s);
+     window.lastOkRequest = {
+       url: new URL(o.url, location.origin),
+       headers: o.headers || {}
+     };
+   }
+ } catch {}
+
+ // Hooks sofort installieren, nicht erst im Lazy-Start
+ installHooksOnce?.();
 
   // Guard, damit UI/Hook nur 1x gebaut werden
   let started = false;
@@ -61,7 +77,7 @@
   }
 
   /* ======================= Request Capture (lazy installiert) ======================= */
-  let lastOkRequest = null;
+ let lastOkRequest = window.lastOkRequest || null;
   function installHooksOnce(){
     if (!window.__kn_fetch_hooked && window.fetch){
       const orig=window.fetch;
@@ -85,6 +101,9 @@
                 if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
               }
               lastOkRequest = { url: u, headers: h };
+                 try {
+   sessionStorage.setItem(NS + 'lastReq', JSON.stringify({ url: u.href, headers: h }));
+ } catch {}
               const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
             }
           }
@@ -150,6 +169,7 @@
       .${NS}cust-wrap.collapsed{max-height:0}
       .${NS}dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:#ccc;vertical-align:middle}
       .${NS}dot.on{background:#2ecc71}
+      .${NS}status-problem { color:#c62828; font-weight:700; }
     `;
     document.head.appendChild(s);
   }
@@ -178,7 +198,7 @@
   const AUTO_MS  = 60 * 1000;
   let autoTimer  = null;
   function autoIsOn(){ return localStorage.getItem(AUTO_KEY) !== '0'; }
-  function autoStart(){ autoStop(); autoTimer = setInterval(() => { try{ loadDetails(); }catch{} }, AUTO_MS); }
+  function autoStart(){ autoStop(); loadDetails(); autoTimer = setInterval(() => { try{ loadDetails(); }catch{} }, AUTO_MS);}
   function autoStop(){ if (autoTimer){ clearInterval(autoTimer); autoTimer = null; } }
   function autoSet(on){ localStorage.setItem(AUTO_KEY, on ? '1' : '0'); on ? autoStart() : autoStop(); updateAutoBtn(); }
   function updateAutoBtn(){
@@ -255,8 +275,15 @@
 
     document.getElementById(NS+'tour').addEventListener('input', ()=>renderTable(applyTourFilter(latestRows)));
 
-    renderList();
-    if (autoIsOn()) autoStart();
+     renderList();
+  updateAutoBtn();                 // Button direkt korrekt beschriften
+  if (autoIsOn()) autoStart();
+
+  // Tab-Visibility -> Timer steuern, um Throttling & Overlaps zu vermeiden
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) autoStop();
+    else if (autoIsOn()) autoStart();
+  });
   }
 
   function togglePanel(force){
@@ -321,9 +348,28 @@
           H.set(key==='accept'?'Accept':key.replace(/(^.|-.)/g,s=>s.toUpperCase()), v);
         }
       }); }
-      if(!H.has('Accept')) H.set('Accept','application/json, text/plain, */*');
+          if(!H.has('Accept')) H.set('Accept','application/json, text/plain, */*');
+    // Autorisierung immer aus aktuellem Cookie aktualisieren (Token-Rotation)
+    try {
+     const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+      if (m) H.set('Authorization', 'Bearer ' + decodeURIComponent(m[1]));    } catch {}
     }catch{}
     return H;
+  }
+
+  // Versucht „Zusatzcode“/Problemcode aus dem Datensatz zu lesen
+    function getZusatzcode(r){
+    // robust – berücksichtigt Array-Felder wie additionalCodes
+    try {
+      if (Array.isArray(r.additionalCodes) && r.additionalCodes.length > 0) {
+        return String(r.additionalCodes[0]).trim();
+      }
+      // Fallbacks für mögliche andere Varianten:
+      const cand = r.zusatzcode || r.zusatzCode || r.problemCode || r.additionalCode || r.addCode || '';
+      return String(cand || '').trim();
+    } catch {
+      return '';
+    }
   }
 
   /* ======================= pickup-delivery ======================= */
@@ -531,13 +577,19 @@
     if(!v) return rows;
     return (rows||[]).filter(r => String(r.tour||'').toLowerCase().includes(v));
   }
-
+let isLoading = false;
   async function loadDetails(){
+       if (isLoading) return;           // Reentrancy-Schutz
+  isLoading = true;
     const out=document.getElementById(NS+'out');
     out.innerHTML = '<div class="'+NS+'muted">Lade …</div>';
 
     const savedShorts = loadList().map(normShort).filter(Boolean);
-    if(!savedShorts.length){ out.innerHTML='<div class="'+NS+'muted">Keine Nummern gespeichert.</div>'; return; }
+    if(!savedShorts.length){
+     out.innerHTML = '<div class="'+NS+'muted">Keine Nummern gespeichert.</div>';
+     isLoading = false;              // <<< wichtig
+     return;
+   }
     const wantSet = new Set(savedShorts);
 
     let rowsApi=[], driverMap=null;
@@ -547,8 +599,9 @@
       driverMap = map;
     }catch{
       out.innerHTML = `<div class="${NS}muted">Kein API-Request erkannt. Bitte einmal die normale Liste laden und erneut versuchen.</div>`;
-      return;
-    }
+      } finally {
+    isLoading = false;
+  }
 
     const filteredSrc = rowsApi.filter(r => matchesSaved(getCustomerFromRow(r), wantSet));
 
@@ -573,6 +626,11 @@
       if (warnPredict) hints.push('Predict außerhalb Abholfenster');
       if (closed) hints.push('bereits geschlossen');
       else if (soon) hints.push('schließt in ≤30 Min');
+      // Problemcode in Hinweise verschieben
+  const extraCode = getZusatzcode(r);
+  if (String(status).toUpperCase() === 'PROBLEM' && extraCode) {
+    hints.push(`Problemcode: ${extraCode}`);
+  }
 
       const tour = String(r.tour || '').trim();
       let drv = null;
@@ -604,6 +662,8 @@
         pickup:  getPickup(r)  || '—',
         status,
         isCompleted: String(status).toUpperCase()==='COMPLETED',
+        isProblem:   String(status).toUpperCase()==='PROBLEM',
+     //   extraCode: getZusatzcode(r) || '',
         warnRow: warnPredict,
         hintText: hints.join(' • ') || '—',
         lastScan: tinfo?.lastScan ? tinfo.lastScan.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '—',
@@ -647,7 +707,19 @@
 
     const rowsSorted = sortRows(rows || []);
     const bodyHtml = (rowsSorted||[]).map(r=>{
-      const statusHtml = r.isCompleted ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>` : esc(r.status||'—');
+    const statusText = r.isProblem && r.extraCode
+        ? `${String(r.status||'—')} – ${r.extraCode}`
+        : String(r.status||'—');
+
+          const statusHtml =
+        r.isProblem
+          ? `<span class="${NS}status-problem">${esc(r.status||'—')}</span>`
+          : (r.isCompleted
+             ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>`
+             : esc(r.status||'—'));
+
+
+
       const linkHtml = r.gmaps ? `<a href="${esc(r.gmaps)}" target="_blank" rel="noopener" title="${esc(r.gpsLat||'')}, ${esc(r.gpsLon||'')}">Karte</a>` : '—';
       const cells = [
         esc(r.number||'—'), esc(r.tour||'—'), esc(r.name||'—'), esc(r.street||'—'), esc(r.plz||'—'), esc(r.ort||'—'),
