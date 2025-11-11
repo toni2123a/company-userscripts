@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.1.0
+// @version      6.3.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -78,7 +78,6 @@
     .${NS}loading.on{display:block}
     .${NS}modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
     .${NS}modal-inner{background:#fff;max-width:min(1200px,95vw);max-height:78vh;overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
-
     .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
     .${NS}modal-body{padding:8px 12px}
     .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
@@ -88,39 +87,18 @@
     .${NS}sort-desc::after{content:" ▼";font-size:11px}
     .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
     .${NS}eye:hover{background:#f3f4f6}
-    /* Fixe Spaltenbreiten + saubere Überläufe */
-.pm-tbl{table-layout:fixed; width:100%}
-.pm-tbl th, .pm-tbl td{
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.pm-tbl th{ z-index:1 } /* sticky header über Body-Zeilen */
-.pm-modal-inner{ max-width:min(1400px,95vw) } /* vorher 1200px */
-/* Modal größer & optional Vollbild */
-.pm-modal{align-items:flex-start} /* Modal oben statt Mitte, wirkt “höher” */
-.pm-modal-inner{
-  width:min(1600px,96vw);
-  height:min(88vh,1000px);
-}
-.pm-modal.pm-full .pm-modal-inner{
-  width:96vw;
-  height:92vh;
-}
-
-/* Body bekommt immer Scroll, Header bleibt sichtbar */
-.pm-modal-body{padding:8px 12px; overflow:auto; max-height:calc(100% - 46px)}
-.pm-modal-head{position:sticky; top:0; background:#fff; z-index:2}
-
-/* Resizer (optional) */
-.pm-resize{ position:absolute; right:6px; bottom:6px; width:16px; height:16px;
-  cursor:se-resize; opacity:.6 }
-.pm-resize::after{
-  content:""; position:absolute; inset:0;
-  background:linear-gradient(135deg, transparent 0 50%, rgba(0,0,0,.25) 50% 100%);
-  border-radius:3px;
-}
-
+    .pm-tbl{table-layout:fixed; width:100%}
+    .pm-tbl th, .pm-tbl td{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .pm-tbl th{ z-index:1 }
+    .pm-modal-inner{ max-width:min(1400px,95vw) }
+    .pm-modal{align-items:flex-start}
+    .pm-modal-inner{ width:min(1600px,96vw); height:min(88vh,1000px) }
+    .pm-modal.pm-full .pm-modal-inner{ width:96vw; height:92vh }
+    .pm-modal-body{padding:8px 12px; overflow:auto; max-height:calc(100% - 46px)}
+    .pm-modal-head{position:sticky; top:0; background:#fff; z-index:2}
+    .pm-resize{ position:absolute; right:6px; bottom:6px; width:16px; height:16px; cursor:se-resize; opacity:.6 }
+    .pm-resize::after{ content:""; position:absolute; inset:0;
+      background:linear-gradient(135deg, transparent 0 50%, rgba(0,0,0,.25) 50% 100%); border-radius:3px; }
     `;
     document.head.appendChild(style);
   }
@@ -132,7 +110,7 @@
   function setSetting(k,v){ const s = loadSettings(); s[k]=v; saveSettings(s); }
   function getSetting(k){ return loadSettings()[k]; }
 
-  /* ---------- UI (kein eigener Top-Button mehr!) ---------- */
+  /* ---------- UI ---------- */
   function mountUI(){
     ensureStyles();
     if (document.getElementById(NS+'panel')) return;
@@ -189,8 +167,8 @@
       if(!b) return;
       const a = b.dataset.action;
       if (a === 'openSettings') { openSettingsModal(); return; }
-      if(a==='refreshApi'){ await fullRefresh().catch(console.error); return; }
-      if(a==='showExpLate11'){ showExpLate11(); return; }
+      if (a === 'refreshApi')   { await fullRefresh().catch(console.error); return; }
+      if (a === 'showExpLate11'){ showExpLate11(); return; }
     });
 
     const expSel = document.getElementById(NS+'filter-express');
@@ -274,7 +252,7 @@
     openModal('Einstellungen', html);
   }
 
-  /* ---------- Grid/Depot-Helfer (aus deinem Script) ---------- */
+  /* ---------- Grid/Depot-Helfer ---------- */
   const wait = (ms)=>new Promise(r=>setTimeout(r,ms));
   const norm = s => String(s||'').replace(/\s+/g,' ').trim();
 
@@ -331,6 +309,7 @@
     }
     return { iTour, iDrv };
   }
+
   function collectMapFromTable(tbl, map){
     const { iTour, iDrv } = detectColIndexes(tbl);
     if (iTour < 0 || iDrv < 0) return 0;
@@ -349,6 +328,7 @@
     }
     return added;
   }
+
   async function scrollGridAndCollect(map, {timeoutMs=18000, step=250}={}){
     let grid = findVehicleGridContainer(); if (!grid) return 0;
     const start = Date.now(); let totalAdded = 0, prev = -1;
@@ -366,6 +346,7 @@
     }
     return totalAdded;
   }
+
   async function tryBuildTourDriverMapFromDom(){
     if (window.__pmTour2Driver instanceof Map && window.__pmTour2Driver.size) return;
     const visibleTables = qsaDeep('table,[role="grid"]').filter(el => el.offsetParent !== null);
@@ -387,6 +368,7 @@
       if (map.size){ window.__pmTour2Driver = map; return; }
     }
   }
+
   async function buildTourDriverMapAutoload(){
     try{
       if (window.__pmTour2Driver instanceof Map && window.__pmTour2Driver.size) return;
@@ -396,13 +378,72 @@
       if (map.size){ window.__pmTour2Driver = map; }
     }catch(e){ console.warn('[PM] AutoLoad Fehler:', e); }
   }
-  function startAutoloadTourDriverMap(){
-    buildTourDriverMapAutoload();
-    const mo = new MutationObserver(()=> {
-      if (window.__pmTour2Driver instanceof Map && window.__pmTour2Driver.size) return;
-      buildTourDriverMapAutoload();
+
+  // ==== DOM-Index: Status / Kommentar / Tour→Fahrer ====
+  const _gridIndex = { ts: 0, statusByPsn: new Map(), commentByPsn: new Map(), tour2driver: new Map() };
+
+  function buildActiveGridIndex(){
+    _gridIndex.statusByPsn.clear();
+    _gridIndex.commentByPsn.clear();
+    try { if (window.__pmTour2Driver instanceof Map) _gridIndex.tour2driver = window.__pmTour2Driver; } catch {}
+
+    const grid = findVehicleGridContainer();
+    if (!grid) { _gridIndex.ts = Date.now(); return; }
+
+    const rows = qsaDeep('tbody tr, [role="row"]', grid);
+    let psnIdx=-1, statIdx=-1, commIdx=-1, tourIdx=-1, drvIdx=-1;
+
+    const hdrs = qsaDeep('thead th, [role="columnheader"]', grid);
+    hdrs.forEach((h,i)=>{
+      const t = (h.textContent||h.title||'').trim().toLowerCase();
+      if (psnIdx < 0 && /(paket|psn|parcel|scheinnummer|paketscheinnummer)/.test(t)) psnIdx = i;
+      if (statIdx< 0 && /(status|state)/.test(t)) statIdx = i;
+      if (commIdx< 0 && /(kommentar|frei.?text|comment|note|notiz)/.test(t)) commIdx = i;
+      if (tourIdx< 0 && /\btour(\s*nr|nummer)?\b/i.test(t)) tourIdx = i;
+      if (drvIdx < 0 && /(zusteller|fahrer|courier|rider)/.test(t)) drvIdx = i;
     });
-    mo.observe(document.documentElement, {subtree:true, childList:true});
+
+    rows.forEach(tr=>{
+      const cells = qsaDeep('td, [role="gridcell"]', tr);
+      const get = (i)=> i>=0 && cells[i] ? (cells[i].getAttribute('aria-label') || cells[i].textContent || '').trim() : '';
+      const psn = (get(psnIdx)||'').replace(/\D+/g,'');
+      if (!psn) return;
+      const stat = get(statIdx) || (tr.querySelector('[title]')?.getAttribute('title')||'');
+      const comm = get(commIdx) || '';
+      if (stat) _gridIndex.statusByPsn.set(psn, stat);
+      if (comm) _gridIndex.commentByPsn.set(psn, comm);
+
+      const tour = (get(tourIdx)||'').replace(/[^\dA-Za-z]/g,'');
+      const drv  = (get(drvIdx)||'').trim();
+      if (tour && drv && !_gridIndex.tour2driver.has(tour)) _gridIndex.tour2driver.set(tour, drv);
+    });
+
+    try { window.__pmTour2Driver = _gridIndex.tour2driver; } catch {}
+    _gridIndex.ts = Date.now();
+  }
+
+  function statusFromIndex(psn){ return _gridIndex.statusByPsn.get(String(psn||'')) || ''; }
+  function commentFromIndex(psn){ return _gridIndex.commentByPsn.get(String(psn||'')) || ''; }
+
+  // Platzhalter; gleich wird statusOf/ commentOf überschrieben
+  const statusOf_OLD = r => '';
+  const commentOf_OLD = r => '';
+
+  function statusOf_FAST(r){ const s = statusFromIndex(parcelId(r)); return s || statusOf_OLD(r); }
+  function commentOf_FAST(r){ const c = commentFromIndex(parcelId(r)); return c || commentOf_OLD(r); }
+
+  // Debounce
+  let _idxDebounce = 0;
+  function scheduleGridIndexRebuild(){
+    if (_idxDebounce) cancelAnimationFrame(_idxDebounce);
+    _idxDebounce = requestAnimationFrame(()=>{ buildActiveGridIndex(); });
+  }
+
+  function startAutoloadTourDriverMap_FAST(){
+    buildTourDriverMapAutoload();
+    scheduleGridIndexRebuild();
+    const mo = new MutationObserver(()=>{ scheduleGridIndexRebuild(); });
+    mo.observe(document.documentElement, {subtree:true, childList:true, attributes:false});
   }
 
   /* ---------- Depot/Scanserver ---------- */
@@ -433,6 +474,7 @@
     let best='', bestN=-1; for (const [k,n] of counts){ if (n>bestN){ best=k; bestN=n; } }
     return best;
   }
+
   function getScanserverBase(){
     let suf = String(getSetting('depotSuffix')||'').replace(/\D+/g,'').slice(-3);
     if (!suf) {
@@ -442,6 +484,7 @@
     if (!suf) suf = '157';
     return `https://scanserver-d0010${suf}.ssw.dpdit.de/cgi-bin/pa.cgi`;
   }
+
   function buildScanserverUrl(psnRaw){
     const pass = getSetting('scanserverPass')||'';
     if (!pass){
@@ -490,7 +533,7 @@
               lastOkRequest = { url: u, headers: h };
               const n = document.getElementById(NS + 'note-capture'); if (n) n.style.display = 'none';
               try { scheduleAuto(); } catch {}
-              try { if (autoEnabled && !isBusy && !document.hidden) { fullRefresh().catch(()=>{}); } } catch {}
+              if (autoEnabled && !isBusy && !document.hidden) { fullRefresh().catch(()=>{}); }
             }
           }
         } catch {}
@@ -545,6 +588,89 @@
     q.set('page', String(page)); q.set('pageSize','500'); q.set('elements', String(el));
     q.delete('priority'); q.delete('parcelNumber'); u.search = q.toString(); return u;
   }
+
+  // ---- Robust Response Helpers ----
+  function pickArray(payload){
+    if (Array.isArray(payload)) return payload;
+    if (payload && Array.isArray(payload.items)) return payload.items;
+    if (payload && Array.isArray(payload.content)) return payload.content;
+    if (payload && payload.data){
+      if (Array.isArray(payload.data)) return payload.data;
+      if (Array.isArray(payload.data.items)) return payload.data.items;
+      if (Array.isArray(payload.data.content)) return payload.data.content;
+    }
+    if (payload && Array.isArray(payload.results)) return payload.results;
+    // manche HAL/embedded:
+    if (payload && payload._embedded){
+      const v = Object.values(payload._embedded).find(Array.isArray);
+      if (Array.isArray(v)) return v;
+    }
+    return [];
+  }
+  function pickTotals(payload, sizeFallback){
+    const p = payload || {};
+    const pg = p.page || {};
+    const totalElements =
+      Number(p.totalElements ?? p.total ?? p.count ?? pg.totalElements ?? pg.total ?? 0);
+    const totalPages =
+      Number(p.totalPages ?? pg.totalPages ?? (totalElements ? Math.ceil(totalElements / (sizeFallback||500)) : 0));
+    return {
+      totalElements: (Number.isFinite(totalElements) ? totalElements : 0),
+      totalPages:   (Number.isFinite(totalPages)   ? totalPages   : 0)
+    };
+  }
+
+  // ---- FAST Paging ----
+  async function fetchPagedFast(builder, {concurrency=6, size=500, hardMaxPages=200}={}){
+    if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
+    const headers = buildHeaders(lastOkRequest.headers);
+
+    // Seite 1
+    const u1 = builder(lastOkRequest.url, 1);
+    const r1 = await fetch(u1.toString(), { credentials:'include', headers });
+    if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
+    const j1 = await r1.json();
+
+    const chunk1 = pickArray(j1);
+    const { totalElements, totalPages: tpRaw } = pickTotals(j1, size);
+    let totalPages = tpRaw || (chunk1.length ? Math.ceil((totalElements||chunk1.length)/size) : 1);
+    totalPages = Math.max(1, Math.min(totalPages, hardMaxPages));
+
+    if (totalPages <= 1 || chunk1.length < size) return chunk1;
+
+    const pages = [];
+    for (let p=2; p<=totalPages; p++) pages.push(p);
+
+    const out = chunk1.slice();
+    let idx = 0;
+
+    async function worker(){
+      while (idx < pages.length){
+        const p = pages[idx++];
+        const u = builder(lastOkRequest.url, p);
+        const res = await fetch(u.toString(), { credentials:'include', headers });
+        if (!res.ok) continue;
+        const j = await res.json();
+        const arr = pickArray(j);
+        if (arr.length) out.push(...arr);
+        if (arr.length < size){ idx = pages.length; break; }
+      }
+    }
+    const workers = Array.from({length: Math.max(1, Math.min(concurrency, pages.length))}, worker);
+    await Promise.all(workers);
+    return out;
+  }
+
+  async function fetchAllFast(){
+    const [prioRows, exp12Rows, exp18Rows] = await Promise.all([
+      fetchPagedFast(buildUrlPrio),
+      fetchPagedFast((base,p)=>buildUrlElements(base,p,'023')),
+      fetchPagedFast((base,p)=>buildUrlElements(base,p,'010'))
+    ]);
+    return { prioRows, exp12Rows, exp18Rows };
+  }
+
+  // ---- Legacy (bewährter) Pager als Fallback ----
   async function fetchPaged(builder){
     if(!lastOkRequest) throw new Error('Kein 200-OK Request zum Klonen gefunden.');
     const headers = buildHeaders(lastOkRequest.headers);
@@ -555,7 +681,7 @@
       const r = await fetch(u.toString(), { credentials:'include', headers });
       if (!r.ok) break;
       const j = await r.json();
-      const chunk = (j.items||j.content||j.data||j.results||j)||[];
+      const chunk = pickArray(j);
       rows.push(...chunk);
       if (chunk.length < size) break;
       page++; await sleep(40);
@@ -572,12 +698,11 @@
       const r = await fetch(u.toString(), { credentials:'include', headers });
       if (!r.ok) { if (page === 1) throw new Error(`HTTP ${r.status}`); break; }
       const j = await r.json();
-      const chunk = (j.items||j.content||j.data||j.results||j)||[];
+      const chunk = pickArray(j);
       if (page === 1) {
-        const t  = Number(j.totalElements||j.total||j.count);
-        const tp = Number(j.totalPages);
-        if (Number.isFinite(t) && t >= 0) totalKnown = t;
-        if (Number.isFinite(tp) && tp > 0) totalKnown = totalKnown ?? tp * size;
+        const { totalElements, totalPages } = pickTotals(j, size);
+        if (Number.isFinite(totalElements) && totalElements >= 0) totalKnown = totalElements;
+        if (Number.isFinite(totalPages) && totalPages > 0) totalKnown = totalKnown ?? totalPages * size;
       }
       rows.push(...chunk);
       if (chunk.length < size) break;
@@ -585,161 +710,150 @@
     }
     return { rows, total: totalKnown || rows.length };
   }
-const collator = new Intl.Collator('de', { numeric:true, sensitivity:'base' });
 
-function buildHeaderHtml(showPredict=false){
-  const ths = ['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode'];
-  if (showPredict) ths.push('Predict');
-  return `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
-}
+  // ---- Table / Modal ----
+  const collator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
 
-// Liefert Kopf + leeren Body; Rows kommen virtuell
-function buildTableShell(showPredict=false){
-  return `
-  <div id="${NS}vt-wrap" style="position:relative; height:min(70vh,720px); overflow:auto">
-    <table class="${NS}tbl" style="position:absolute; top:0; left:0; right:0">
-      <thead>${buildHeaderHtml(showPredict)}</thead>
-      <tbody id="${NS}vt-body"></tbody>
-    </table>
-    <div id="${NS}vt-spacer" style="height:0px"></div>
-  </div>`;
-}
-
-function rowHtml(r, showPredict){
-  const pLink = r.__pid
-    ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid}" target="_blank" rel="noopener">${r.__pid}</a>`
-    : '—';
-  const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
-  const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
-  const pred  = showPredict && !r.__delivTs ? (r.__predStartTs ? formatHHMM(new Date(r.__predStartTs)) : '—') : (showPredict?'—':'');
-
-  const cells = [
-    `${eye}${pLink}`,
-    esc(r.__addr),
-    esc(r.__driver),
-    esc(String(r.__tourNum||'—')),
-    esc(r.__status || '—'),
-    esc(dtime),
-    esc(r.__codesStr)
-  ];
-  if (showPredict) cells.push(esc(pred));
-
-  return `<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
-}
-
-// virtueller Renderer
-function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
-  const m=document.getElementById(NS+'modal');
-  const t=document.getElementById(NS+'modal-title');
-  const b=document.getElementById(NS+'modal-body');
-  if (t) t.textContent = title || '';
-
-  // Zwei Modi: 1) fertig gerendertes HTML (Einstellungen etc)
-  //            2) virtuelle Tabelle (rows + opts)
-  if (Array.isArray(htmlOrRows)) {
-    const rows = htmlOrRows;
-    const opts = Object.assign({showPredict:false}, optsOpt||{});
-    state._modal = { rows: rows.slice(), opts, title: title||'' };
-
-    if (b) b.innerHTML = buildTableShell(opts.showPredict);
-
-    const wrap   = document.getElementById(NS+'vt-wrap');
-    const tbody  = document.getElementById(NS+'vt-body');
-    const spacer = document.getElementById(NS+'vt-spacer');
-
-    // Höhe grob messen: eine Zeile bauen
-    const probe = document.createElement('tbody');
-    probe.innerHTML = rowHtml(rows[0] || {}, opts.showPredict);
-    const tmpTable = document.createElement('table');
-    tmpTable.className = NS+'tbl';
-    tmpTable.style.visibility = 'hidden';
-    tmpTable.appendChild(probe);
-    b.appendChild(tmpTable);
-    const rowH = Math.max(28, tmpTable.querySelector('tr')?.getBoundingClientRect().height || 32);
-    tmpTable.remove();
-
-    const total = rows.length;
-    let from = 0;
-    const buffer = 20;
-
-    function renderWindow(){
-      if (!wrap || !tbody || !spacer) return;
-      const vpH = wrap.clientHeight;
-      const first = Math.max(0, Math.floor(wrap.scrollTop / rowH) - buffer);
-      const visCount = Math.ceil(vpH / rowH) + 2*buffer;
-      const last = Math.min(total, first + visCount);
-
-      // Body verschieben (translateY) statt Top-Spacer-Row
-      const topPx = first * rowH;
-      tbody.style.transform = `translateY(${topPx}px)`;
-
-      // Sichtbare Zeilen neu zeichnen
-      let html = '';
-      for (let i=first;i<last;i++) html += rowHtml(rows[i], opts.showPredict);
-      tbody.innerHTML = html;
-
-      // Gesamtfläche (damit Scrollbar stimmt)
-      spacer.style.height = `${total * rowH}px`;
-      from = first;
-    }
-
-    // Sortier-Handler (nur auf Header)
-    const thead = wrap.querySelector('thead');
-    if (thead){
-      thead.addEventListener('click', (ev)=>{
-        const th = ev.target.closest('th'); if (!th) return;
-        const col = Number(th.dataset.col||0);
-        Array.from(thead.querySelectorAll('th')).forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
-        const asc = !(th.dataset.dir==='asc'); th.dataset.dir = asc ? 'asc' : 'desc';
-        th.classList.add(asc?NS+'sort-asc':NS+'sort-desc');
-
-        const getKey = (r)=>{
-          switch(col){
-            case 0: return r.__pid;
-            case 1: return r.__addr;
-            case 2: return r.__driver;
-            case 3: return r.__tourNum;
-            case 4: return r.__status;
-            case 5: return r.__delivTs;
-            case 6: return r.__codesStr;
-            case 7: return r.__predStartTs;
-            default: return '';
-          }
-        };
-        rows.sort((a,b)=>{
-          const A = getKey(a), B=getKey(b);
-          if (typeof A==='number' && typeof B==='number') return asc ? (A-B) : (B-A);
-          return asc ? collator.compare(String(A), String(B)) : collator.compare(String(B), String(A));
-        });
-        state._modal.rows = rows;
-        renderWindow();
-      });
-    }
-
-    // performanter Scroll (passiv)
-    let raf = 0;
-    wrap.addEventListener('scroll', ()=>{
-      if (raf) return;
-      raf = requestAnimationFrame(()=>{ raf = 0; renderWindow(); });
-    }, {passive:true});
-
-    renderWindow();
-  } else {
-    if (b) b.innerHTML = htmlOrRows || '';
+  function buildHeaderHtml(showPredict=false){
+    const ths = ['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode'];
+    if (showPredict) ths.push('Predict');
+    return `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
   }
 
-  if (m) m.style.display='flex';
-}
+  function buildTableShell(showPredict=false){
+    return `
+    <div id="${NS}vt-wrap" style="position:relative; height:min(70vh,720px); overflow:auto">
+      <table class="${NS}tbl" style="position:absolute; top:0; left:0; right:0">
+        <thead>${buildHeaderHtml(showPredict)}</thead>
+        <tbody id="${NS}vt-body"></tbody>
+      </table>
+      <div id="${NS}vt-spacer" style="height:0px"></div>
+    </div>`;
+  }
 
- 
+  function rowHtml(r, showPredict){
+    const pLink = r.__pid
+      ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid}" target="_blank" rel="noopener">${r.__pid}</a>`
+      : '—';
+    const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
+    const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
+    const pred  = showPredict && !r.__delivTs ? (r.__predStartTs ? formatHHMM(new Date(r.__predStartTs)) : '—') : (showPredict?'—':'');
+
+    const cells = [
+      `${eye}${pLink}`,
+      esc(r.__addr),
+      esc(r.__driver),
+      esc(String(r.__tourNum||'—')),
+      esc(r.__status || '—'),
+      esc(dtime),
+      esc(r.__codesStr)
+    ];
+    if (showPredict) cells.push(esc(pred));
+
+    return `<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+  }
+
+  function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
+    const m=document.getElementById(NS+'modal');
+    const t=document.getElementById(NS+'modal-title');
+    const b=document.getElementById(NS+'modal-body');
+    if (t) t.textContent = title || '';
+
+    if (Array.isArray(htmlOrRows)) {
+      const rows = htmlOrRows;
+      const opts = Object.assign({showPredict:false}, optsOpt||{});
+      state._modal = { rows: rows.slice(), opts, title: title||'' };
+
+      if (b) b.innerHTML = buildTableShell(opts.showPredict);
+
+      const wrap   = document.getElementById(NS+'vt-wrap');
+      const tbody  = document.getElementById(NS+'vt-body');
+      const spacer = document.getElementById(NS+'vt-spacer');
+
+      const probe = document.createElement('tbody');
+      probe.innerHTML = rowHtml(rows[0] || {}, opts.showPredict);
+      const tmpTable = document.createElement('table');
+      tmpTable.className = NS+'tbl';
+      tmpTable.style.visibility = 'hidden';
+      tmpTable.appendChild(probe);
+      b.appendChild(tmpTable);
+      const rowH = Math.max(28, tmpTable.querySelector('tr')?.getBoundingClientRect().height || 32);
+      tmpTable.remove();
+
+      const total = rows.length;
+      const buffer = 20;
+
+      function renderWindow(){
+        if (!wrap || !tbody || !spacer) return;
+        const vpH = wrap.clientHeight;
+        const first = Math.max(0, Math.floor(wrap.scrollTop / rowH) - buffer);
+        const visCount = Math.ceil(vpH / rowH) + 2*buffer;
+        const last = Math.min(total, first + visCount);
+
+        tbody.style.transform = `translateY(${first * rowH}px)`;
+
+        let html = '';
+        for (let i=first;i<last;i++) html += rowHtml(rows[i], opts.showPredict);
+        tbody.innerHTML = html;
+
+        spacer.style.height = `${total * rowH}px`;
+      }
+
+      const thead = wrap.querySelector('thead');
+      if (thead){
+        thead.addEventListener('click', (ev)=>{
+          const th = ev.target.closest('th'); if (!th) return;
+          const col = Number(th.dataset.col||0);
+          Array.from(thead.querySelectorAll('th')).forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
+          const asc = !(th.dataset.dir==='asc'); th.dataset.dir = asc ? 'asc' : 'desc';
+          th.classList.add(asc?NS+'sort-asc':NS+'sort-desc');
+
+          const getKey = (r)=>{
+            switch(col){
+              case 0: return r.__pid;
+              case 1: return r.__addr;
+              case 2: return r.__driver;
+              case 3: return r.__tourNum;
+              case 4: return r.__status;
+              case 5: return r.__delivTs;
+              case 6: return r.__codesStr;
+              case 7: return r.__predStartTs;
+              default: return '';
+            }
+          };
+          rows.sort((a,b)=>{
+            const A = getKey(a), B=getKey(b);
+            if (typeof A==='number' && typeof B==='number') return asc ? (A-B) : (B-A);
+            return asc ? collator.compare(String(A), String(B)) : collator.compare(String(B), String(A));
+          });
+          state._modal.rows = rows;
+          renderWindow();
+        });
+      }
+
+      let raf = 0;
+      wrap.addEventListener('scroll', ()=>{
+        if (raf) return;
+        raf = requestAnimationFrame(()=>{ raf = 0; renderWindow(); });
+      }, {passive:true});
+
+      renderWindow();
+    } else {
+      if (b) b.innerHTML = htmlOrRows || '';
+    }
+
+    if (m) m.style.display='flex';
+  }
+
   function hideModal(){ const m=document.getElementById(NS+'modal'); if(m) m.style.display='none'; }
   function formatHHMM(d){ return d ? d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : ''; }
+
   const parcelId   = r => r.parcelNumber || (Array.isArray(r.parcelNumbers)&&r.parcelNumbers[0]) || r.id || '';
   const addrOf  = r => [r.street, r.houseno].filter(Boolean).join(' ');
   const placeOf = r => [r.postalCode, r.city].filter(Boolean).join(' ');
   const addCodes   = r => Array.isArray(r.additionalCodes)? r.additionalCodes.map(String): [];
   const isDelivery = r => String(r?.orderType || '').toUpperCase() === 'DELIVERY';
-  const isPRIO = r => String(r?.priority||r?.prio||'').toUpperCase() === 'PRIO';
+  const isPRIO     = r => String(r?.priority||r?.prio||'').toUpperCase() === 'PRIO';
   const hasExpress12 = r => { const el = r?.elements; if (Array.isArray(el)) return el.map(String).includes('023'); return typeof el === 'string' ? /\b023\b/.test(el) : false; };
   const hasExpress18 = r => { const el = r?.elements; if (Array.isArray(el)) return el.map(String).includes('010'); return typeof el === 'string' ? /\b010\b/.test(el) : false; };
   const hasExpressAny = r => hasExpress12(r) || hasExpress18(r);
@@ -748,8 +862,8 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
   const fromTime = r => r.from2 ? composeDateTime(r.date, r.from2) : null;
   const toTime   = r => r.to2   ? composeDateTime(r.date, r.to2)   : null;
   const deliveredTime = r => r.deliveredTime ? new Date(r.deliveredTime) : null;
-  const isExpressLateAfter11 = r => { const ft = fromTime(r); if (!ft) return false; return (ft.getHours() > 11) || (ft.getHours()===11 && ft.getMinutes()>=1); };
 
+  // Status-Mapping & Resolver (Legacy + DOM)
   let statusColIdx = null;
   const apiStatus = r => (r.statusName || r.statusText || r.stateText || r.status || r.deliveryStatus || r.parcelStatus || '').toString().trim();
   function findStatusColumnIndex(){
@@ -767,7 +881,7 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     for (const tr of rows){
       let val = '';
       if (idx!=null){
-        const cells = Array.from(tr.querySelectorAll('td, [role="gridcell"]'));
+        const cells = Array.from(document.querySelectorAll('td, [role="gridcell"]'));
         const cell = cells[idx];
         if (cell){
           const div = cell.querySelector('div[title]');
@@ -794,8 +908,15 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     return '';
   }
   const statusOf = r => { const p = parcelId(r); const fromDom = statusFromDomByParcel(p); if (fromDom) return fromDom; const mapped = mapEnToDeStatus(apiStatus(r)); return mapped || '—'; };
-  const delivered = r => { const s = statusOf(r).toUpperCase(); if (r.deliveredTime) return true; return /(ZUGESTELLT)/.test(s); };
 
+  // delivered-Logik nutzt FAST-Status
+  const delivered = r => {
+    if (r.deliveredTime) return true;
+    const s = (statusOf_FAST(r) || statusOf(r) || '').toUpperCase();
+    return /(ZUGESTELLT)/.test(s);
+  };
+
+  // Fahrer
   const tour2Driver = (() => window.__pmTour2Driver instanceof Map ? window.__pmTour2Driver : new Map());
   const tourOf  = r => r.tour ? String(r.tour) : '';
   const driverOf = r => {
@@ -805,8 +926,6 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     return (tour2Driver().get(key) || '').trim();
   };
 
-  
-  
   function setLoading(on){ isLoading=!!on; const el=document.getElementById(NS+'loading'); if(el) el.classList.toggle('on',on); }
   function dimButtons(on){ document.querySelectorAll('.'+NS+'btn-sm').forEach(b=>b.classList.toggle(NS+'dim', !!on)); }
   function render(){
@@ -826,8 +945,6 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     const e={ id:state.nextId++, title:ev.title||'Ereignis', meta:ev.meta||'', sev:ev.sev||'info', ts:ev.ts||Date.now(), read:!!ev.read, comment:ev.comment||'', hasComment:!!(ev.comment&&ev.comment.trim()), parcel:ev.parcel||'', kind:ev.kind||'' };
     state.events.push(e); render();
   }
-
-  function openSettingsModalHtml(){ /* handled oben in openSettingsModal() */ }
 
   function buildUrlByParcel(base, parcel){
     const u = new URL(base.href); const q = u.searchParams;
@@ -877,7 +994,7 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
         const res = await fetch(url.toString(), { credentials:'include', headers });
         if (res.ok){
           const j = await res.json();
-          const rows = (j.items||j.content||j.data||j.results||j)||[];
+          const rows = pickArray(j);
           const r = rows.find(x => (parcelId(x) === p)) || rows[0];
           let c = '';
           if (r) c = pickComment(r) || commentFromDomByParcel(p);
@@ -895,6 +1012,7 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     const prioDeliveries = prioRows.filter(isDelivery).filter(isPRIO);
     const prioAll  = prioDeliveries;
     const prioOpen = prioDeliveries.filter(r=>!delivered(r));
+
     const expRows   = [...exp12Rows, ...exp18Rows];
     const seen = new Set();
     const expDeliveries = expRows
@@ -903,20 +1021,21 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
       .filter(r=>{ const id = parcelId(r); if (!id || seen.has(id)) return false; seen.add(id); return true; });
     const expAll    = expDeliveries;
     const expOpen   = expDeliveries.filter(r=>!delivered(r));
-    const expLate11 = expDeliveries.filter(hasExpress12).filter(isExpressLateAfter11);
+    const expLate11 = expDeliveries.filter(hasExpress12).filter(r=>{
+      const ft = fromTime(r); if (!ft) return false;
+      return (ft.getHours() > 11) || (ft.getHours()===11 && ft.getMinutes()>=1);
+    });
     return { prioAll, prioOpen, expAll, expOpen, expLate11 };
   }
 
   function showPrioAll(){
-  const rows = state._prioAllList;
-  openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
-}
-
+    const rows = state._prioAllList;
+    openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
+  }
   function showPrioOpen(){
-  const rows = state._prioOpenList;
-  openModal(`PRIO – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
-}
-
+    const rows = state._prioOpenList;
+    openModal(`PRIO – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
+  }
   function filterByExpressSelection(rows){ if (state.filterExpress === '12') return rows.filter(hasExpress12); if (state.filterExpress === '18') return rows.filter(hasExpress18); return rows; }
   function getFilteredExpressCounts(){
     const f = state.filterExpress;
@@ -930,85 +1049,151 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
     setKpis({ prioAll: state._prioAllList.length, prioOpen: state._prioOpenList.length, expAll: expAllCount, expOpen: expOpenCount });
   }
   function showExpAll(){
-  const src = state._expAllList;
-  const rows = filterByExpressSelection(src);
-  const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
-  openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
-}
-
+    const src = state._expAllList;
+    const rows = filterByExpressSelection(src);
+    const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
+    openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
+  }
   function showExpOpen(){
-  const src = state._expOpenList;
-  const rows = filterByExpressSelection(src);
-  const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
-  openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
-}
-
+    const src = state._expOpenList;
+    const rows = filterByExpressSelection(src);
+    const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
+    openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
+  }
   function showExpLate11(){
-  const rows = state._expLate11List.slice();
-  openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, rows, rows, {showPredict:true});
-}
+    const rows = state._expLate11List.slice();
+    openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, rows, rows, {showPredict:true});
+  }
 
+  // ---- FAST Normalisierung ----
+  function normRowFAST(r){
+    const getPred = ()=>{ const f=fromTime(r); if (f) return +f; const t=toTime(r); if (t) return +t; return 0; };
+    return {
+      ...r,
+      __pid: parcelId(r) || '',
+      __addr: [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—',
+      __driver: (driverOf(r) || _gridIndex.tour2driver.get(String(tourOf(r)||'').replace(/[^\dA-Za-z]/g,'')) || '—').trim(),
+      __tourNum: Number(tourOf(r) || 0),
+      __status: statusOf_FAST(r) || statusOf(r) || '—',
+      __delivTs: deliveredTime(r) ? deliveredTime(r).getTime() : 0,
+      __predStartTs: getPred(),
+      __codesStr: (addCodes(r)||[]).join(', ') || '—',
+      __expType: expressTypeOf(r)
+    };
+  }
 
-  async function refreshViaApi(){
-  // parallel statt seriell
-  const [prioRes, exp12Rows, exp18Rows] = await Promise.all([
-    fetchPagedWithTotal(buildUrlPrio),
-    fetchPaged((base,p)=>buildUrlElements(base,p,'023')),
-    fetchPaged((base,p)=>buildUrlElements(base,p,'010'))
-  ]);
+  async function refreshViaApi_FAST(){
+    const { prioRows, exp12Rows, exp18Rows } = await fetchAllFast();
 
-  // Normalisierung einmalig – alles was UI/SORT später braucht:
-  const normRow = (r)=>({
-    ...r,
-    __pid:        parcelId(r) || '',
-    __addr:       [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—',
-    __driver:     (driverOf(r) || '—').trim(),
-    __tourNum:    Number(tourOf(r) || 0),
-    __status:     statusOf(r) || '—',
-    __delivTs:    deliveredTime(r) ? deliveredTime(r).getTime() : 0,
-    __predStartTs:(fromTime(r)?.getTime()) || (toTime(r)?.getTime()) || 0,
-    __codesStr:   (addCodes(r)||[]).join(', ') || '—',
-    __expType:    expressTypeOf(r) // '', '12', '18'
-  });
+    const prioN = prioRows.map(normRowFAST);
+    const exp12N = exp12Rows.map(normRowFAST);
+    const exp18N = exp18Rows.map(normRowFAST);
 
-  const prioRows   = prioRes.rows.map(normRow);
-  const exp12N     = exp12Rows.map(normRow);
-  const exp18N     = exp18Rows.map(normRow);
+    const { prioAll, prioOpen, expAll, expOpen, expLate11 } = buildTableRowsAndCounts(prioN, exp12N, exp18N);
 
-  const { prioAll, prioOpen, expAll, expOpen, expLate11 } =
-        buildTableRowsAndCounts(prioRows, exp12N, exp18N);
+    state._prioAllList = prioAll.slice();
+    state._prioOpenList = prioOpen.slice();
+    state._expAllList = expAll.slice();
+    state._expOpenList = expOpen.slice();
+    state._expLate11List = expLate11.slice();
 
-  state._prioAllList   = prioAll.slice();
-  state._prioOpenList  = prioOpen.slice();
-  state._expAllList    = expAll.slice();
-  state._expOpenList   = expOpen.slice();
-  state._expLate11List = expLate11.slice();
+    const { expAllCount, expOpenCount } = getFilteredExpressCounts();
+    setKpis({
+      prioAll: prioAll.length,
+      prioOpen: prioOpen.length,
+      expAll: expAllCount,
+      expOpen: expOpenCount
+    });
 
-  const { expAllCount, expOpenCount } = getFilteredExpressCounts();
-  setKpis({
-    prioAll: prioAll.length,
-    prioOpen: prioOpen.length,
-    expAll: expAllCount,
-    expOpen: expOpenCount
-  });
+    state.events = [{
+      id: ++state.nextId,
+      title:'Aktualisiert (FAST)',
+      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
+      sev:'info', read:true, ts:Date.now()
+    }];
+  }
 
-  state.events = [{
-    id: ++state.nextId,
-    title:'Aktualisiert',
-    meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
-    sev:'info', read:true, ts:Date.now()
-  }];
-}
+  // ---- Legacy-Normalisierung/Fallback (aus 6.0.0) ----
+  function normRowLegacy(r){
+    const getPred = ()=>{ const f=fromTime(r); if (f) return +f; const t=toTime(r); if (t) return +t; return 0; };
+    return {
+      ...r,
+      __pid:        parcelId(r) || '',
+      __addr:       [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—',
+      __driver:     (driverOf(r) || '—').trim(),
+      __tourNum:    Number(tourOf(r) || 0),
+      __status:     statusOf(r) || '—',
+      __delivTs:    deliveredTime(r) ? deliveredTime(r).getTime() : 0,
+      __predStartTs: getPred(),
+      __codesStr:   (addCodes(r)||[]).join(', ') || '—',
+      __expType:    expressTypeOf(r)
+    };
+  }
 
+  async function refreshViaApi_Legacy(){
+    const [prioRes, exp12Rows, exp18Rows] = await Promise.all([
+      fetchPagedWithTotal(buildUrlPrio),
+      fetchPaged((base,p)=>buildUrlElements(base,p,'023')),
+      fetchPaged((base,p)=>buildUrlElements(base,p,'010'))
+    ]);
+    const prioRows   = prioRes.rows.map(normRowLegacy);
+    const exp12N     = exp12Rows.map(normRowLegacy);
+    const exp18N     = exp18Rows.map(normRowLegacy);
 
+    const { prioAll, prioOpen, expAll, expOpen, expLate11 } =
+          buildTableRowsAndCounts(prioRows, exp12N, exp18N);
+
+    state._prioAllList   = prioAll.slice();
+    state._prioOpenList  = prioOpen.slice();
+    state._expAllList    = expAll.slice();
+    state._expOpenList   = expOpen.slice();
+    state._expLate11List = expLate11.slice();
+
+    const { expAllCount, expOpenCount } = getFilteredExpressCounts();
+    setKpis({
+      prioAll: prioAll.length,
+      prioOpen: prioOpen.length,
+      expAll: expAllCount,
+      expOpen: expOpenCount
+    });
+
+    state.events = [{
+      id: ++state.nextId,
+      title:'Aktualisiert',
+      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
+      sev:'info', read:true, ts:Date.now()
+    }];
+  }
+
+  // ---- SAFE Wrapper: FAST zuerst, sonst Legacy ----
+  async function refreshViaApi_SAFE(){
+    try {
+      await refreshViaApi_FAST();
+      const nothing =
+        !state._prioAllList.length && !state._expAllList.length &&
+        !state._prioOpenList.length && !state._expOpenList.length;
+      if (nothing) {
+        await refreshViaApi_Legacy();
+      }
+    } catch(e){
+      await refreshViaApi_Legacy();
+    }
+  }
+
+  // ---- Full Refresh ----
   async function fullRefresh(){
     if (isBusy) return;
     try{
       if (!lastOkRequest) { addEvent({title:'Hinweis', meta:'Kein API-Request erkannt. Bitte einmal die normale Suche ausführen, danach funktioniert Auto 60s.', sev:'info', read:true}); render(); return; }
       isBusy = true; setLoading(true); dimButtons(true);
-      addEvent({title:'Aktualisiere (API)…', meta:'Replay aktiver Filter (pageSize=500)', sev:'info', read:true}); render();
-      await refreshViaApi();
-      await tryBuildTourDriverMapFromDom();
+      addEvent({title:'Aktualisiere (API)…', meta:'FAST (Parallel-Paging) + DOM-Indizes; Fallback auf Legacy bei Bedarf', sev:'info', read:true}); render();
+
+      // DOM-Index vorziehen
+      scheduleGridIndexRebuild();
+
+      await refreshViaApi_SAFE();
+
+      // Kommentare ggf. nachladen
       await fetchMissingComments();
     } catch(e){
       console.error(e);
@@ -1029,12 +1214,10 @@ function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
   }
   document.addEventListener('visibilitychange', ()=>scheduleAuto());
 
-  function showPrioAllInit(){}
-
   /* ---------- Boot ---------- */
   function boot(){
     mountUI();
-    startAutoloadTourDriverMap();
+    startAutoloadTourDriverMap_FAST();
     scheduleAuto();
     // Depotkennung initial raten
     setTimeout(()=> {
