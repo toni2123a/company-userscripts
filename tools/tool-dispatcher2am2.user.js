@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.0.0
+// @version      6.1.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -78,6 +78,7 @@
     .${NS}loading.on{display:block}
     .${NS}modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
     .${NS}modal-inner{background:#fff;max-width:min(1200px,95vw);max-height:78vh;overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
+
     .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
     .${NS}modal-body{padding:8px 12px}
     .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
@@ -87,6 +88,39 @@
     .${NS}sort-desc::after{content:" ▼";font-size:11px}
     .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
     .${NS}eye:hover{background:#f3f4f6}
+    /* Fixe Spaltenbreiten + saubere Überläufe */
+.pm-tbl{table-layout:fixed; width:100%}
+.pm-tbl th, .pm-tbl td{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.pm-tbl th{ z-index:1 } /* sticky header über Body-Zeilen */
+.pm-modal-inner{ max-width:min(1400px,95vw) } /* vorher 1200px */
+/* Modal größer & optional Vollbild */
+.pm-modal{align-items:flex-start} /* Modal oben statt Mitte, wirkt “höher” */
+.pm-modal-inner{
+  width:min(1600px,96vw);
+  height:min(88vh,1000px);
+}
+.pm-modal.pm-full .pm-modal-inner{
+  width:96vw;
+  height:92vh;
+}
+
+/* Body bekommt immer Scroll, Header bleibt sichtbar */
+.pm-modal-body{padding:8px 12px; overflow:auto; max-height:calc(100% - 46px)}
+.pm-modal-head{position:sticky; top:0; background:#fff; z-index:2}
+
+/* Resizer (optional) */
+.pm-resize{ position:absolute; right:6px; bottom:6px; width:16px; height:16px;
+  cursor:se-resize; opacity:.6 }
+.pm-resize::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(135deg, transparent 0 50%, rgba(0,0,0,.25) 50% 100%);
+  border-radius:3px;
+}
+
     `;
     document.head.appendChild(style);
   }
@@ -551,17 +585,153 @@
     }
     return { rows, total: totalKnown || rows.length };
   }
+const collator = new Intl.Collator('de', { numeric:true, sensitivity:'base' });
 
-  /* ---------- Tabellen/Modal ---------- */
-  function openModal(title, html, rows=null, opts=null){
-    const m=document.getElementById(NS+'modal');
-    const t=document.getElementById(NS+'modal-title');
-    const b=document.getElementById(NS+'modal-body');
-    if (t) t.textContent = title || '';
-    if (rows) { state._modal.rows = rows.slice(); state._modal.opts = Object.assign({}, opts||{}); state._modal.title = title||''; }
-    if (b) { b.innerHTML = html || ''; attachSortHandlers(); }
-    if (m) m.style.display='flex';
+function buildHeaderHtml(showPredict=false){
+  const ths = ['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode'];
+  if (showPredict) ths.push('Predict');
+  return `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
+}
+
+// Liefert Kopf + leeren Body; Rows kommen virtuell
+function buildTableShell(showPredict=false){
+  return `
+  <div id="${NS}vt-wrap" style="position:relative; height:min(70vh,720px); overflow:auto">
+    <table class="${NS}tbl" style="position:absolute; top:0; left:0; right:0">
+      <thead>${buildHeaderHtml(showPredict)}</thead>
+      <tbody id="${NS}vt-body"></tbody>
+    </table>
+    <div id="${NS}vt-spacer" style="height:0px"></div>
+  </div>`;
+}
+
+function rowHtml(r, showPredict){
+  const pLink = r.__pid
+    ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid}" target="_blank" rel="noopener">${r.__pid}</a>`
+    : '—';
+  const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
+  const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
+  const pred  = showPredict && !r.__delivTs ? (r.__predStartTs ? formatHHMM(new Date(r.__predStartTs)) : '—') : (showPredict?'—':'');
+
+  const cells = [
+    `${eye}${pLink}`,
+    esc(r.__addr),
+    esc(r.__driver),
+    esc(String(r.__tourNum||'—')),
+    esc(r.__status || '—'),
+    esc(dtime),
+    esc(r.__codesStr)
+  ];
+  if (showPredict) cells.push(esc(pred));
+
+  return `<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+}
+
+// virtueller Renderer
+function openModal(title, htmlOrRows, rowsOpt=null, optsOpt=null){
+  const m=document.getElementById(NS+'modal');
+  const t=document.getElementById(NS+'modal-title');
+  const b=document.getElementById(NS+'modal-body');
+  if (t) t.textContent = title || '';
+
+  // Zwei Modi: 1) fertig gerendertes HTML (Einstellungen etc)
+  //            2) virtuelle Tabelle (rows + opts)
+  if (Array.isArray(htmlOrRows)) {
+    const rows = htmlOrRows;
+    const opts = Object.assign({showPredict:false}, optsOpt||{});
+    state._modal = { rows: rows.slice(), opts, title: title||'' };
+
+    if (b) b.innerHTML = buildTableShell(opts.showPredict);
+
+    const wrap   = document.getElementById(NS+'vt-wrap');
+    const tbody  = document.getElementById(NS+'vt-body');
+    const spacer = document.getElementById(NS+'vt-spacer');
+
+    // Höhe grob messen: eine Zeile bauen
+    const probe = document.createElement('tbody');
+    probe.innerHTML = rowHtml(rows[0] || {}, opts.showPredict);
+    const tmpTable = document.createElement('table');
+    tmpTable.className = NS+'tbl';
+    tmpTable.style.visibility = 'hidden';
+    tmpTable.appendChild(probe);
+    b.appendChild(tmpTable);
+    const rowH = Math.max(28, tmpTable.querySelector('tr')?.getBoundingClientRect().height || 32);
+    tmpTable.remove();
+
+    const total = rows.length;
+    let from = 0;
+    const buffer = 20;
+
+    function renderWindow(){
+      if (!wrap || !tbody || !spacer) return;
+      const vpH = wrap.clientHeight;
+      const first = Math.max(0, Math.floor(wrap.scrollTop / rowH) - buffer);
+      const visCount = Math.ceil(vpH / rowH) + 2*buffer;
+      const last = Math.min(total, first + visCount);
+
+      // Body verschieben (translateY) statt Top-Spacer-Row
+      const topPx = first * rowH;
+      tbody.style.transform = `translateY(${topPx}px)`;
+
+      // Sichtbare Zeilen neu zeichnen
+      let html = '';
+      for (let i=first;i<last;i++) html += rowHtml(rows[i], opts.showPredict);
+      tbody.innerHTML = html;
+
+      // Gesamtfläche (damit Scrollbar stimmt)
+      spacer.style.height = `${total * rowH}px`;
+      from = first;
+    }
+
+    // Sortier-Handler (nur auf Header)
+    const thead = wrap.querySelector('thead');
+    if (thead){
+      thead.addEventListener('click', (ev)=>{
+        const th = ev.target.closest('th'); if (!th) return;
+        const col = Number(th.dataset.col||0);
+        Array.from(thead.querySelectorAll('th')).forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
+        const asc = !(th.dataset.dir==='asc'); th.dataset.dir = asc ? 'asc' : 'desc';
+        th.classList.add(asc?NS+'sort-asc':NS+'sort-desc');
+
+        const getKey = (r)=>{
+          switch(col){
+            case 0: return r.__pid;
+            case 1: return r.__addr;
+            case 2: return r.__driver;
+            case 3: return r.__tourNum;
+            case 4: return r.__status;
+            case 5: return r.__delivTs;
+            case 6: return r.__codesStr;
+            case 7: return r.__predStartTs;
+            default: return '';
+          }
+        };
+        rows.sort((a,b)=>{
+          const A = getKey(a), B=getKey(b);
+          if (typeof A==='number' && typeof B==='number') return asc ? (A-B) : (B-A);
+          return asc ? collator.compare(String(A), String(B)) : collator.compare(String(B), String(A));
+        });
+        state._modal.rows = rows;
+        renderWindow();
+      });
+    }
+
+    // performanter Scroll (passiv)
+    let raf = 0;
+    wrap.addEventListener('scroll', ()=>{
+      if (raf) return;
+      raf = requestAnimationFrame(()=>{ raf = 0; renderWindow(); });
+    }, {passive:true});
+
+    renderWindow();
+  } else {
+    if (b) b.innerHTML = htmlOrRows || '';
   }
+
+  if (m) m.style.display='flex';
+}
+
+ 
   function hideModal(){ const m=document.getElementById(NS+'modal'); if(m) m.style.display='none'; }
   function formatHHMM(d){ return d ? d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : ''; }
   const parcelId   = r => r.parcelNumber || (Array.isArray(r.parcelNumbers)&&r.parcelNumbers[0]) || r.id || '';
@@ -635,64 +805,8 @@
     return (tour2Driver().get(key) || '').trim();
   };
 
-  function buildTable(rows, {showPredict=false}={}){
-    const ths = ['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode'];
-    if (showPredict) ths.push('Predict');
-    const head = `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
-    const body = rows.map(r=>{
-      const p = parcelId(r);
-      const eye = p ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(p)}">👁</button>` : '';
-      const link = p ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${p}" target="_blank" rel="noopener">${p}</a>` : '—';
-      const addr = [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—';
-      const driver = driverOf(r) || '—';
-      const tour = tourOf(r) || '—';
-      const stat = statusOf(r);
-      const dtime = deliveredTime(r) ? formatHHMM(deliveredTime(r)) : '—';
-      const codes = addCodes(r).join(', ') || '—';
-      const pred = (showPredict && !delivered(r)) ? (()=>{ const s=fromTime(r), e=toTime(r); return (s||e)?`${formatHHMM(s)}–${formatHHMM(e)}`:'—'; })() : (showPredict?'—':'');
-      const tds = [`${eye}${link}`, esc(addr), esc(driver), esc(tour), esc(stat), esc(dtime), esc(codes)];
-      if (showPredict) tds.push(esc(pred));
-      return `<tr>${tds.map(v=>`<td>${v}</td>`).join('')}</tr>`;
-    }).join('') || `<tr><td colspan="${showPredict?8:7}">Keine Einträge.</td></tr>`;
-    return `<table class="${NS}tbl"><thead>${head}</thead><tbody>${body}</tbody></table>`;
-  }
-  function attachSortHandlers(){
-    const body = document.getElementById(NS+'modal-body');
-    const table = body && body.querySelector('table'); if (!table) return;
-    const ths = Array.from(table.querySelectorAll('th'));
-    ths.forEach(th=>{
-      th.addEventListener('click', ()=>{
-        const col = Number(th.dataset.col||0);
-        ths.forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
-        const ascending = !(th.dataset.dir==='asc');
-        th.dataset.dir = ascending ? 'asc' : 'desc';
-        th.classList.add(ascending?NS+'sort-asc':NS+'sort-desc');
-        const rows = state._modal.rows.slice();
-        const opts = state._modal.opts||{};
-        rows.sort((a,b)=>{
-          const get = (r)=>{
-            switch(col){
-              case 0: return String(parcelId(r)||'');
-              case 1: return [addrOf(r),placeOf(r)].filter(Boolean).join(' · ');
-              case 2: return String(driverOf(r)||'');
-              case 3: return Number(tourOf(r)||0);
-              case 4: return String(statusOf(r)||'');
-              case 5: return deliveredTime(r) ? deliveredTime(r).getTime() : 0;
-              case 6: return (addCodes(r)||[]).join(', ');
-              case 7: { const s=fromTime(r), e=toTime(r); return s?s.getTime():(e?e.getTime():0); }
-            }
-          };
-          const va=get(a), vb=get(b);
-          if (typeof va==='number' && typeof vb==='number') return ascending ? (va-vb) : (vb-va);
-          return ascending ? String(va).localeCompare(String(vb),'de') : String(vb).localeCompare(String(va),'de');
-        });
-        state._modal.rows = rows;
-        const html = buildTable(rows, opts);
-        openModal(state._modal.title, html);
-      });
-    });
-  }
-
+  
+  
   function setLoading(on){ isLoading=!!on; const el=document.getElementById(NS+'loading'); if(el) el.classList.toggle('on',on); }
   function dimButtons(on){ document.querySelectorAll('.'+NS+'btn-sm').forEach(b=>b.classList.toggle(NS+'dim', !!on)); }
   function render(){
@@ -793,8 +907,16 @@
     return { prioAll, prioOpen, expAll, expOpen, expLate11 };
   }
 
-  function showPrioAll(){  const rows=state._prioAllList;  const html=buildTable(rows); openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`, html, rows, {showPredict:false}); }
-  function showPrioOpen(){ const rows=state._prioOpenList; const html=buildTable(rows,{showPredict:true}); openModal(`PRIO – noch nicht zugestellt · ${rows.length}`, html, rows, {showPredict:true}); }
+  function showPrioAll(){
+  const rows = state._prioAllList;
+  openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
+}
+
+  function showPrioOpen(){
+  const rows = state._prioOpenList;
+  openModal(`PRIO – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
+}
+
   function filterByExpressSelection(rows){ if (state.filterExpress === '12') return rows.filter(hasExpress12); if (state.filterExpress === '18') return rows.filter(hasExpress18); return rows; }
   function getFilteredExpressCounts(){
     const f = state.filterExpress;
@@ -807,24 +929,77 @@
     const { expAllCount, expOpenCount } = getFilteredExpressCounts();
     setKpis({ prioAll: state._prioAllList.length, prioOpen: state._prioOpenList.length, expAll: expAllCount, expOpen: expOpenCount });
   }
-  function showExpAll(){ const src = state._expAllList; const rows = filterByExpressSelection(src); const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':''; const html=buildTable(rows); openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`, html, rows, {showPredict:false}); }
-  function showExpOpen(){ const src = state._expOpenList; const rows = filterByExpressSelection(src); const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':''; const html=buildTable(rows,{showPredict:true}); openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`, html, rows, {showPredict:true}); }
-  function showExpLate11(){ const rows = state._expLate11List.slice(); const html=buildTable(rows,{showPredict:true}); openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, html, rows, {showPredict:true}); }
+  function showExpAll(){
+  const src = state._expAllList;
+  const rows = filterByExpressSelection(src);
+  const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
+  openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`, rows, rows, {showPredict:false});
+}
+
+  function showExpOpen(){
+  const src = state._expOpenList;
+  const rows = filterByExpressSelection(src);
+  const sel = state.filterExpress==='12'?' (12)': state.filterExpress==='18'?' (18)':'';
+  openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`, rows, rows, {showPredict:true});
+}
+
+  function showExpLate11(){
+  const rows = state._expLate11List.slice();
+  openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`, rows, rows, {showPredict:true});
+}
+
 
   async function refreshViaApi(){
-    const { rows: prioRows } = await fetchPagedWithTotal(buildUrlPrio);
-    const exp12Rows = await fetchPaged((base,p)=>buildUrlElements(base,p,'023'));
-    const exp18Rows = await fetchPaged((base,p)=>buildUrlElements(base,p,'010'));
-    const { prioAll, prioOpen, expAll, expOpen, expLate11 } = buildTableRowsAndCounts(prioRows, exp12Rows, exp18Rows);
-    state._prioAllList = prioAll.slice();
-    state._prioOpenList = prioOpen.slice();
-    state._expAllList = expAll.slice();
-    state._expOpenList = expOpen.slice();
-    state._expLate11List = expLate11.slice();
-    const { expAllCount, expOpenCount } = getFilteredExpressCounts();
-    setKpis({ prioAll: prioAll.length, prioOpen: prioOpen.length, expAll: expAllCount, expOpen: expOpenCount });
-    state.events = [{ id: ++state.nextId, title:'Aktualisiert', meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`, sev:'info', read:true, ts:Date.now() }];
-  }
+  // parallel statt seriell
+  const [prioRes, exp12Rows, exp18Rows] = await Promise.all([
+    fetchPagedWithTotal(buildUrlPrio),
+    fetchPaged((base,p)=>buildUrlElements(base,p,'023')),
+    fetchPaged((base,p)=>buildUrlElements(base,p,'010'))
+  ]);
+
+  // Normalisierung einmalig – alles was UI/SORT später braucht:
+  const normRow = (r)=>({
+    ...r,
+    __pid:        parcelId(r) || '',
+    __addr:       [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—',
+    __driver:     (driverOf(r) || '—').trim(),
+    __tourNum:    Number(tourOf(r) || 0),
+    __status:     statusOf(r) || '—',
+    __delivTs:    deliveredTime(r) ? deliveredTime(r).getTime() : 0,
+    __predStartTs:(fromTime(r)?.getTime()) || (toTime(r)?.getTime()) || 0,
+    __codesStr:   (addCodes(r)||[]).join(', ') || '—',
+    __expType:    expressTypeOf(r) // '', '12', '18'
+  });
+
+  const prioRows   = prioRes.rows.map(normRow);
+  const exp12N     = exp12Rows.map(normRow);
+  const exp18N     = exp18Rows.map(normRow);
+
+  const { prioAll, prioOpen, expAll, expOpen, expLate11 } =
+        buildTableRowsAndCounts(prioRows, exp12N, exp18N);
+
+  state._prioAllList   = prioAll.slice();
+  state._prioOpenList  = prioOpen.slice();
+  state._expAllList    = expAll.slice();
+  state._expOpenList   = expOpen.slice();
+  state._expLate11List = expLate11.slice();
+
+  const { expAllCount, expOpenCount } = getFilteredExpressCounts();
+  setKpis({
+    prioAll: prioAll.length,
+    prioOpen: prioOpen.length,
+    expAll: expAllCount,
+    expOpen: expOpenCount
+  });
+
+  state.events = [{
+    id: ++state.nextId,
+    title:'Aktualisiert',
+    meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
+    sev:'info', read:true, ts:Date.now()
+  }];
+}
+
 
   async function fullRefresh(){
     if (isBusy) return;
