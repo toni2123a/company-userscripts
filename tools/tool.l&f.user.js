@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD Content Check + Lost&Found Mail abkürzung
+// @name         DPD Content Check + Lost&Found
 // @namespace    bodo-scripts
 // @version      1.3
 // @description  Neue Spalte mit L&F-Mail-Button + auf Lost&Found beide "E-Mail versenden"-Buttons automatisch klicken
