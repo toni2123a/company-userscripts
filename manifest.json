@@ -70,7 +70,7 @@
     {
       "id": "tool.lostandfound",
       "name": "DPD Content Check + Lost&Found",
-      "version": "1.4",
+      "version": "2.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lostandfound.user.js",
       "match": [
         "https://dpdgroup.eu.wizyvision.app/*",
@@ -79,7 +79,7 @@
       "grants": [
         "none"
       ],
-      "description": "Neue Spalte mit L&F-Mail-Button + auf Lost&Found beide \"E-Mail versenden\"-Buttons automatisch klicken"
+      "description": "Neue Spalte mit L&F-Mail-Button + Status Änderung auf abgeschlossen"
     },
     {
       "id": "tool-dispatcher.partner",
