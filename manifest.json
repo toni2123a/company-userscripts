@@ -69,8 +69,8 @@
     },
     {
       "id": "tool.l&f",
-      "name": "DPD Content Check + Lost&Found Mail (auto 2x)",
-      "version": "1.2",
+      "name": "DPD Content Check + Lost&Found Mail abkürzung",
+      "version": "1.3",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.l%26f.user.js",
       "match": [
         "https://dpdgroup.eu.wizyvision.app/*",
