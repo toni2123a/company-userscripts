@@ -68,6 +68,20 @@
       "description": "Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite"
     },
     {
+      "id": "tool.l&f",
+      "name": "DPD Content Check + Lost&Found Mail (auto 2x)",
+      "version": "1.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.l%26f.user.js",
+      "match": [
+        "https://dpdgroup.eu.wizyvision.app/*",
+        "https://lostandfound.dpdgroup.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Neue Spalte mit L&F-Mail-Button + auf Lost&Found beide \"E-Mail versenden\"-Buttons automatisch klicken"
+    },
+    {
       "id": "tool-dispatcher.partner",
       "name": "DPD Dispatcher – Partner-Report Mailer",
       "version": "5.4.1",
