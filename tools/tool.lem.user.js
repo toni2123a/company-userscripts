@@ -5,6 +5,8 @@
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
