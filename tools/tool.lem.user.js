@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      1.9
+// @version      2.1
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -10,12 +10,40 @@
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
-
 (function() {
   'use strict';
 
   const href = window.location.href;
   const BELEG_INDEX = 5; // "Beleg-Nr."-Spalte in der Übersicht
+  let fileSortDescending = true;
+
+function fileScore(txt) {
+  const t = (txt || '').trim();
+  if (t === '📎') return 3;     // Beleg vorhanden
+  if (t === '⌛') return 2;     // wird geprüft
+  if (t === '?')  return 1;    // Fehler
+  return 0;                    // kein Beleg / Strich
+}
+
+function sortFileColumn(descending) {
+  const table = getTable();
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const ta = (a.children[BELEG_INDEX + 1]?.textContent || '').trim();
+    const tb = (b.children[BELEG_INDEX + 1]?.textContent || '').trim();
+    const va = fileScore(ta);
+    const vb = fileScore(tb);
+    const diff = va - vb;
+    return descending ? -diff : diff;
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+}
+
 
   if (href.includes('postingOverview.xhtml')) {
     runOnOverview();
@@ -53,7 +81,8 @@
   }
 
   // ====================================================
-  // 1. Übersicht: "Beleg-Nr." sortierbar + höchste merken
+  // 1. Übersicht: Beleg-Spalte sortierbar + höchste merken
+  //               + NEU: "Beleg?"-Spalte (hat Anhang?)
   // ====================================================
 
   function sortBelegColumn(descending) {
@@ -113,30 +142,135 @@
     indicator.textContent = '↓';
   }
 
+  async function updateLastBelegFromOverview() {
+    const table = getTable();
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    let topParsed = null;
+    for (const tr of rows) {
+      const td = tr.children[BELEG_INDEX];
+      if (!td) continue;
+      const txt = td.textContent.trim();
+      const parsed = parseBelegNum(txt);
+      if (parsed) {
+        topParsed = parsed;
+        break;
+      }
+    }
+    if (topParsed) {
+      console.log('DPD-Belegscript: letzte Belegnummer (Übersicht):', topParsed.raw);
+      localStorage.setItem('dpd_lastBeleg', topParsed.raw);
+    }
+  }
+
+  // NEU: pro Zeile prüfen, ob in der Detailansicht ein Beleg (Filepreview) existiert
+  function markRowsWithBeleg() {
+  const table = getTable();
+  if (!table) return;
+
+  const theadRow = table.querySelector('thead tr');
+  if (!theadRow) return;
+
+  // Header-Spalte "Beleg?" nach der Beleg-Nr. einfügen
+  let fileTh = theadRow.querySelector('th.dpd-hasfile');
+  if (!fileTh) {
+    fileTh = document.createElement('th');
+    fileTh.className = 'dpd-hasfile';
+    fileTh.textContent = 'Beleg?';
+    const ref = theadRow.children[BELEG_INDEX + 1] || null;
+    theadRow.insertBefore(fileTh, ref);
+  }
+
+  // >>> NEU: Sortierung für "Beleg?"-Spalte
+  if (!fileTh.dataset.dpdSortable) {
+    fileTh.dataset.dpdSortable = '1';
+    fileTh.style.cursor = 'pointer';
+
+    let indicator = fileTh.querySelector('.dpd-file-sort-indicator');
+    if (!indicator) {
+      indicator = document.createElement('span');
+      indicator.className = 'dpd-file-sort-indicator';
+      indicator.style.fontSize = '0.8em';
+      indicator.style.marginLeft = '4px';
+      indicator.textContent = '⇅';
+      fileTh.appendChild(indicator);
+    }
+
+    fileTh.addEventListener('click', () => {
+      sortFileColumn(fileSortDescending);
+      indicator.textContent = fileSortDescending ? '↓' : '↑';
+      fileSortDescending = !fileSortDescending;
+    });
+  }
+
+  const bodyRows = table.querySelectorAll('tbody tr');
+
+  bodyRows.forEach(tr => {
+    if (tr.dataset.dpdFileChecked === '1') return;
+    tr.dataset.dpdFileChecked = '1';
+
+    const tds = tr.children;
+    let fileTd = tr.querySelector('td.dpd-hasfile');
+    if (!fileTd) {
+      fileTd = document.createElement('td');
+      fileTd.className = 'dpd-hasfile';
+      fileTd.textContent = '…';
+      const refTd = tds[BELEG_INDEX + 1] || null;
+      tr.insertBefore(fileTd, refTd);
+    }
+
+    const detailLink = tr.querySelector('a[href*="postingDetail.xhtml"]');
+    if (!detailLink) {
+      fileTd.textContent = '-';
+      fileTd.title = 'kein Detail-Link';
+      return;
+    }
+
+    const url = detailLink.href;
+    fileTd.textContent = '⌛';
+    fileTd.title = 'prüfe…';
+
+    fetch(url, { credentials: 'include' })
+      .then(resp => resp.text())
+      .then(html => {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const hasFile =
+          !!doc.querySelector('.sae-filepreview-container') ||
+          !!doc.querySelector('img[id*="filePreviewImageFile"]');
+
+        if (hasFile) {
+          fileTd.textContent = '📎';
+          fileTd.title = 'Beleg vorhanden';
+        } else {
+          fileTd.textContent = '–';
+          fileTd.title = 'kein Beleg';
+        }
+      })
+      .catch(err => {
+        console.error('Fehler beim Prüfen des Belegs:', err);
+        fileTd.textContent = '?';
+        fileTd.title = 'Fehler beim Prüfen';
+      });
+  });
+
+  const tbody = table.querySelector('tbody');
+  if (tbody && !tbody.dataset.dpdFileObserver) {
+    const obs = new MutationObserver(() => {
+      markRowsWithBeleg();
+    });
+    obs.observe(tbody, { childList: true });
+    tbody.dataset.dpdFileObserver = '1';
+  }
+}
+
+
   function runOnOverview() {
     setTimeout(async () => {
       enableBelegHeaderSorting();
-
       await sleep(200);
-      const table = getTable();
-      if (!table) return;
-
-      const rows = table.querySelectorAll('tbody tr');
-      let topParsed = null;
-      for (const tr of rows) {
-        const td = tr.children[BELEG_INDEX];
-        if (!td) continue;
-        const txt = td.textContent.trim();
-        const parsed = parseBelegNum(txt);
-        if (parsed) {
-          topParsed = parsed;
-          break;
-        }
-      }
-      if (topParsed) {
-        console.log('DPD-Belegscript: letzte Belegnummer (Übersicht):', topParsed.raw);
-        localStorage.setItem('dpd_lastBeleg', topParsed.raw);
-      }
+      await updateLastBelegFromOverview();
+      markRowsWithBeleg();
     }, 800);
   }
 
@@ -144,6 +278,7 @@
   // 2. Create-Seite
   //    - Belegnummer +1
   //    - Unternehmen-Filter über beide Spalten (Client)
+  //    - Tour aus 2. Spalte übernehmen
   // ====================================================
 
   function runOnCreate() {
@@ -180,134 +315,128 @@
     }
   }
 
-  // -------- Unternehmen-Filter über beide Spalten (Client, global) --------
+  // -------- Unternehmen-Filter + Tourfeld --------
 
- function enableUnternehmenSearch() {
-  const fieldId = 'postingEditForm:customerAccountAddressInput_input';
-  const panelId = 'postingEditForm:customerAccountAddressInput_panel';
-  const tourFieldId = 'postingEditForm:j_idt383:validatableInput';
+  function enableUnternehmenSearch() {
+    const fieldId = 'postingEditForm:customerAccountAddressInput_input';
+    const panelId = 'postingEditForm:customerAccountAddressInput_panel';
+    const tourFieldId = 'postingEditForm:j_idt383:validatableInput';
 
-  let panel = null;
-  let items = null; // [{ row, search }]
-  let observedPanel = null;
-  let observer = null;
+    let panel = null;
+    let items = null; // [{ row, search }]
+    let observedPanel = null;
+    let observer = null;
 
-  function ensurePanelAndObserver() {
-    const current = document.getElementById(panelId);
-    if (!current) return false;
+    function ensurePanelAndObserver() {
+      const current = document.getElementById(panelId);
+      if (!current) return false;
 
-    if (current !== observedPanel) {
-      observedPanel = current;
-      panel = current;
-      items = null; // neue DOM-Struktur -> neu einlesen
-
-      if (observer) observer.disconnect();
-      observer = new MutationObserver(() => {
-        // Panel-Inhalt hat sich geändert -> Liste verwerfen
+      if (current !== observedPanel) {
+        observedPanel = current;
+        panel = current;
         items = null;
-      });
-      observer.observe(panel, { childList: true, subtree: true });
-      console.log('DPD-Script: Unternehmen-Panel (re)verbunden.');
-    }
-    return true;
-  }
 
-  function attachRowClick(tr) {
-    if (!tr || tr.dataset.dpdTourBound === '1') return;
-
-    tr.dataset.dpdTourBound = '1';
-
-    tr.addEventListener('click', function () {
-      const tourInput = document.getElementById(tourFieldId);
-      if (!tourInput) return;
-
-      const tds = tr.querySelectorAll('td');
-      const col2 = (tds[1]?.textContent || '').trim();
-
-      // erste zusammenhängende Ziffernfolge aus Spalte 2 holen (z.B. "157" aus "157 Thiemo Test")
-      const m = col2.match(/\d+/);
-      const tourVal = m ? m[0] : '';
-
-      tourInput.value = tourVal;
-      tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
-      tourInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-      console.log('DPD-Script: Tour-Feld gesetzt auf:', tourVal, 'aus', col2);
-    });
-  }
-
-  function snapshotItems() {
-    if (!ensurePanelAndObserver()) return;
-    const tbody = panel.querySelector('table.ui-autocomplete-items tbody');
-    if (!tbody) return;
-    const rows = Array.from(tbody.querySelectorAll('tr.ui-autocomplete-item'));
-    if (!rows.length) return;
-
-    items = rows.map(tr => {
-      const tds = tr.querySelectorAll('td');
-      const col1 = (tds[0]?.textContent || '').trim();
-      const col2 = (tds[1]?.textContent || '').trim();
-      const combined = (col1 + ' ' + col2).trim().toLowerCase();
-
-      // Klick-Handler pro Zeile nur einmal anhängen
-      attachRowClick(tr);
-
-      return { row: tr, search: combined };
-    });
-
-    console.log('DPD-Script: Unternehmen-Liste gesichert, Einträge:', items.length);
-  }
-
-  function applyFilter(query) {
-    if (!ensurePanelAndObserver()) return;
-
-    if (!items || !items.length) {
-      snapshotItems();
-      if (!items || !items.length) return;
-    }
-
-    const q = (query || '').trim().toLowerCase();
-
-    items.forEach(it => {
-      if (!q || it.search.includes(q)) {
-        it.row.style.display = '';
-      } else {
-        it.row.style.display = 'none';
+        if (observer) observer.disconnect();
+        observer = new MutationObserver(() => {
+          items = null; // Panel-Inhalt geändert
+        });
+        observer.observe(panel, { childList: true, subtree: true });
+        console.log('DPD-Script: Unternehmen-Panel (re)verbunden.');
       }
-    });
-
-    panel.scrollTop = 0;
-  }
-
-  let filterTimer = null;
-  function scheduleFilter() {
-    if (filterTimer) clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => {
-      const inputEl = document.getElementById(fieldId);
-      const val = inputEl ? inputEl.value : '';
-      applyFilter(val);
-    }, 200);
-  }
-
-  // Globale Listener in der Capture-Phase,
-  // damit sie auch nach Neurendern des Inputs greifen.
-  document.addEventListener('input', function(e) {
-    const t = e.target;
-    if (t && t.id === fieldId) {
-      e.stopImmediatePropagation(); // PrimeFaces-Filter blocken
-      scheduleFilter();
+      return true;
     }
-  }, true);
 
-  document.addEventListener('keyup', function(e) {
-    const t = e.target;
-    if (t && t.id === fieldId) {
-      e.stopImmediatePropagation();
-      scheduleFilter();
+    function attachRowClick(tr) {
+      if (!tr || tr.dataset.dpdTourBound === '1') return;
+      tr.dataset.dpdTourBound = '1';
+
+      tr.addEventListener('click', function () {
+        const tourInput = document.getElementById(tourFieldId);
+        if (!tourInput) return;
+
+        const tds = tr.querySelectorAll('td');
+        const col2 = (tds[1]?.textContent || '').trim();
+        const m = col2.match(/\d+/);
+        const tourVal = m ? m[0] : '';
+
+        tourInput.value = tourVal;
+        tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
+        tourInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+        console.log('DPD-Script: Tour-Feld gesetzt auf:', tourVal, 'aus', col2);
+      });
     }
-  }, true);
 
-  console.log('DPD-Script: Unternehmen-Suche (Clientfilter, global + Tour) aktiviert.');
-}
+    function snapshotItems() {
+      if (!ensurePanelAndObserver()) return;
+      const tbody = panel.querySelector('table.ui-autocomplete-items tbody');
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll('tr.ui-autocomplete-item'));
+      if (!rows.length) return;
+
+      items = rows.map(tr => {
+        const tds = tr.querySelectorAll('td');
+        const col1 = (tds[0]?.textContent || '').trim();
+        const col2 = (tds[1]?.textContent || '').trim();
+        const combined = (col1 + ' ' + col2).trim().toLowerCase();
+
+        attachRowClick(tr);
+
+        return { row: tr, search: combined };
+      });
+
+      console.log('DPD-Script: Unternehmen-Liste gesichert, Einträge:', items.length);
+    }
+
+    function applyFilter(query) {
+      if (!ensurePanelAndObserver()) return;
+
+      if (!items || !items.length) {
+        snapshotItems();
+        if (!items || !items.length) return;
+      }
+
+      const q = (query || '').trim().toLowerCase();
+
+      items.forEach(it => {
+        if (!q || it.search.includes(q)) {
+          it.row.style.display = '';
+        } else {
+          it.row.style.display = 'none';
+        }
+      });
+
+      panel.scrollTop = 0;
+    }
+
+    let filterTimer = null;
+    function scheduleFilter() {
+      if (filterTimer) clearTimeout(filterTimer);
+      filterTimer = setTimeout(() => {
+        const inputEl = document.getElementById(fieldId);
+        const val = inputEl ? inputEl.value : '';
+        applyFilter(val);
+      }, 200);
+    }
+
+    // globale Listener, damit es auch nach Neurendern funktioniert
+    document.addEventListener('input', function(e) {
+      const t = e.target;
+      if (t && t.id === fieldId) {
+        e.stopImmediatePropagation();
+        scheduleFilter();
+      }
+    }, true);
+
+    document.addEventListener('keyup', function(e) {
+      const t = e.target;
+      if (t && t.id === fieldId) {
+        e.stopImmediatePropagation();
+        scheduleFilter();
+      }
+    }, true);
+
+    console.log('DPD-Script: Unternehmen-Suche (Clientfilter, global + Tour) aktiviert.');
+  }
 
 })();
