@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      1.2
+// @version      1.3
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
