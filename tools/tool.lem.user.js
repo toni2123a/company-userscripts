@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.1
+// @version      2.2
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -76,9 +76,19 @@ function sortFileColumn(descending) {
     return new Promise(r => setTimeout(r, ms));
   }
 
-  function getTable() {
-    return document.querySelector('table');
+ function getTable() {
+  // Nur die Haupt-Tabelle mit der Spalte "Beleg-Nr." verwenden
+  const tables = Array.from(document.querySelectorAll('table'));
+  for (const t of tables) {
+    const ths = Array.from(t.querySelectorAll('thead th'));
+    if (ths.some(th => th.textContent.trim().startsWith('Beleg-Nr'))) {
+      return t;
+    }
   }
+  // Fallback (sollte eigentlich nicht mehr nötig sein)
+  return document.querySelector('table');
+}
+
 
   // ====================================================
   // 1. Übersicht: Beleg-Spalte sortierbar + höchste merken
@@ -165,24 +175,30 @@ function sortFileColumn(descending) {
   }
 
   // NEU: pro Zeile prüfen, ob in der Detailansicht ein Beleg (Filepreview) existiert
-  function markRowsWithBeleg() {
+function markRowsWithBeleg() {
   const table = getTable();
   if (!table) return;
 
   const theadRow = table.querySelector('thead tr');
   if (!theadRow) return;
 
+  // Referenz auf vorhandenen Beleg-Nr.-Header holen
+  const refBelegTh = theadRow.children[BELEG_INDEX];
+  if (!refBelegTh) return;
+
   // Header-Spalte "Beleg?" nach der Beleg-Nr. einfügen
   let fileTh = theadRow.querySelector('th.dpd-hasfile');
   if (!fileTh) {
-    fileTh = document.createElement('th');
-    fileTh.className = 'dpd-hasfile';
+    // bestehenden Header klonen (ohne Kinder), damit Klassen/Attribute erhalten bleiben
+    fileTh = refBelegTh.cloneNode(false);
+    fileTh.classList.add('dpd-hasfile');
     fileTh.textContent = 'Beleg?';
+
     const ref = theadRow.children[BELEG_INDEX + 1] || null;
     theadRow.insertBefore(fileTh, ref);
   }
 
-  // >>> NEU: Sortierung für "Beleg?"-Spalte
+  // Sortier-Handler wie gehabt
   if (!fileTh.dataset.dpdSortable) {
     fileTh.dataset.dpdSortable = '1';
     fileTh.style.cursor = 'pointer';
@@ -203,6 +219,9 @@ function sortFileColumn(descending) {
       fileSortDescending = !fileSortDescending;
     });
   }
+
+  // ... ab hier dein bisheriger Code in markRowsWithBeleg() unverändert lassen
+
 
   const bodyRows = table.querySelectorAll('tbody tr');
 
