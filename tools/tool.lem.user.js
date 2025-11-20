@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD Belegnummer Auto-Fill + Sortierbare Spalte
+// @name         DPD LEM
 // @namespace    https://bodo.dpd
 // @version      1.2
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen
