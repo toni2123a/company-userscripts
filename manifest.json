@@ -68,6 +68,20 @@
       "description": "Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite"
     },
     {
+      "id": "tool.lem",
+      "name": "DPD Belegnummer Auto-Fill + Sortierbare Spalte",
+      "version": "1.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js",
+      "match": [
+        "https://dpd.lademittel.management/page/posting/postingOverview.xhtml*",
+        "https://dpd.lademittel.management/page/posting/postingCreate.xhtml*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte \"Beleg-Nr.\" sortierbar machen"
+    },
+    {
       "id": "tool.lostandfound",
       "name": "DPD Content Check + Lost&Found",
       "version": "2.0",
