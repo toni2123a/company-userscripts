@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.2
+// @version      2.3
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -317,11 +317,11 @@ function markRowsWithBeleg() {
       const input = document.getElementById('postingEditForm:palletNoteNumber:validatableInput');
       if (!input) return false;
       if (!input.value) {
+        // nur das Feld vorbelegen – NICHT dpd_lastBeleg erhöhen
         input.value = nextBeleg;
         input.dispatchEvent(new Event('input',  { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         console.log('DPD-Belegscript: Belegfeld mit', nextBeleg, 'befüllt.');
-        localStorage.setItem('dpd_lastBeleg', nextBeleg);
       }
       return true;
     };
@@ -336,36 +336,30 @@ function markRowsWithBeleg() {
 
   // -------- Unternehmen-Filter + Tourfeld --------
 
+   // -------- Unternehmen-Filter + Tourfeld --------
+
+   // -------- Unternehmen-Filter + Tourfeld + Tastenkürzel --------
+
+   // -------- Unternehmen-Filter + Tourfeld + Tastenkürzel --------
   function enableUnternehmenSearch() {
-    const fieldId = 'postingEditForm:customerAccountAddressInput_input';
-    const panelId = 'postingEditForm:customerAccountAddressInput_panel';
+    const fieldId     = 'postingEditForm:customerAccountAddressInput_input';
+    const panelId     = 'postingEditForm:customerAccountAddressInput_panel';
+    const buttonId    = 'postingEditForm:customerAccountAddressInput_button';
     const tourFieldId = 'postingEditForm:j_idt383:validatableInput';
 
-    let panel = null;
-    let items = null; // [{ row, search }]
-    let observedPanel = null;
-    let observer = null;
+    let panel    = null;
+    let items    = null;   // [{row, search, col1, col2}]
+    let allReady = false;
 
-    function ensurePanelAndObserver() {
-      const current = document.getElementById(panelId);
-      if (!current) return false;
-
-      if (current !== observedPanel) {
-        observedPanel = current;
-        panel = current;
-        items = null;
-
-        if (observer) observer.disconnect();
-        observer = new MutationObserver(() => {
-          items = null; // Panel-Inhalt geändert
-        });
-        observer.observe(panel, { childList: true, subtree: true });
-        console.log('DPD-Script: Unternehmen-Panel (re)verbunden.');
+    function ensurePanel() {
+      if (!panel) {
+        panel = document.getElementById(panelId);
       }
-      return true;
+      return !!panel;
     }
 
-    function attachRowClick(tr) {
+    // Tour-Feld direkt aus Spalte B der angeklickten Zeile setzen
+      function attachRowClick(tr) {
       if (!tr || tr.dataset.dpdTourBound === '1') return;
       tr.dataset.dpdTourBound = '1';
 
@@ -373,51 +367,110 @@ function markRowsWithBeleg() {
         const tourInput = document.getElementById(tourFieldId);
         if (!tourInput) return;
 
-        const tds = tr.querySelectorAll('td');
+        const tds  = tr.querySelectorAll('td');
         const col2 = (tds[1]?.textContent || '').trim();
-        const m = col2.match(/\d+/);
+        const m    = col2.match(/\d+/);
         const tourVal = m ? m[0] : '';
+
+        // NICHT überschreiben, wenn keine Zahl gefunden wurde
+        if (!tourVal) {
+          console.log('DPD-Script: Tour-Feld nicht geändert (keine Zahl in Spalte B):', col2);
+          return;
+        }
 
         tourInput.value = tourVal;
         tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
         tourInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-        console.log('DPD-Script: Tour-Feld gesetzt auf:', tourVal, 'aus', col2);
+        console.log('DPD-Script: Tour-Feld (per Klick) gesetzt auf:', tourVal);
       });
     }
 
-    function snapshotItems() {
-      if (!ensurePanelAndObserver()) return;
-      const tbody = panel.querySelector('table.ui-autocomplete-items tbody');
-      if (!tbody) return;
-      const rows = Array.from(tbody.querySelectorAll('tr.ui-autocomplete-item'));
-      if (!rows.length) return;
 
-      items = rows.map(tr => {
-        const tds = tr.querySelectorAll('td');
-        const col1 = (tds[0]?.textContent || '').trim();
-        const col2 = (tds[1]?.textContent || '').trim();
-        const combined = (col1 + ' ' + col2).trim().toLowerCase();
+    // 1) EINMALIG: komplette Liste per PointerEvent laden
+    function preloadAllItems() {
+      if (allReady) return;
 
-        attachRowClick(tr);
-
-        return { row: tr, search: combined };
-      });
-
-      console.log('DPD-Script: Unternehmen-Liste gesichert, Einträge:', items.length);
-    }
-
-    function applyFilter(query) {
-      if (!ensurePanelAndObserver()) return;
-
-      if (!items || !items.length) {
-        snapshotItems();
-        if (!items || !items.length) return;
+      const btn = document.getElementById(buttonId);
+      if (!btn) {
+        console.warn('DPD-Script: Dropdown-Button nicht gefunden.');
+        return;
       }
 
+      console.log('DPD-Script: Starte PointerEvent für Dropdown-Button...');
+
+      function realClick(el) {
+        ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+          el.dispatchEvent(new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true
+          }));
+        });
+      }
+
+      realClick(btn);
+
+      const start = Date.now();
+      const intId = setInterval(() => {
+        if (!ensurePanel()) return;
+
+        const tbody = panel.querySelector('table.ui-autocomplete-items tbody');
+        if (tbody) {
+          const rows = Array.from(tbody.querySelectorAll('tr.ui-autocomplete-item'));
+          if (rows.length) {
+            items = rows.map(tr => {
+              const tds  = tr.querySelectorAll('td');
+              const col1 = (tds[0]?.textContent || '').trim();
+              const col2 = (tds[1]?.textContent || '').trim();
+              const combined = (col1 + ' ' + col2).toLowerCase();
+
+              attachRowClick(tr);
+              return { row: tr, search: combined, col1, col2 };
+            });
+
+            allReady = true;
+            console.log('DPD-Script: Unternehmen-Gesamtliste geladen, Einträge:', items.length);
+
+            // Panel wieder verstecken
+            panel.style.display = 'none';
+            panel.classList.add('ui-helper-hidden');
+
+            clearInterval(intId);
+          }
+        }
+
+        // Sicherheits-Timeout
+        if (Date.now() - start > 5000) {
+          console.warn('DPD-Script: Timeout beim Laden der Unternehmen-Liste.');
+          clearInterval(intId);
+        }
+      }, 100);
+    }
+
+    // Panel anzeigen (nur noch clientseitig)
+    function showPanel() {
+      if (!ensurePanel()) return;
+      panel.style.display = 'block';
+      panel.classList.remove('ui-helper-hidden');
+    }
+
+    // Client-Filter über Spalte A + B
+    function applyFilter(query) {
+      if (!allReady) preloadAllItems();
+      if (!allReady || !items || !items.length) return;
+      if (!ensurePanel()) return;
+
       const q = (query || '').trim().toLowerCase();
+      const tbody = panel.querySelector('table.ui-autocomplete-items tbody');
+      if (!tbody) return;
 
       items.forEach(it => {
+        if (it.row.parentNode !== tbody) {
+          tbody.appendChild(it.row);
+        }
         if (!q || it.search.includes(q)) {
           it.row.style.display = '';
         } else {
@@ -428,6 +481,41 @@ function markRowsWithBeleg() {
       panel.scrollTop = 0;
     }
 
+    // 4) ersten sichtbaren Treffer wählen (per Klick auf die Zeile)
+       function chooseFirstVisible() {
+      if (!allReady) preloadAllItems();
+      if (!allReady || !items || !items.length) return;
+
+      const first = items.find(it => it.row.style.display !== 'none');
+      if (!first) {
+        console.log('DPD-Script: kein sichtbarer Treffer.');
+        return;
+      }
+
+      // Zeile anklicken, damit PF den Kunden auswählt
+      first.row.click();
+
+      // Tour explizit aus unserer gespeicherten Spalte B setzen
+      const tourInput = document.getElementById(tourFieldId);
+      if (tourInput && first.col2) {
+        const m = first.col2.match(/\d+/);
+        const tourVal = m ? m[0] : '';
+        if (tourVal) {
+          tourInput.value = tourVal;
+          tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
+          tourInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log('DPD-Script: Tour-Feld (per chooseFirstVisible) gesetzt auf:', tourVal);
+        }
+      }
+
+      console.log('DPD-Script: erste gefilterte Zeile gewählt.');
+    }
+
+    // --- Events ---
+
+    // schon beim Start alles vorladen
+    preloadAllItems();
+
     let filterTimer = null;
     function scheduleFilter() {
       if (filterTimer) clearTimeout(filterTimer);
@@ -435,11 +523,11 @@ function markRowsWithBeleg() {
         const inputEl = document.getElementById(fieldId);
         const val = inputEl ? inputEl.value : '';
         applyFilter(val);
-      }, 200);
+      }, 150);
     }
 
-    // globale Listener, damit es auch nach Neurendern funktioniert
-    document.addEventListener('input', function(e) {
+    // Eingabe abfangen -> nur unser Client-Filter, keine Server-Anfrage mehr
+    document.addEventListener('input', function (e) {
       const t = e.target;
       if (t && t.id === fieldId) {
         e.stopImmediatePropagation();
@@ -447,7 +535,7 @@ function markRowsWithBeleg() {
       }
     }, true);
 
-    document.addEventListener('keyup', function(e) {
+    document.addEventListener('keyup', function (e) {
       const t = e.target;
       if (t && t.id === fieldId) {
         e.stopImmediatePropagation();
@@ -455,7 +543,37 @@ function markRowsWithBeleg() {
       }
     }, true);
 
-    console.log('DPD-Script: Unternehmen-Suche (Clientfilter, global + Tour) aktiviert.');
+    // Tastenkürzel
+    document.addEventListener('keydown', function (e) {
+      const t = e.target;
+      if (!t || t.id !== fieldId) return;
+
+      // F4 oder Alt+↓ -> Panel öffnen + filtern
+      if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey)) {
+        showPanel();
+        applyFilter(t.value || '');
+        e.preventDefault();
+        return;
+      }
+
+      // Enter/Tab -> ersten sichtbaren Treffer wählen (per Klick)
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        showPanel();
+        applyFilter(t.value || '');
+        chooseFirstVisible();
+        if (e.key === 'Enter') {
+          e.preventDefault(); // kein Submit
+        }
+        // Tab lassen wir durch, damit der Fokus weitergehen kann
+      }
+    }, true);
+
+    console.log('DPD-Script: Unternehmen-Suche (Spalte A+B, Vollcache, Tastatur) aktiviert.');
   }
+
+
+
+
+
 
 })();
