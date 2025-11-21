@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.3
+// @version      2.4
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -17,34 +17,7 @@
   const BELEG_INDEX = 5; // "Beleg-Nr."-Spalte in der Übersicht
   let fileSortDescending = true;
 
-function fileScore(txt) {
-  const t = (txt || '').trim();
-  if (t === '📎') return 3;     // Beleg vorhanden
-  if (t === '⌛') return 2;     // wird geprüft
-  if (t === '?')  return 1;    // Fehler
-  return 0;                    // kein Beleg / Strich
-}
-
-function sortFileColumn(descending) {
-  const table = getTable();
-  if (!table) return;
-  const tbody = table.querySelector('tbody');
-  if (!tbody) return;
-
-  const rows = Array.from(tbody.querySelectorAll('tr'));
-  rows.sort((a, b) => {
-    const ta = (a.children[BELEG_INDEX + 1]?.textContent || '').trim();
-    const tb = (b.children[BELEG_INDEX + 1]?.textContent || '').trim();
-    const va = fileScore(ta);
-    const vb = fileScore(tb);
-    const diff = va - vb;
-    return descending ? -diff : diff;
-  });
-
-  rows.forEach(r => tbody.appendChild(r));
-}
-
-
+  // Seite erkennen
   if (href.includes('postingOverview.xhtml')) {
     runOnOverview();
   } else if (href.includes('postingCreate.xhtml')) {
@@ -76,26 +49,33 @@ function sortFileColumn(descending) {
     return new Promise(r => setTimeout(r, ms));
   }
 
- function getTable() {
-  // Nur die Haupt-Tabelle mit der Spalte "Beleg-Nr." verwenden
-  const tables = Array.from(document.querySelectorAll('table'));
-  for (const t of tables) {
-    const ths = Array.from(t.querySelectorAll('thead th'));
-    if (ths.some(th => th.textContent.trim().startsWith('Beleg-Nr'))) {
-      return t;
+  function getTable() {
+    // Nur die Haupt-Tabelle mit der Spalte "Beleg-Nr." verwenden
+    const tables = Array.from(document.querySelectorAll('table'));
+    for (const t of tables) {
+      const ths = Array.from(t.querySelectorAll('thead th'));
+      if (ths.some(th => th.textContent.trim().startsWith('Beleg-Nr'))) {
+        return t;
+      }
     }
+    // Fallback (sollte eigentlich nicht mehr nötig sein)
+    return document.querySelector('table');
   }
-  // Fallback (sollte eigentlich nicht mehr nötig sein)
-  return document.querySelector('table');
-}
-
 
   // ====================================================
   // 1. Übersicht: Beleg-Spalte sortierbar + höchste merken
-  //               + NEU: "Beleg?"-Spalte (hat Anhang?)
+  //               + "Beleg?"-Spalte (hat Anhang?)
   // ====================================================
 
-  function sortBelegColumn(descending) {
+  function fileScore(txt) {
+    const t = (txt || '').trim();
+    if (t === '📎') return 3;     // Beleg vorhanden
+    if (t === '⌛') return 2;     // wird geprüft
+    if (t === '?')  return 1;    // Fehler
+    return 0;                    // kein Beleg / Strich
+  }
+
+  function sortFileColumn(descending) {
     const table = getTable();
     if (!table) return;
     const tbody = table.querySelector('tbody');
@@ -103,199 +83,75 @@ function sortFileColumn(descending) {
 
     const rows = Array.from(tbody.querySelectorAll('tr'));
     rows.sort((a, b) => {
-      const ta = (a.children[BELEG_INDEX]?.textContent || '').trim();
-      const tb = (b.children[BELEG_INDEX]?.textContent || '').trim();
-      const pa = parseBelegNum(ta);
-      const pb = parseBelegNum(tb);
-      if (!pa && !pb) return 0;
-      if (!pa) return 1;
-      if (!pb) return -1;
-      const diff = pa.num - pb.num;
+      const ta = (a.children[BELEG_INDEX + 1]?.textContent || '').trim();
+      const tb = (b.children[BELEG_INDEX + 1]?.textContent || '').trim();
+      const va = fileScore(ta);
+      const vb = fileScore(tb);
+      const diff = va - vb;
       return descending ? -diff : diff;
     });
+
     rows.forEach(r => tbody.appendChild(r));
   }
 
-  function enableBelegHeaderSorting() {
+
+
+
+
+
+  // pro Zeile prüfen, ob in der Detailansicht ein Beleg existiert
+   // NEU: pro Zeile prüfen, ob in der Detailansicht ein Beleg (Filepreview) existiert
+
+ // =====================================================
+// Übersicht – wir machen NICHTS mehr, um PF nicht zu brechen
+// =====================================================
+
+function runOnOverview() {
+  // Nur letzte Belegnummer auslesen (ohne DOM umzubauen)
+  setTimeout(() => {
     const table = getTable();
     if (!table) return;
-
-    const headers = table.querySelectorAll('thead th');
-    let belegHeader = headers[BELEG_INDEX];
-    if (!belegHeader) {
-      belegHeader = Array.from(headers)
-        .find(th => th.textContent.trim().startsWith('Beleg-Nr'));
-    }
-    if (!belegHeader) return;
-
-    belegHeader.style.cursor = 'pointer';
-    belegHeader.title = 'Client-Sortierung Beleg-Nr.';
-    let indicator = belegHeader.querySelector('.dpd-beleg-sort-indicator');
-    if (!indicator) {
-      indicator = document.createElement('span');
-      indicator.className = 'dpd-beleg-sort-indicator';
-      indicator.style.fontSize = '0.8em';
-      indicator.style.marginLeft = '4px';
-      indicator.textContent = '⇅';
-      belegHeader.appendChild(indicator);
-    }
-
-    let descending = true;
-    belegHeader.addEventListener('click', () => {
-      sortBelegColumn(descending);
-      indicator.textContent = descending ? '↓' : '↑';
-      descending = !descending;
-    });
-
-    // initial absteigend sortieren
-    sortBelegColumn(true);
-    indicator.textContent = '↓';
-  }
-
-  async function updateLastBelegFromOverview() {
-    const table = getTable();
-    if (!table) return;
-
     const rows = table.querySelectorAll('tbody tr');
-    let topParsed = null;
     for (const tr of rows) {
       const td = tr.children[BELEG_INDEX];
       if (!td) continue;
       const txt = td.textContent.trim();
-      const parsed = parseBelegNum(txt);
-      if (parsed) {
-        topParsed = parsed;
+      if (txt) {
+        localStorage.setItem('dpd_lastBeleg', txt);
+        console.log('DPD-Belegscript: letzte Belegnummer aktualisiert:', txt);
         break;
       }
     }
-    if (topParsed) {
-      console.log('DPD-Belegscript: letzte Belegnummer (Übersicht):', topParsed.raw);
-      localStorage.setItem('dpd_lastBeleg', topParsed.raw);
-    }
-  }
-
-  // NEU: pro Zeile prüfen, ob in der Detailansicht ein Beleg (Filepreview) existiert
-function markRowsWithBeleg() {
-  const table = getTable();
-  if (!table) return;
-
-  const theadRow = table.querySelector('thead tr');
-  if (!theadRow) return;
-
-  // Referenz auf vorhandenen Beleg-Nr.-Header holen
-  const refBelegTh = theadRow.children[BELEG_INDEX];
-  if (!refBelegTh) return;
-
-  // Header-Spalte "Beleg?" nach der Beleg-Nr. einfügen
-  let fileTh = theadRow.querySelector('th.dpd-hasfile');
-  if (!fileTh) {
-    // bestehenden Header klonen (ohne Kinder), damit Klassen/Attribute erhalten bleiben
-    fileTh = refBelegTh.cloneNode(false);
-    fileTh.classList.add('dpd-hasfile');
-    fileTh.textContent = 'Beleg?';
-
-    const ref = theadRow.children[BELEG_INDEX + 1] || null;
-    theadRow.insertBefore(fileTh, ref);
-  }
-
-  // Sortier-Handler wie gehabt
-  if (!fileTh.dataset.dpdSortable) {
-    fileTh.dataset.dpdSortable = '1';
-    fileTh.style.cursor = 'pointer';
-
-    let indicator = fileTh.querySelector('.dpd-file-sort-indicator');
-    if (!indicator) {
-      indicator = document.createElement('span');
-      indicator.className = 'dpd-file-sort-indicator';
-      indicator.style.fontSize = '0.8em';
-      indicator.style.marginLeft = '4px';
-      indicator.textContent = '⇅';
-      fileTh.appendChild(indicator);
-    }
-
-    fileTh.addEventListener('click', () => {
-      sortFileColumn(fileSortDescending);
-      indicator.textContent = fileSortDescending ? '↓' : '↑';
-      fileSortDescending = !fileSortDescending;
-    });
-  }
-
-  // ... ab hier dein bisheriger Code in markRowsWithBeleg() unverändert lassen
-
-
-  const bodyRows = table.querySelectorAll('tbody tr');
-
-  bodyRows.forEach(tr => {
-    if (tr.dataset.dpdFileChecked === '1') return;
-    tr.dataset.dpdFileChecked = '1';
-
-    const tds = tr.children;
-    let fileTd = tr.querySelector('td.dpd-hasfile');
-    if (!fileTd) {
-      fileTd = document.createElement('td');
-      fileTd.className = 'dpd-hasfile';
-      fileTd.textContent = '…';
-      const refTd = tds[BELEG_INDEX + 1] || null;
-      tr.insertBefore(fileTd, refTd);
-    }
-
-    const detailLink = tr.querySelector('a[href*="postingDetail.xhtml"]');
-    if (!detailLink) {
-      fileTd.textContent = '-';
-      fileTd.title = 'kein Detail-Link';
-      return;
-    }
-
-    const url = detailLink.href;
-    fileTd.textContent = '⌛';
-    fileTd.title = 'prüfe…';
-
-    fetch(url, { credentials: 'include' })
-      .then(resp => resp.text())
-      .then(html => {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const hasFile =
-          !!doc.querySelector('.sae-filepreview-container') ||
-          !!doc.querySelector('img[id*="filePreviewImageFile"]');
-
-        if (hasFile) {
-          fileTd.textContent = '📎';
-          fileTd.title = 'Beleg vorhanden';
-        } else {
-          fileTd.textContent = '–';
-          fileTd.title = 'kein Beleg';
-        }
-      })
-      .catch(err => {
-        console.error('Fehler beim Prüfen des Belegs:', err);
-        fileTd.textContent = '?';
-        fileTd.title = 'Fehler beim Prüfen';
-      });
-  });
-
-  const tbody = table.querySelector('tbody');
-  if (tbody && !tbody.dataset.dpdFileObserver) {
-    const obs = new MutationObserver(() => {
-      markRowsWithBeleg();
-    });
-    obs.observe(tbody, { childList: true });
-    tbody.dataset.dpdFileObserver = '1';
-  }
+  }, 500);
 }
 
 
-  function runOnOverview() {
-    setTimeout(async () => {
-      enableBelegHeaderSorting();
-      await sleep(200);
-      await updateLastBelegFromOverview();
-      markRowsWithBeleg();
-    }, 800);
-  }
+  // PrimeFaces AJAX: wenn Datatable via Paginator/Filter neu gerendert wird,
+  // nach dem Update unsere Logik erneut ausführen
+  document.addEventListener('pfAjaxComplete', function(e) {
+    try {
+      const detail = e.detail || {};
+      const updateIds = detail.updateIds || detail.updateId || [];
+      const ids = Array.isArray(updateIds) ? updateIds : [updateIds];
+
+      if (!ids.some(id => typeof id === 'string' &&
+                          id.indexOf('postingOverviewForm:postingOverviewTable') !== -1)) {
+        return;
+      }
+
+      setTimeout(() => {
+        enableBelegHeaderSorting();
+        markRowsWithBeleg();
+        updateLastBelegFromOverview();
+      }, 50);
+    } catch (err) {
+      console.error('DPD-Script: Fehler im pfAjaxComplete-Handler (Overview):', err);
+    }
+  }, true);
 
   // ====================================================
   // 2. Create-Seite
-  //    - Belegnummer +1
+  //    - Belegnummer +1 (nur bei gespeicherter Buchung hochgezählt)
   //    - Unternehmen-Filter über beide Spalten (Client)
   //    - Tour aus 2. Spalte übernehmen
   // ====================================================
@@ -334,13 +190,7 @@ function markRowsWithBeleg() {
     }
   }
 
-  // -------- Unternehmen-Filter + Tourfeld --------
-
-   // -------- Unternehmen-Filter + Tourfeld --------
-
-   // -------- Unternehmen-Filter + Tourfeld + Tastenkürzel --------
-
-   // -------- Unternehmen-Filter + Tourfeld + Tastenkürzel --------
+  // -------- Unternehmen-Filter + Tourfeld + Tastenkürzel --------
   function enableUnternehmenSearch() {
     const fieldId     = 'postingEditForm:customerAccountAddressInput_input';
     const panelId     = 'postingEditForm:customerAccountAddressInput_panel';
@@ -359,7 +209,7 @@ function markRowsWithBeleg() {
     }
 
     // Tour-Feld direkt aus Spalte B der angeklickten Zeile setzen
-      function attachRowClick(tr) {
+    function attachRowClick(tr) {
       if (!tr || tr.dataset.dpdTourBound === '1') return;
       tr.dataset.dpdTourBound = '1';
 
@@ -372,7 +222,6 @@ function markRowsWithBeleg() {
         const m    = col2.match(/\d+/);
         const tourVal = m ? m[0] : '';
 
-        // NICHT überschreiben, wenn keine Zahl gefunden wurde
         if (!tourVal) {
           console.log('DPD-Script: Tour-Feld nicht geändert (keine Zahl in Spalte B):', col2);
           return;
@@ -385,8 +234,7 @@ function markRowsWithBeleg() {
       });
     }
 
-
-    // 1) EINMALIG: komplette Liste per PointerEvent laden
+    // komplette Liste per PointerEvent laden
     function preloadAllItems() {
       if (allReady) return;
 
@@ -434,7 +282,6 @@ function markRowsWithBeleg() {
             allReady = true;
             console.log('DPD-Script: Unternehmen-Gesamtliste geladen, Einträge:', items.length);
 
-            // Panel wieder verstecken
             panel.style.display = 'none';
             panel.classList.add('ui-helper-hidden');
 
@@ -442,7 +289,6 @@ function markRowsWithBeleg() {
           }
         }
 
-        // Sicherheits-Timeout
         if (Date.now() - start > 5000) {
           console.warn('DPD-Script: Timeout beim Laden der Unternehmen-Liste.');
           clearInterval(intId);
@@ -450,14 +296,12 @@ function markRowsWithBeleg() {
       }, 100);
     }
 
-    // Panel anzeigen (nur noch clientseitig)
     function showPanel() {
       if (!ensurePanel()) return;
       panel.style.display = 'block';
       panel.classList.remove('ui-helper-hidden');
     }
 
-    // Client-Filter über Spalte A + B
     function applyFilter(query) {
       if (!allReady) preloadAllItems();
       if (!allReady || !items || !items.length) return;
@@ -481,8 +325,8 @@ function markRowsWithBeleg() {
       panel.scrollTop = 0;
     }
 
-    // 4) ersten sichtbaren Treffer wählen (per Klick auf die Zeile)
-       function chooseFirstVisible() {
+    // ersten sichtbaren Treffer wählen
+    function chooseFirstVisible() {
       if (!allReady) preloadAllItems();
       if (!allReady || !items || !items.length) return;
 
@@ -495,7 +339,7 @@ function markRowsWithBeleg() {
       // Zeile anklicken, damit PF den Kunden auswählt
       first.row.click();
 
-      // Tour explizit aus unserer gespeicherten Spalte B setzen
+      // Tour explizit aus Spalte B setzen
       const tourInput = document.getElementById(tourFieldId);
       if (tourInput && first.col2) {
         const m = first.col2.match(/\d+/);
@@ -513,7 +357,6 @@ function markRowsWithBeleg() {
 
     // --- Events ---
 
-    // schon beim Start alles vorladen
     preloadAllItems();
 
     let filterTimer = null;
@@ -526,7 +369,7 @@ function markRowsWithBeleg() {
       }, 150);
     }
 
-    // Eingabe abfangen -> nur unser Client-Filter, keine Server-Anfrage mehr
+    // Eingabe -> nur Client-Filter
     document.addEventListener('input', function (e) {
       const t = e.target;
       if (t && t.id === fieldId) {
@@ -548,7 +391,6 @@ function markRowsWithBeleg() {
       const t = e.target;
       if (!t || t.id !== fieldId) return;
 
-      // F4 oder Alt+↓ -> Panel öffnen + filtern
       if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey)) {
         showPanel();
         applyFilter(t.value || '');
@@ -556,24 +398,17 @@ function markRowsWithBeleg() {
         return;
       }
 
-      // Enter/Tab -> ersten sichtbaren Treffer wählen (per Klick)
       if (e.key === 'Enter' || e.key === 'Tab') {
         showPanel();
         applyFilter(t.value || '');
         chooseFirstVisible();
         if (e.key === 'Enter') {
-          e.preventDefault(); // kein Submit
+          e.preventDefault();
         }
-        // Tab lassen wir durch, damit der Fokus weitergehen kann
       }
     }, true);
 
     console.log('DPD-Script: Unternehmen-Suche (Spalte A+B, Vollcache, Tastatur) aktiviert.');
   }
-
-
-
-
-
 
 })();
