@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.1
+// @version      5.4.2
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -333,7 +333,21 @@ function ensureStyles(){
   s.textContent= `
 .${NS}wrap{position:fixed;top:8px;left:calc(50% + ${OFFSET_PX}px);display:flex;gap:8px;z-index:2147483647}
 .${NS}btn{border:1px solid rgba(0,0,0,.12);background:#fff;padding:8px 14px;border-radius:999px;font:600 13px system-ui;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.${NS}panel{position:fixed;top:48px;left:calc(50% + ${OFFSET_PX}px);width:min(1150px,96vw);max-height:76vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:2147483646}
+.${NS}panel{
+  position:fixed;
+  top:48px;                /* vertikal bleibt wie gehabt */
+  left:50%;                /* horizontale Mitte */
+  transform:translateX(-50%);
+  width:min(1150px,96vw);
+  max-height:76vh;
+  overflow:auto;
+  background:#fff;
+  border:1px solid rgba(0,0,0,.12);
+  box-shadow:0 12px 28px rgba(0,0,0,.18);
+  border-radius:12px;
+  z-index:2147483646;
+}
+
 .${NS}hdr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
 .${NS}pill{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer;margin-left:6px}
