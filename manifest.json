@@ -41,6 +41,20 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tool-depotportal-label",
+      "name": "Depotportal – Paketschein (ASG-QR + Barcode + Druck)",
+      "version": "1.01",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js",
+      "match": [
+        "https://depotportal.dpd.com/*",
+        "http://depotportal.dpd.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen"
+    },
+    {
       "id": "tools-dispatcher-abholer",
       "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
       "version": "5.0.0",
