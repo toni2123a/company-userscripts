@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Depotportal – Paketschein (ASG-QR + Barcode + Druck)
+// @name         Depotportal – Paketschein
 // @namespace    bodo.tools
 // @version      1.01
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
