@@ -3,6 +3,8 @@
 // @namespace    bodo.tools
 // @version      1.01
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @match        https://depotportal.dpd.com/*
 // @match        http://depotportal.dpd.com/*
 // @grant        none
