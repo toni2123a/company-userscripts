@@ -42,7 +42,7 @@
     },
     {
       "id": "tool-depotportal-label",
-      "name": "Depotportal – Paketschein (ASG-QR + Barcode + Druck)",
+      "name": "Depotportal – Paketschein",
       "version": "1.01",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js",
       "match": [
