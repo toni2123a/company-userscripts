@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Depotportal – Paketschein
 // @namespace    bodo.tools
-// @version      1.01
+// @version      1.05
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
@@ -88,6 +88,7 @@
 
     // ================================================================
     // [5] Layout-HTML – Versender 5 cm hoch / 2,5 cm breit
+    //      Empfänger editierbar + Feld UNTER Empfänger editierbar
     // ================================================================
     function labelHtml(data) {
         return `
@@ -98,7 +99,11 @@
     <div style="height:50mm;display:flex;border-bottom:1px solid #000;box-sizing:border-box;">
       <div style="flex:1;border-right:1px solid #000;padding:4px;box-sizing:border-box;">
         <div style="font-size:7px;margin-bottom:4px;">Empfänger:</div>
-        <div style="font-size:12.5px;font-weight:bold;">${data.emp}</div>
+        <!-- Empfänger EDITIERBAR -->
+        <div id="labelEmpf" contenteditable="true"
+             style="font-size:12.5px;font-weight:bold;outline:none;min-height:18mm;word-wrap:break-word;white-space:normal;">
+          ${data.emp}
+        </div>
       </div>
 
       <!-- Versender 5 cm hoch, 2,5 cm breit -->
@@ -118,7 +123,12 @@ ${data.abs}
     </div>
 
     <div style="flex:1;display:grid;grid-template-columns:3fr 0.8fr 1.4fr;box-sizing:border-box;">
-      <div style="border-right:1px solid #000;border-bottom:1px solid #000;"></div>
+      <!-- FELD UNTER EMPFÄNGER: komplett editierbar -->
+      <div style="border-right:1px solid #000;border-bottom:1px solid #000;">
+        <div id="labelNote" contenteditable="true"
+             style="width:100%;height:100%;box-sizing:border-box;padding:3px;font-size:8px;white-space:pre-wrap;word-wrap:break-word;outline:none;">
+        </div>
+      </div>
       <div style="border-right:1px solid #000;border-bottom:1px solid #000;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1.2;">
         Lieferung<br>1 / 1
       </div>
@@ -148,16 +158,24 @@ ${data.abs}
     }
 
     // ================================================================
-    // [6] Drucken 100×150 mm oben links – erst nach Laden drucken
+    // [6] Drucken – 1 A4-Seite, Label oben links
     // ================================================================
-    function printLabel(html) {
+    function printLabelFromDom() {
+        const el = document.getElementById('labelInner');
+        if (!el) return alert('Kein Label gefunden.');
+
+        const html = el.innerHTML;
+
         const w = window.open('', '_blank');
         w.document.write(`
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-@page { size:A4 portrait; margin:2mm; }
-body { margin:0;padding:3mm; }
-.page { width:210mm;height:297mm;display:flex;align-items:flex-start;justify-content:flex-start; }
+@page { size:A4 portrait; margin:0; }
+body { margin:0; }
+.label-wrap {
+    margin-top:10mm;
+    margin-left:10mm;
+}
 .label {
     width:100mm;
     height:150mm;
@@ -165,12 +183,12 @@ body { margin:0;padding:3mm; }
     box-sizing:border-box;
 }
 </style></head><body>
-<div class="page"><div class="label">${html}</div></div>
+<div class="label-wrap">
+  <div class="label">${html}</div>
+</div>
 </body></html>`);
         w.document.close();
 
-        // Wichtig: erst drucken, wenn das Fenster fertig geladen ist,
-        // damit QR + Barcode sicher gerendert sind.
         w.onload = function () {
             w.focus();
             w.print();
@@ -227,7 +245,7 @@ body { margin:0;padding:3mm; }
         ov.style.display='flex';
 
         document.getElementById('btnClose').onclick=()=>ov.style.display='none';
-        document.getElementById('btnPrint').onclick=()=>printLabel(labelHtml(data));
+        document.getElementById('btnPrint').onclick=()=>printLabelFromDom();
         document.getElementById('btnCopy').onclick=()=>copyImage();
     }
 
