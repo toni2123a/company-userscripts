@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Depotportal – Paketschein
 // @namespace    bodo.tools
-// @version      1.05
+// @version      1.06
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
@@ -126,7 +126,7 @@ ${data.abs}
       <!-- FELD UNTER EMPFÄNGER: komplett editierbar -->
       <div style="border-right:1px solid #000;border-bottom:1px solid #000;">
         <div id="labelNote" contenteditable="true"
-             style="width:100%;height:100%;box-sizing:border-box;padding:3px;font-size:8px;white-space:pre-wrap;word-wrap:break-word;outline:none;">
+             style="width:100%;height:100%;box-sizing:border-box;padding:3px;font-size:14px;white-space:pre-wrap;word-wrap:break-word;outline:none;">
         </div>
       </div>
       <div style="border-right:1px solid #000;border-bottom:1px solid #000;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1.2;">
