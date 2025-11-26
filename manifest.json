@@ -43,7 +43,7 @@
     {
       "id": "tool-depotportal-label",
       "name": "Depotportal – Paketschein",
-      "version": "1.05",
+      "version": "1.06",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js",
       "match": [
         "https://depotportal.dpd.com/*",
