@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.6
+// @version      2.7
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -97,7 +97,95 @@
 
 
 
+function sortBelegColumnDescending() {
+  const table = getTable();
+  if (!table) {
+    console.warn('DPD-Script: Tabelle nicht gefunden – Sortierung übersprungen.');
+    return;
+  }
 
+  // Suche den TH-Header "Beleg-Nr."
+  const ths = Array.from(table.querySelectorAll('thead th'));
+  const belegTh = ths.find(th => th.textContent.trim().startsWith('Beleg-Nr'));
+  if (!belegTh) {
+    console.warn('DPD-Script: Beleg-Nr.-Spaltenheader nicht gefunden.');
+    return;
+  }
+
+  // PrimeFaces benötigt 2 Klicks, um absteigend zu sortieren:
+  // 1. Klick = aufsteigend
+  // 2. Klick = absteigend (Z-A)
+  belegTh.click(); // ascending
+  setTimeout(() => belegTh.click(), 100); // descending
+
+  console.log('DPD-Script: Beleg-Nr.-Spalte automatisch auf Z→A sortiert.');
+}
+
+function ensureBelegdatumDescending(callback) {
+  const table = getTable();
+  if (!table) {
+    console.warn('DPD-Script: Tabelle nicht gefunden – kann Belegdatum nicht prüfen.');
+    callback && callback();
+    return;
+  }
+
+  const ths = Array.from(table.querySelectorAll('thead th'));
+  const dateTh = ths.find(th => th.textContent.trim().startsWith('Belegdatum'));
+  if (!dateTh) {
+    console.warn('DPD-Script: Belegdatum-Spalte nicht gefunden.');
+    callback && callback();
+    return;
+  }
+
+  // prüfen, ob Belegdatum schon absteigend sortiert ist
+  const ariaSort = dateTh.getAttribute('aria-sort');
+  const icon = dateTh.querySelector(
+    '.ui-sortable-column-icon, .pi, .fa'
+  );
+  const iconClass = icon ? icon.className : '';
+
+  const isDescending =
+    ariaSort === 'descending' ||
+    /sort-amount-down|sort-down|pi-sort-amount-down/i.test(iconClass);
+
+  if (isDescending) {
+    console.log('DPD-Script: Belegdatum bereits absteigend sortiert.');
+    callback && callback();
+    return;
+  }
+
+  console.log('DPD-Script: sortiere Belegdatum absteigend ...');
+
+  // einmalig auf pfAjaxComplete warten, wenn die Tabelle neu gerendert wurde
+  function onPfAjaxComplete(e) {
+    try {
+      const detail = e.detail || {};
+      const updateIds = detail.updateIds || detail.updateId || [];
+      const ids = Array.isArray(updateIds) ? updateIds : [updateIds];
+
+      // nur reagieren, wenn unsere Overview-Tabelle aktualisiert wurde
+      if (!ids.some(id => typeof id === 'string' &&
+                          id.indexOf('postingOverviewForm:postingOverviewTable') !== -1)) {
+        return;
+      }
+
+      console.log('DPD-Script: Belegdatum-Sortierung fertig, Tabelle aktualisiert.');
+      document.removeEventListener('pfAjaxComplete', onPfAjaxComplete, true);
+
+      // ganz kurz warten, dann Callback
+      setTimeout(() => callback && callback(), 100);
+    } catch (err) {
+      console.error('DPD-Script: Fehler im pfAjaxComplete-Handler (Belegdatum):', err);
+      document.removeEventListener('pfAjaxComplete', onPfAjaxComplete, true);
+      callback && callback();
+    }
+  }
+
+  document.addEventListener('pfAjaxComplete', onPfAjaxComplete, true);
+
+  // Klick auf den Belegdatum-Header → PrimeFaces sortiert serverseitig
+  dateTh.click();
+}
 
   // pro Zeile prüfen, ob in der Detailansicht ein Beleg existiert
    // NEU: pro Zeile prüfen, ob in der Detailansicht ein Beleg (Filepreview) existiert
@@ -107,22 +195,41 @@
 // =====================================================
 
 function runOnOverview() {
-  // Nur letzte Belegnummer auslesen (ohne DOM umzubauen)
+  // etwas warten, bis die Tabelle steht
   setTimeout(() => {
-    const table = getTable();
-    if (!table) return;
-    const rows = table.querySelectorAll('tbody tr');
-    for (const tr of rows) {
-      const td = tr.children[BELEG_INDEX];
-      if (!td) continue;
-      const txt = td.textContent.trim();
-      if (txt) {
-        localStorage.setItem('dpd_lastBeleg', txt);
-        console.log('DPD-Belegscript: letzte Belegnummer aktualisiert:', txt);
-        break;
-      }
-    }
+    ensureBelegdatumDescending(() => {
+      updateLastBelegFromTopRow();
+    });
   }, 500);
+}
+
+function updateLastBelegFromTopRow() {
+  const table = getTable();
+  if (!table) {
+    console.warn('DPD-Script: Tabelle nicht gefunden – kein Beleg ermittelt.');
+    return;
+  }
+
+  const firstRow = table.querySelector('tbody tr');
+  if (!firstRow) {
+    console.log('DPD-Script: keine Datenzeilen in der Tabelle.');
+    return;
+  }
+
+  const td = firstRow.children[BELEG_INDEX];
+  if (!td) {
+    console.log('DPD-Script: Beleg-Nr.-Zelle nicht gefunden.');
+    return;
+  }
+
+  const txt = td.textContent.trim();
+  if (!txt) {
+    console.log('DPD-Script: Beleg-Nr. in erster Zeile leer.');
+    return;
+  }
+
+  localStorage.setItem('dpd_lastBeleg', txt);
+  console.log('DPD-Belegscript: letzte Belegnummer (über Belegdatum Z-A):', txt);
 }
 
 
@@ -159,7 +266,44 @@ function runOnOverview() {
   function runOnCreate() {
     autoFillBelegnummer();
     enableUnternehmenSearch();
+      attachSaveListener();  // NEU
   }
+
+    function attachSaveListener() {
+  const form = document.getElementById('postingEditForm');
+  if (!form) {
+    console.warn('DPD-Script: postingEditForm nicht gefunden – Save-Listener nicht gesetzt.');
+    return;
+  }
+
+  const belegInputId = 'postingEditForm:palletNoteNumber:validatableInput';
+
+  // Versuchen, den Speichern-/Buchen-Button zu finden
+  // (je nach System evtl. ID anpassen)
+  let saveButton =
+    document.getElementById('postingEditForm:saveButton') ||   // Beispiel-ID
+    form.querySelector("button[type='submit']");
+
+  if (!saveButton) {
+    console.warn('DPD-Script: Speichern-Button nicht gefunden.');
+    return;
+  }
+
+  saveButton.addEventListener('click', function () {
+    const belegInput = document.getElementById(belegInputId);
+    if (!belegInput) return;
+
+    const val = (belegInput.value || '').trim();
+    if (!val) {
+      console.log('DPD-Script: kein Belegwert beim Speichern, nichts gemerkt.');
+      return;
+    }
+
+    localStorage.setItem('dpd_lastBeleg', val);
+    console.log('DPD-Script: letzte Belegnummer beim Speichern aktualisiert auf:', val);
+  }, true); // capture=true, damit wir sicher drankommen
+}
+
 
   function autoFillBelegnummer() {
     const last = localStorage.getItem('dpd_lastBeleg');
