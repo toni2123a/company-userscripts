@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.5
+// @version      2.6
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -196,7 +196,7 @@ function runOnOverview() {
     const panelId     = 'postingEditForm:customerAccountAddressInput_panel';
     const buttonId    = 'postingEditForm:customerAccountAddressInput_button';
     const tourFieldId = 'postingEditForm:j_idt383:validatableInput';
-
+    let lastTypedTour = null;  // <- NEU: letzte vom Benutzer eingegebene Tournummer
     let panel    = null;
     let items    = null;   // [{row, search, col1, col2}]
     let allReady = false;
@@ -209,30 +209,28 @@ function runOnOverview() {
     }
 
     // Tour-Feld direkt aus Spalte B der angeklickten Zeile setzen
-    function attachRowClick(tr) {
-      if (!tr || tr.dataset.dpdTourBound === '1') return;
-      tr.dataset.dpdTourBound = '1';
+function attachRowClick(tr) {
+  if (!tr || tr.dataset.dpdTourBound === '1') return;
+  tr.dataset.dpdTourBound = '1';
 
-      tr.addEventListener('click', function () {
-        const tourInput = document.getElementById(tourFieldId);
-        if (!tourInput) return;
+  tr.addEventListener('click', function () {
+    const tourInput = document.getElementById(tourFieldId);
+    if (!tourInput) return;
 
-        const tds  = tr.querySelectorAll('td');
-        const col2 = (tds[1]?.textContent || '').trim();
-        const m    = col2.match(/\d+/);
-        const tourVal = m ? m[0] : '';
+    const tourVal = lastTypedTour;  // nur noch die gemerkte Benutzereingabe verwenden
 
-        if (!tourVal) {
-          console.log('DPD-Script: Tour-Feld nicht geändert (keine Zahl in Spalte B):', col2);
-          return;
-        }
-
-        tourInput.value = tourVal;
-        tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
-        tourInput.dispatchEvent(new Event('change', { bubbles: true }));
-        console.log('DPD-Script: Tour-Feld (per Klick) gesetzt auf:', tourVal);
-      });
+    if (!tourVal) {
+      console.log('DPD-Script: Tour-Feld nicht geändert (Benutzer hat keine Tournummer eingegeben).');
+      return;
     }
+
+    tourInput.value = tourVal;
+    tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
+    tourInput.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log('DPD-Script: Tour-Feld gesetzt auf (Benutzereingabe):', tourVal);
+  });
+}
+
 
     // komplette Liste per PointerEvent laden
     function preloadAllItems() {
@@ -330,19 +328,18 @@ function chooseFirstVisible() {
   if (!allReady) preloadAllItems();
   if (!allReady || !items || !items.length) return;
 
-  // erste sichtbare Zeile im gefilterten Panel
   const first = items.find(it => it.row.style.display !== 'none');
   if (!first) {
     console.log('DPD-Script: kein sichtbarer Treffer.');
     return;
   }
 
-  // Zeile anklicken → PrimeFaces wählt den Kunden
-  // und unser attachRowClick setzt die Tour (aus Spalte B)
+  // Klick simulieren → PF wählt den Kunden,
+  // attachRowClick setzt Tour anhand der Logik oben
   first.row.click();
-
   console.log('DPD-Script: erste gefilterte Zeile per Tastatur gewählt.');
 }
+
 
 
     // --- Events ---
@@ -350,23 +347,31 @@ function chooseFirstVisible() {
     preloadAllItems();
 
     let filterTimer = null;
-    function scheduleFilter() {
-      if (filterTimer) clearTimeout(filterTimer);
-      filterTimer = setTimeout(() => {
-        const inputEl = document.getElementById(fieldId);
-        const val = inputEl ? inputEl.value : '';
-        applyFilter(val);
-      }, 150);
-    }
+ function scheduleFilter() {
+  if (filterTimer) clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    const inputEl = document.getElementById(fieldId);
+    const val = inputEl ? inputEl.value : '';
+
+    // NEU: Tournummer aus der Benutzereingabe merken (letzte Zahl)
+    const nums = val.match(/\d+/g);
+    lastTypedTour = nums ? nums[nums.length - 1] : null;
+
+    applyFilter(val);
+  }, 150);
+}
+
 
     // Eingabe -> nur Client-Filter
-    document.addEventListener('input', function (e) {
-      const t = e.target;
-      if (t && t.id === fieldId) {
-        e.stopImmediatePropagation();
-        scheduleFilter();
-      }
-    }, true);
+   document.addEventListener('input', function (e) {
+  const t = e.target;
+  if (t && t.id === fieldId) {
+    if (!e.isTrusted) return; // NEU: nur echte Tastatureingaben
+    e.stopImmediatePropagation();
+    scheduleFilter();
+  }
+}, true);
+
 
     document.addEventListener('keyup', function (e) {
       const t = e.target;
@@ -377,7 +382,7 @@ function chooseFirstVisible() {
     }, true);
 
     // Tastenkürzel
-   document.addEventListener('keydown', function (e) {
+ document.addEventListener('keydown', function (e) {
   const t = e.target;
   if (!t || t.id !== fieldId) return;
 
@@ -392,10 +397,7 @@ function chooseFirstVisible() {
     showPanel();
     applyFilter(t.value || '');
     chooseFirstVisible();
-
-    // Ganz wichtig: auch beim TAB Standardverhalten unterdrücken,
-    // damit PF nicht zusätzlich irgendwas auswählt/ändert
-    e.preventDefault();
+    e.preventDefault();  // PF eigenes Handling blocken
   }
 }, true);
 
