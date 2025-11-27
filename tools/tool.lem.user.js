@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.4
+// @version      2.5
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
@@ -326,34 +326,24 @@ function runOnOverview() {
     }
 
     // ersten sichtbaren Treffer wählen
-    function chooseFirstVisible() {
-      if (!allReady) preloadAllItems();
-      if (!allReady || !items || !items.length) return;
+function chooseFirstVisible() {
+  if (!allReady) preloadAllItems();
+  if (!allReady || !items || !items.length) return;
 
-      const first = items.find(it => it.row.style.display !== 'none');
-      if (!first) {
-        console.log('DPD-Script: kein sichtbarer Treffer.');
-        return;
-      }
+  // erste sichtbare Zeile im gefilterten Panel
+  const first = items.find(it => it.row.style.display !== 'none');
+  if (!first) {
+    console.log('DPD-Script: kein sichtbarer Treffer.');
+    return;
+  }
 
-      // Zeile anklicken, damit PF den Kunden auswählt
-      first.row.click();
+  // Zeile anklicken → PrimeFaces wählt den Kunden
+  // und unser attachRowClick setzt die Tour (aus Spalte B)
+  first.row.click();
 
-      // Tour explizit aus Spalte B setzen
-      const tourInput = document.getElementById(tourFieldId);
-      if (tourInput && first.col2) {
-        const m = first.col2.match(/\d+/);
-        const tourVal = m ? m[0] : '';
-        if (tourVal) {
-          tourInput.value = tourVal;
-          tourInput.dispatchEvent(new Event('input',  { bubbles: true }));
-          tourInput.dispatchEvent(new Event('change', { bubbles: true }));
-          console.log('DPD-Script: Tour-Feld (per chooseFirstVisible) gesetzt auf:', tourVal);
-        }
-      }
+  console.log('DPD-Script: erste gefilterte Zeile per Tastatur gewählt.');
+}
 
-      console.log('DPD-Script: erste gefilterte Zeile gewählt.');
-    }
 
     // --- Events ---
 
@@ -387,26 +377,28 @@ function runOnOverview() {
     }, true);
 
     // Tastenkürzel
-    document.addEventListener('keydown', function (e) {
-      const t = e.target;
-      if (!t || t.id !== fieldId) return;
+   document.addEventListener('keydown', function (e) {
+  const t = e.target;
+  if (!t || t.id !== fieldId) return;
 
-      if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey)) {
-        showPanel();
-        applyFilter(t.value || '');
-        e.preventDefault();
-        return;
-      }
+  if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey)) {
+    showPanel();
+    applyFilter(t.value || '');
+    e.preventDefault();
+    return;
+  }
 
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        showPanel();
-        applyFilter(t.value || '');
-        chooseFirstVisible();
-        if (e.key === 'Enter') {
-          e.preventDefault();
-        }
-      }
-    }, true);
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    showPanel();
+    applyFilter(t.value || '');
+    chooseFirstVisible();
+
+    // Ganz wichtig: auch beim TAB Standardverhalten unterdrücken,
+    // damit PF nicht zusätzlich irgendwas auswählt/ändert
+    e.preventDefault();
+  }
+}, true);
+
 
     console.log('DPD-Script: Unternehmen-Suche (Spalte A+B, Vollcache, Tastatur) aktiviert.');
   }
