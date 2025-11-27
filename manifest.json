@@ -125,7 +125,7 @@
     {
       "id": "tool.lem",
       "name": "DPD LEM",
-      "version": "2.4",
+      "version": "2.5",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js",
       "match": [
         "https://dpd.lademittel.management/page/posting/postingOverview.xhtml*",
