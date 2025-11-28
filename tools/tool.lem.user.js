@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         DPD LEM
 // @namespace    https://bodo.dpd
-// @version      2.7
+// @version      2.8
 // @description  Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte "Beleg-Nr." sortierbar machen. Suche über Benutzerdefinierten Kundennamen
 // @match        https://dpd.lademittel.management/page/posting/postingOverview.xhtml*
 // @match        https://dpd.lademittel.management/page/posting/postingCreate.xhtml*
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @run-at       document-end
 // ==/UserScript==
 (function() {
@@ -16,6 +17,53 @@
   const href = window.location.href;
   const BELEG_INDEX = 5; // "Beleg-Nr."-Spalte in der Übersicht
   let fileSortDescending = true;
+ const LAST_BELEG_KEY = 'dpd_lastBeleg_v2'; // neuer Schlüssel im TM-Storage
+
+  function getLastBeleg() {
+    // 1. Neuer Speicher (Tampermonkey)
+    let val = GM_getValue(LAST_BELEG_KEY, null);
+    if (val) {
+      console.log('DPD-Script: LAST_BELEG aus TM-Storage:', val);
+      return val;
+    }
+
+    // 2. Fallback: alter localStorage-Wert (Migration)
+    const legacy = localStorage.getItem('dpd_lastBeleg');
+    if (legacy) {
+      GM_setValue(LAST_BELEG_KEY, legacy);
+      console.log('DPD-Script: legacy dpd_lastBeleg migriert nach TM-Storage:', legacy);
+      return legacy;
+    }
+
+    // 3. gar nichts vorhanden
+    console.log('DPD-Script: kein LAST_BELEG gefunden.');
+    return null;
+  }
+
+  function setLastBeleg(value) {
+    if (!value) return;
+    const v = String(value).trim();
+    GM_setValue(LAST_BELEG_KEY, v);
+    // optional: alten Speicher weiter pflegen
+    localStorage.setItem('dpd_lastBeleg', v);
+    console.log('DPD-Script: LAST_BELEG gespeichert:', v);
+  }
+
+  // --- Einmalige Initialisierung (Startwert setzen) ---
+  // Nur verwenden, wenn noch kein Wert existiert.
+  (function initLastBelegOnce() {
+    const existing = getLastBeleg();
+    if (existing) {
+      console.log('DPD-Script: LAST_BELEG existiert bereits:', existing);
+      return;
+    }
+
+    // HIER deine aktuell letzte echte Belegnummer eintragen:
+    const initial = '0815';   // Beispiel
+
+    setLastBeleg(initial);
+    console.log('DPD-Script: Initialer LAST_BELEG gesetzt auf:', initial);
+  })();
 
   // Seite erkennen
   if (href.includes('postingOverview.xhtml')) {
@@ -228,8 +276,9 @@ function updateLastBelegFromTopRow() {
     return;
   }
 
-  localStorage.setItem('dpd_lastBeleg', txt);
-  console.log('DPD-Belegscript: letzte Belegnummer (über Belegdatum Z-A):', txt);
+  setLastBeleg(txt);
+console.log('DPD-Belegscript: letzte Belegnummer (über Belegdatum Z-A):', txt);
+
 }
 
 
@@ -256,6 +305,26 @@ function updateLastBelegFromTopRow() {
     }
   }, true);
 
+    function updateLastBelegFromSuccessMessage() {
+  // Suche nach einem Element, das "Beleg-Nr." enthält
+  const all = Array.from(document.querySelectorAll('div, span, li, p'));
+  for (const el of all) {
+    const txt = (el.textContent || '').trim();
+    if (!txt || txt.indexOf('Beleg-Nr.') === -1) continue;
+
+    // Zahl nach "Beleg-Nr." rausziehen (z.B. 5566 oder 0426-367)
+    const m = txt.match(/Beleg-Nr\.\s*([0-9\-]+)/);
+    if (!m) continue;
+
+    const beleg = m[1];
+    setLastBeleg(beleg);
+    console.log('DPD-Script: LAST_BELEG aus Erfolgsmeldung gesetzt auf:', beleg);
+    return; // ersten Treffer reicht
+  }
+
+  // keine Meldung gefunden → nichts tun
+}
+
   // ====================================================
   // 2. Create-Seite
   //    - Belegnummer +1 (nur bei gespeicherter Buchung hochgezählt)
@@ -263,13 +332,41 @@ function updateLastBelegFromTopRow() {
   //    - Tour aus 2. Spalte übernehmen
   // ====================================================
 
-  function runOnCreate() {
-    autoFillBelegnummer();
-    enableUnternehmenSearch();
-      attachSaveListener();  // NEU
+function runOnCreate() {
+  // 1. Falls eine Erfolgsmeldung vorhanden ist, letzten Beleg aus der Meldung übernehmen
+  updateLastBelegFromSuccessMessage();
+
+  // 2. Neue Belegnummer aus dem gespeicherten Wert +1 vorbelegen
+  autoFillBelegnummer();
+
+  // 3. Rest wie gehabt
+  enableUnternehmenSearch();
+}
+
+
+
+   function enableBelegTracking() {
+  const belegInputId = 'postingEditForm:palletNoteNumber:validatableInput';
+  const belegInput = document.getElementById(belegInputId);
+
+  if (!belegInput) {
+    console.warn('DPD-Script: Belegfeld für Tracking nicht gefunden.');
+    return;
   }
 
-    function attachSaveListener() {
+  belegInput.addEventListener('change', function () {
+    const val = (belegInput.value || '').trim();
+    if (!val) {
+      console.log('DPD-Script: Belegfeld leer beim change – Kandidat verworfen.');
+      belegCandidate = null;
+      return;
+    }
+    belegCandidate = val;
+    console.log('DPD-Script: Beleg-Kandidat via change auf', val, 'gesetzt (noch nicht gespeichert).');
+  }, true);
+}
+
+function attachSaveListener() {
   const form = document.getElementById('postingEditForm');
   if (!form) {
     console.warn('DPD-Script: postingEditForm nicht gefunden – Save-Listener nicht gesetzt.');
@@ -278,36 +375,31 @@ function updateLastBelegFromTopRow() {
 
   const belegInputId = 'postingEditForm:palletNoteNumber:validatableInput';
 
-  // Versuchen, den Speichern-/Buchen-Button zu finden
-  // (je nach System evtl. ID anpassen)
-  let saveButton =
-    document.getElementById('postingEditForm:saveButton') ||   // Beispiel-ID
-    form.querySelector("button[type='submit']");
-
-  if (!saveButton) {
-    console.warn('DPD-Script: Speichern-Button nicht gefunden.');
-    return;
-  }
-
-  saveButton.addEventListener('click', function () {
+  form.addEventListener('submit', function () {
     const belegInput = document.getElementById(belegInputId);
-    if (!belegInput) return;
-
-    const val = (belegInput.value || '').trim();
-    if (!val) {
-      console.log('DPD-Script: kein Belegwert beim Speichern, nichts gemerkt.');
+    if (!belegInput) {
+      console.warn('DPD-Script: Belegfeld beim Submit nicht gefunden.');
       return;
     }
 
-    localStorage.setItem('dpd_lastBeleg', val);
-    console.log('DPD-Script: letzte Belegnummer beim Speichern aktualisiert auf:', val);
-  }, true); // capture=true, damit wir sicher drankommen
+    // zuerst Kandidaten nehmen, sonst aktuellen Feldwert
+    const val = (belegCandidate || belegInput.value || '').trim();
+    if (!val) {
+      console.log('DPD-Script: kein Belegwert beim Speichern (submit), nichts gemerkt.');
+      return;
+    }
+
+    setLastBeleg(val);
+    console.log('DPD-Script: LAST_BELEG beim Speichern (submit) dauerhaft auf', val, 'gesetzt.');
+  }, true);
 }
 
 
   function autoFillBelegnummer() {
-    const last = localStorage.getItem('dpd_lastBeleg');
-    if (!last) return;
+    const last = getLastBeleg();
+      console.log('DPD-Script: autoFillBelegnummer – last =', last);
+if (!last) return;
+
 
     const parsed = parseBelegNum(last);
     const nextBeleg = formatNextBeleg(parsed);
@@ -344,6 +436,7 @@ function updateLastBelegFromTopRow() {
     let panel    = null;
     let items    = null;   // [{row, search, col1, col2}]
     let allReady = false;
+    let belegCandidate = null; // letzter geänderter Belegwert, noch nicht „fest“
 
     function ensurePanel() {
       if (!panel) {
@@ -526,22 +619,31 @@ function chooseFirstVisible() {
     }, true);
 
     // Tastenkürzel
- document.addEventListener('keydown', function (e) {
+document.addEventListener('keydown', function (e) {
   const t = e.target;
   if (!t || t.id !== fieldId) return;
 
+  // Dropdown öffnen
   if (e.key === 'F4' || (e.key === 'ArrowDown' && e.altKey)) {
     showPanel();
     applyFilter(t.value || '');
-    e.preventDefault();
+    e.preventDefault();   // hier wollen wir im Feld bleiben
     return;
   }
 
+  // Kunde per Enter/Tab auswählen
   if (e.key === 'Enter' || e.key === 'Tab') {
     showPanel();
     applyFilter(t.value || '');
     chooseFirstVisible();
-    e.preventDefault();  // PF eigenes Handling blocken
+
+    if (e.key === 'Enter') {
+      // Enter: im Feld bleiben
+      e.preventDefault();
+    } else {
+      // Tab: Fokus soll ins nächste Feld springen
+      // -> kein preventDefault
+    }
   }
 }, true);
 
