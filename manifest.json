@@ -125,14 +125,15 @@
     {
       "id": "tool.lem",
       "name": "DPD LEM",
-      "version": "2.7",
+      "version": "2.8",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.lem.user.js",
       "match": [
         "https://dpd.lademittel.management/page/posting/postingOverview.xhtml*",
         "https://dpd.lademittel.management/page/posting/postingCreate.xhtml*"
       ],
       "grants": [
-        "none"
+        "GM_getValue",
+        "GM_setValue"
       ],
       "description": "Belegnummer automatisch mit letzter Belegnummer + 1 vorbelegen und Spalte \"Beleg-Nr.\" sortierbar machen. Suche über Benutzerdefinierten Kundennamen"
     },
