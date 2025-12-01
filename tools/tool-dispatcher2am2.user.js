@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         DPD Dispatcher – Prio/Express Monitoring
+// @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
 // @version      6.6.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
