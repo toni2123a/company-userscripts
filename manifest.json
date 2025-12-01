@@ -112,7 +112,7 @@
     {
       "id": "tool-dispatcher2am2",
       "name": "DPD Dispatcher – Prio/Express12 Monitoring",
-      "version": "6.3.1",
+      "version": "6.5.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
@@ -120,7 +120,7 @@
       "grants": [
         "none"
       ],
-      "description": "PRIO/EXPRESS12: KPIs & Listen. Status DE (DOM bevorzugt), sortierbare Tabellen, Zusatzcode, Predict, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver."
+      "description": "PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver."
     },
     {
       "id": "tool.lem",
