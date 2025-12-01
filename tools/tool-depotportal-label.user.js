@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Depotportal – Paketschein
 // @namespace    bodo.tools
-// @version      1.07
+// @version      1.08
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
@@ -15,12 +15,24 @@
     'use strict';
 
     // ================================================================
-    // [1] Barcode-URL + fester QR zur ASG-Seite
+    // [1] Barcode und fester QR zur ASG-Seite
     // ================================================================
-    function barcodeUrl(val) {
-        // val ist der Roh-String (z.B. "%:00PLZ....276")
-        return 'https://barcodeapi.org/api/128/' + encodeURIComponent(val);
+    function buildBarcodeValue(val) {
+        // Nur Ziffern behalten und vorne ein % setzen
+        let s = (val || '').toString().replace(/[^\d]/g, '');
+        if (!s) return '';
+        if (!s.startsWith('%')) {
+            s = '%' + s;
+        }
+        return s;
     }
+
+    function barcodeUrl(val) {
+        const finalCode = buildBarcodeValue(val);
+        if (!finalCode) return '';
+        return `https://barcodeapi.org/api/128/${encodeURIComponent(finalCode)}`;
+    }
+
     function asgQrUrl() {
         const url = 'https://www.dpd.com/de/de/support/abstell-okay-bei-dpd/';
         return 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=0&data=' + encodeURIComponent(url);
@@ -43,9 +55,15 @@
     // [3] Paketscheinnummer + Service + PLZ
     // ================================================================
     function getParcelNumber() {
-        const m = (document.body.innerText||'').match(/\b\d{14}\b/);
+        // 1. Versuch: aus der URL (…pln=XXXXXXXXXXXXXX…)
+        const mUrl = location.href.match(/[?&]pln=(\d{14})/);
+        if (mUrl) return mUrl[1];
+
+        // 2. Fallback: erste 14-stellige Zahl im Dokument
+        const m = (document.body.innerText || '').match(/\b\d{14}\b/);
         return m ? m[0] : '';
     }
+
     function getServiceCode() {
         const t = document.querySelectorAll('table');
         for (const tb of t) {
@@ -61,6 +79,7 @@
         }
         return '';
     }
+
     function getPlz() {
         const m = (document.body.innerText||'').match(/\b\d{5}\b/);
         return m ? m[0] : '';
@@ -267,32 +286,28 @@ body { margin:0; }
     // [10] Klick → Daten sammeln + Overlay
     // ================================================================
     function handleClick() {
-    const psn = getParcelNumber();
-    if (!psn) return alert('Keine Paketscheinnummer.');
-    const plz = getPlz();
-    const svc = getServiceCode().replace(/\D/g,'');
-    const date = printDate();
+        const psn = getParcelNumber();
+        if (!psn) return alert('Keine Paketscheinnummer.');
+        const plz = getPlz();
+        const svc = getServiceCode().replace(/\D/g,'');
+        const date = printDate();
 
-    const emp = address('Zustelladresse',['Auftraggeber']);
-    const abs = address('Auftraggeber',['Paketscheinnummer']);
+        const emp = address('Zustelladresse',['Auftraggeber']);
+        const abs = address('Auftraggeber',['Paketscheinnummer']);
 
-    const human = '00' + (plz||'') + psn + (svc||'') + '276';
+        const human = '00' + (plz||'') + psn + (svc||'') + '276';
 
-    // vorher: const bcPayload = '%:' + human;
-    // jetzt nur noch ein % davor:
-    const bcPayload = '%' + human;
-
-    const data = {
-        emp: emp,
-        abs: abs,
-        date: date,
-        qr: asgQrUrl(),
-        bc: barcodeUrl(bcPayload),
-        psn: psn,
-        service: (svc ? svc+'-DE-'+plz : '')
-    };
-    openOverlay(data);
-}
+        const data = {
+            emp: emp,
+            abs: abs,
+            date: date,
+            qr: asgQrUrl(),
+            bc: barcodeUrl(human),
+            psn: psn,
+            service: (svc ? svc+'-DE-'+plz : '')
+        };
+        openOverlay(data);
+    }
 
     // ================================================================
     // [11] Init
