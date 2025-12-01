@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.5.0
+// @version      6.6.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -690,49 +690,58 @@
   }
 
   // Service-Code: zuerst aus der Fahrzeugübersicht (DOM), dann API-Felder, kein Zusatzcode-Fallback
-  function serviceOf(r){
-    if(!r) return '';
+ // Service-Code: zuerst aus der Fahrzeugübersicht (DOM), dann API-Felder inkl. serviceCodes
+function serviceOf(r){
+  if(!r) return '';
 
-    const tryVal = v =>
-      (typeof v==='number' || typeof v==='string') ? String(v).trim() : '';
+  const tryVal = v =>
+    (typeof v==='number' || typeof v==='string') ? String(v).trim() : '';
 
-    // 1. Wert aus der Original-Tabelle (gridIndex.serviceByPsn)
-    try {
-      const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
-      if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
-        const domVal =
-          gridIndex.serviceByPsn.get(pidClean) ||
-          gridIndex.serviceByPsn.get(pidClean.padStart(14,'0'));
-        if (domVal) return String(domVal).trim();
-      }
-    } catch(e){
-      // wenn gridIndex nicht existiert oder nichts drin steht, einfach weiter zu API-Feldern
+  const tryArrFirst = v =>
+    Array.isArray(v) && v.length ? tryVal(v[0]) : '';
+
+  // 1. Wert aus der Original-Tabelle (gridIndex.serviceByPsn) – bleibt wie gehabt
+  try {
+    const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
+    if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
+      const domVal =
+        gridIndex.serviceByPsn.get(pidClean) ||
+        gridIndex.serviceByPsn.get(pidClean.padStart(14,'0'));
+      if (domVal) return String(domVal).trim();
     }
-
-    // 2. direkte API-Felder
-    let v='';
-    v = tryVal(r.serviceCode) || tryVal(r.servicecode) || tryVal(r.service_code);
-    if(v) return v;
-
-    // 3. verschachteltes service-Objekt
-    if (r.service && typeof r.service==='object'){
-      v = tryVal(r.service.code) ||
-          tryVal(r.service.serviceCode) ||
-          tryVal(r.service.id);
-      if(v) return v;
-    }
-
-    // 4. verschachteltes product-Objekt
-    if (r.product && typeof r.product==='object'){
-      v = tryVal(r.product.serviceCode) ||
-          tryVal(r.product.code) ||
-          tryVal(r.product.id);
-      if(v) return v;
-    }
-
-    // 5. kein Fallback mehr auf additionalCodes → kein 068/069 als Servicecode
-    return '';
+  } catch(e){
+    // ignorieren, weiter zu API-Feldern
   }
+
+  // 2. direkte API-Felder (+ neu: serviceCodes-Array)
+  let v = '';
+  v = tryVal(r.serviceCode) ||
+      tryVal(r.servicecode) ||
+      tryVal(r.service_code) ||
+      tryArrFirst(r.serviceCodes);       // <--- NEU
+  if (v) return v;
+
+  // 3. verschachteltes service-Objekt
+  if (r.service && typeof r.service === 'object'){
+    v = tryVal(r.service.code) ||
+        tryVal(r.service.serviceCode) ||
+        tryVal(r.service.id) ||
+        tryArrFirst(r.service.serviceCodes);    // falls dort auch Arrays kommen
+    if (v) return v;
+  }
+
+  // 4. verschachteltes product-Objekt
+  if (r.product && typeof r.product === 'object'){
+    v = tryVal(r.product.serviceCode) ||
+        tryVal(r.product.code) ||
+        tryVal(r.product.id) ||
+        tryArrFirst(r.product.serviceCodes);    // fallback, wenn dort arrays liegen
+    if (v) return v;
+  }
+
+  // kein Fallback auf additionalCodes
+  return '';
+}
 
   function statusClass(text){
     const t=String(text||'').toUpperCase();
