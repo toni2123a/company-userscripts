@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Depotportal – Paketschein
 // @namespace    bodo.tools
-// @version      1.06
+// @version      1.07
 // @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
@@ -18,6 +18,7 @@
     // [1] Barcode-URL + fester QR zur ASG-Seite
     // ================================================================
     function barcodeUrl(val) {
+        // val ist der Roh-String (z.B. "%:00PLZ....276")
         return 'https://barcodeapi.org/api/128/' + encodeURIComponent(val);
     }
     function asgQrUrl() {
@@ -266,27 +267,32 @@ body { margin:0; }
     // [10] Klick → Daten sammeln + Overlay
     // ================================================================
     function handleClick() {
-        const psn = getParcelNumber();
-        if (!psn) return alert('Keine Paketscheinnummer.');
-        const plz = getPlz();
-        const svc = getServiceCode().replace(/\D/g,'');
-        const date = printDate();
+    const psn = getParcelNumber();
+    if (!psn) return alert('Keine Paketscheinnummer.');
+    const plz = getPlz();
+    const svc = getServiceCode().replace(/\D/g,'');
+    const date = printDate();
 
-        const emp = address('Zustelladresse',['Auftraggeber']);
-        const abs = address('Auftraggeber',['Paketscheinnummer']);
+    const emp = address('Zustelladresse',['Auftraggeber']);
+    const abs = address('Auftraggeber',['Paketscheinnummer']);
 
-        const human = '00' + (plz||'') + psn + (svc||'') + '276';
-        const data = {
-            emp: emp,
-            abs: abs,
-            date: date,
-            qr: asgQrUrl(),
-            bc: barcodeUrl(encodeURIComponent(human)),
-            psn: psn,
-            service: (svc ? svc+'-DE-'+plz : '')
-        };
-        openOverlay(data);
-    }
+    const human = '00' + (plz||'') + psn + (svc||'') + '276';
+
+    // vorher: const bcPayload = '%:' + human;
+    // jetzt nur noch ein % davor:
+    const bcPayload = '%' + human;
+
+    const data = {
+        emp: emp,
+        abs: abs,
+        date: date,
+        qr: asgQrUrl(),
+        bc: barcodeUrl(bcPayload),
+        psn: psn,
+        service: (svc ? svc+'-DE-'+plz : '')
+    };
+    openOverlay(data);
+}
 
     // ================================================================
     // [11] Init
