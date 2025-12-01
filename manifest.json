@@ -111,7 +111,7 @@
     },
     {
       "id": "tool-dispatcher2am2",
-      "name": "DPD Dispatcher – Prio/Express Monitoring",
+      "name": "DPD Dispatcher – Prio/Express12 Monitoring",
       "version": "6.6.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
