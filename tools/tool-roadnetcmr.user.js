@@ -3,6 +3,8 @@
 // @namespace    https://roadnet.dpdgroup.com/
 // @version      1.8.0
 // @description  Filter für Anhänge anhand sichtbarer (nicht .hidden) Labels. Unterstützt Negativ-Filter: !CMR.
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetcmr.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetcmr.user.js
 // @match        https://roadnet.dpdgroup.com/execution/route_legs*
 // @run-at       document-idle
 // @grant        none
