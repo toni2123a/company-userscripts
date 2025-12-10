@@ -179,8 +179,8 @@
     },
     {
       "id": "tool-roadnetcmr",
-      "name": "Roadnet – Anhänge Filter",
-      "version": "1.8.0",
+      "name": "Roadnet – Anhänge Filter + Frachtbrief PDF Tabs",
+      "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetcmr.user.js",
       "match": [
         "https://roadnet.dpdgroup.com/execution/route_legs*"
@@ -188,7 +188,7 @@
       "grants": [
         "none"
       ],
-      "description": "Filter für Anhänge anhand sichtbarer (nicht .hidden) Labels. Unterstützt Negativ-Filter: !CMR."
+      "description": "Filter für Anhänge anhand sichtbarer (nicht .hidden) Labels inkl. Negativ-Filter (!CMR) + Frachtbrief: PDFs im Tab, Multi ohne ZIP."
     },
     {
       "id": "tool-zerberus",
