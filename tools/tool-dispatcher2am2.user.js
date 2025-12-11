@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.7.0
+// @version      7.0.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -91,8 +91,31 @@ function ensureStyles(){
   .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
   .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+
   /* <<< HIER: neue Klasse für rote Hervorhebung >>> */
   .${NS}row-late12{background:#fee2e2;}
+    .${NS}detail-row > td{
+    background:#f9fafb;
+    padding:6px 8px;
+  }
+  .${NS}detail-inner{
+    border-top:1px solid rgba(0,0,0,.08);
+    margin-top:4px;
+    padding-top:4px;
+  }
+  .${NS}detail-inner table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:11px;
+  }
+  .${NS}detail-inner th,
+  .${NS}detail-inner td{
+    border-bottom:1px solid rgba(0,0,0,.06);
+    padding:3px 4px;
+    white-space:nowrap;
+  }
+  .${NS}row-express{background:#dcfce7;}
+
 
   .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
   .${NS}sort-asc::after{content:" ▲";font-size:11px}
@@ -420,6 +443,7 @@ function togglePanel(force){
   const gridIndex = {
     tour2driver: new Map()
   };
+  const deliveryDetailsCache = new Map();
 
   function detectTourDriverCols(tbl){
     const ths = Array.from(tbl.querySelectorAll('thead th,[role="columnheader"]'))
@@ -749,6 +773,45 @@ function togglePanel(force){
     arr.sort((a,b)=>collator.compare(a,b));
     return arr;
   }
+  // AM2 = EXPRESS12
+  const EXPRESS12_CODES = new Set([
+    '104','107','135','196','210','225','226','227','231','232','234','237','238','239','240',
+    '243','245','247','249','255','261','262','267','269','286','310','311','323','412','414',
+    '452','453','458','459','488','490','503','505','530','531','537','538','542','547','567',
+    '786','797','811'
+  ]);
+
+  // PM2 = EXPRESS18
+  const EXPRESS18_CODES = new Set([
+    '155','157','158','161','163','164','166','168','171','174',
+    '219','224','230','236','265','318','324','378','419','422','423',
+    '483','499','500','511','512','535','562','564','662','664',
+    '787','799','812'
+  ]);
+
+    const EXPRESS_SERVICE_WHITELIST = new Set([
+    ...EXPRESS12_CODES,
+    ...EXPRESS18_CODES
+  ]);
+
+  function hasExpressServiceCode(r){
+    const arr = (r.__serviceCodes && r.__serviceCodes.length)
+      ? r.__serviceCodes
+      : serviceCodesOf(r);
+    return arr.some(c => EXPRESS_SERVICE_WHITELIST.has(String(c)));
+  }
+
+  function rowHasExpress12BySvc(r){
+    const arr = r.__serviceCodes || serviceCodesOf(r);
+    return arr.some(c => EXPRESS12_CODES.has(String(c)));
+  }
+
+  function rowHasExpress18BySvc(r){
+    const arr = r.__serviceCodes || serviceCodesOf(r);
+    return arr.some(c => EXPRESS18_CODES.has(String(c)));
+  }
+
+
 
   function serviceOf(r){
     const arr = serviceCodesOf(r);
@@ -766,13 +829,19 @@ function togglePanel(force){
   function normRow(r){
     const pid=parcelId(r) || '';
     const {pfTs,ptTs,range}=buildPredictMeta(r);
-    const svcArr   = serviceCodesOf(r);
-    const expType  = expressTypeOf(r);
+        const svcArr   = serviceCodesOf(r);
+    const isExpSvc = svcArr.some(c => EXPRESS_SERVICE_WHITELIST.has(String(c)));
+
+    const isExp12  = svcArr.some(c => EXPRESS12_CODES.has(String(c)));
+    const isExp18  = !isExp12 && svcArr.some(c => EXPRESS18_CODES.has(String(c)));
+    const expType  = isExp12 ? '12' : (isExp18 ? '18' : '');
+
     const isDel    = delivered(r);
+
 
     // Flag für „Express 12, nicht zugestellt, Predict > 12:00“
     let highlightLate12 = false;
-    if (expType === '12' && !isDel && (pfTs || ptTs) && r.date){
+     if (isExp12 && !isDel && (pfTs || ptTs) && r.date){
       const cut = new Date(`${r.date}T12:00:00`);
       if(!isNaN(cut)){
         const cutTs = +cut;
@@ -797,7 +866,8 @@ function togglePanel(force){
       __expType: expType,
       __serviceCode: svcArr[0] || '',
       __serviceCodes: svcArr,
-      __highlightLatePredict12: highlightLate12
+      __highlightLatePredict12: highlightLate12,
+      __isExpressSvc: isExpSvc       // << NEU
     };
   }
 
@@ -837,9 +907,14 @@ function togglePanel(force){
       </div>`;
   }
 
-  function rowHtml(r){
+   function rowHtml(r){
+    const pkgCount = Number(r.__pkgCount || 1);
+    const psnLabel = (r.__pid && pkgCount > 1)
+      ? `${r.__pid} (+${pkgCount-1})`
+      : (r.__pid || '—');
+
     const pLink = r.__pid
-      ? `<a class="${NS}plink" href=https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid} target="_blank" rel="noopener">${r.__pid}</a>`
+      ? `<a class="${NS}plink" href=https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid} target="_blank" rel="noopener">${esc(psnLabel)}</a>`
       : '—';
     const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
     const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
@@ -868,11 +943,15 @@ function togglePanel(force){
       esc(pred)
     ];
 
-    return `<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+    const dataAttrs = [];
+    if (r.id != null)     dataAttrs.push(`data-delivery="${esc(String(r.id))}"`);
+    if (r.stopId != null) dataAttrs.push(`data-stop="${esc(String(r.stopId))}"`);
+
+    return `<tr ${dataAttrs.join(' ')}>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
   }
 
 
-  function openModal(title,rowsOrHtml){
+   function openModal(title,rowsOrHtml){
     const m=document.getElementById(NS+'modal');
     const t=document.getElementById(NS+'modal-title');
     const b=document.getElementById(NS+'modal-body');
@@ -925,6 +1004,22 @@ function togglePanel(force){
       }
 
       renderAll();
+
+      // <<< HIER: neuer Click-Handler für Zeilen >>>
+           if (tbody){
+        tbody.addEventListener('click', ev => {
+          const tr = ev.target.closest('tr');
+          if (!tr) return;
+
+          // Klick auf das Auge → Scanserver, nicht aufklappen
+          if (ev.target.closest('.'+NS+'eye')) return;
+
+          // Inline-Detail ein/ausblenden
+          toggleStopDetailInline(tr);
+        });
+      }
+
+
     } else {
       if(b) b.innerHTML=rowsOrHtml||'';
     }
@@ -980,38 +1075,53 @@ function togglePanel(force){
     const prioAll  = prioDeliveries;
     const prioOpen = prioDeliveries.filter(r=>!delivered(r));
 
-    const expRows=[...exp12Rows,...exp18Rows];
+      // Express-Basis: nur Einträge mit Express-Servicecode
+    const expRows=[...exp12Rows, ...exp18Rows].filter(r => r.__isExpressSvc);
+
     const seen=new Set();
     const expDeliveries=expRows
       .filter(isDelivery)
-      .filter(hasExpressAny)
       .filter(r=>{
         const id=parcelId(r);
         if(!id || seen.has(id)) return false;
         seen.add(id); return true;
       });
+
     const expAll  = expDeliveries;
     const expOpen = expDeliveries.filter(r=>!delivered(r));
-    const expLate11 = expDeliveries.filter(hasExpress12).filter(r=>{
-      const ft=fromTime(r); if(!ft) return false;
-      return (ft.getHours()>11) || (ft.getHours()===11 && ft.getMinutes()>=1);
-    });
+
+    // „>11:01“ nur für 12er, ebenfalls über Servicecodes
+    const expLate11 = expDeliveries
+      .filter(rowHasExpress12BySvc)
+      .filter(r=>{
+        const ft=fromTime(r); if(!ft) return false;
+        return (ft.getHours()>11) || (ft.getHours()===11 && ft.getMinutes()>=1);
+      });
+
+
     return {prioAll,prioOpen,expAll,expOpen,expLate11};
   }
 
-  function filterByExpressSelection(rows){
-    if(state.filterExpress==='12') return rows.filter(hasExpress12);
-    if(state.filterExpress==='18') return rows.filter(hasExpress18);
+   function filterByExpressSelection(rows){
+    if(state.filterExpress==='12') return rows.filter(rowHasExpress12BySvc);
+    if(state.filterExpress==='18') return rows.filter(rowHasExpress18BySvc);
     return rows;
   }
 
-  function getFilteredExpressCounts(){
+
+   function getFilteredExpressCounts(){
     const f=state.filterExpress;
-    const filt = f==='12' ? hasExpress12 : f==='18' ? hasExpress18 : null;
+    const filt = f==='12'
+      ? rowHasExpress12BySvc
+      : f==='18'
+      ? rowHasExpress18BySvc
+      : null;
+
     const expAllList  = filt ? state._expAllList.filter(filt)  : state._expAllList;
     const expOpenList = filt ? state._expOpenList.filter(filt) : state._expOpenList;
     return {expAllCount:expAllList.length, expOpenCount:expOpenList.length};
   }
+
 
   function updateKpisForCurrentState(){
     const {expAllCount,expOpenCount}=getFilteredExpressCounts();
@@ -1022,6 +1132,126 @@ function togglePanel(force){
       expOpen:expOpenCount
     });
   }
+  function groupRowsByStop(rows){
+    const map = new Map();
+
+    for (const r of rows){
+      // Schlüssel: stopId, sonst id, sonst Fallback
+      const key =
+        (r.stopId != null ? String(r.stopId) :
+        (r.id     != null ? String(r.id)     :
+         `${r.__addr}#${r.__tourNum||''}`));
+
+      let g = map.get(key);
+      if (!g){
+        // Basis ist die erste Zeile dieses Stopps
+        g = { ...r };
+        g.__pkgCount = 1;
+        g.__deliveryId = r.id != null ? r.id : null;   // für /dispatcher/api/delivery/{id}
+        map.set(key, g);
+      } else {
+        g.__pkgCount++;
+      }
+    }
+
+    return Array.from(map.values());
+  }
+   async function toggleStopDetailInline(tr){
+    if (!tr || !lastOkRequest) return;
+    const delId = tr.getAttribute('data-delivery');
+    if (!delId) return;
+
+    const tbody = tr.parentNode;
+    if (!tbody) return;
+
+    // Wenn bereits eine Detail-Zeile darunter ist → einklappen
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains(NS + 'detail-row')){
+      next.remove();
+      return;
+    }
+
+    // Neue Detailzeile einfügen
+    const detailRow = document.createElement('tr');
+    detailRow.className = NS + 'detail-row';
+    const colSpan = tr.children.length || 1;
+    const td = document.createElement('td');
+    td.colSpan = colSpan;
+    td.textContent = 'Lade Stopp-Details …';
+    detailRow.appendChild(td);
+    tbody.insertBefore(detailRow, tr.nextSibling);
+
+    try{
+      // Cache nutzen
+      let detail = deliveryDetailsCache.get(delId);
+      if (!detail){
+        const headers = buildHeaders(lastOkRequest.headers);
+        const origin  = lastOkRequest.url.origin;
+        const url     = `${origin}/dispatcher/api/delivery/${encodeURIComponent(delId)}`;
+        const res = await fetch(url, { credentials:'include', headers });
+        if (!res.ok){
+          td.textContent = `Fehler beim Laden (HTTP ${res.status})`;
+          return;
+        }
+        detail = await res.json();
+        deliveryDetailsCache.set(delId, detail);
+      }
+
+      const parcels = Array.isArray(detail.parcels) ? detail.parcels : [];
+
+      const rowsHtml = parcels.map(p => {
+        const svc = p.serviceCode || '';
+        const isExpSvc = EXPRESS_SERVICE_WHITELIST.has(String(svc));
+        const els = Array.isArray(p.elements) ? p.elements.join(', ') : (p.elements || '');
+        const prio = p.priority || '';
+        const psn  = p.parcelNumber || '';
+
+        return `
+          <tr class="${isExpSvc ? NS+'row-express' : ''}">
+            <td>${esc(psn)}</td>
+            <td>${esc(svc || '—')}</td>
+            <td>${esc(prio || '—')}</td>
+            <td>${esc(els || '—')}</td>
+            <td>${isExpSvc ? 'EXPRESS' : 'Normal'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const addr = [
+        detail.addressStreet,
+        detail.addressHouseno,
+        detail.addressPcode,
+        detail.addressCity
+      ].filter(Boolean).join(' ');
+
+      td.innerHTML = `
+        <div class="${NS}detail-inner">
+          <div style="margin-bottom:4px;">
+            <b>Adresse:</b> ${esc(addr || '—')} ·
+            <b>Tour:</b> ${esc(detail.tour || '—')} ·
+            <b>Pakete:</b> ${parcels.length}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>PSN</th>
+                <th>Servicecode</th>
+                <th>Priority</th>
+                <th>Elements</th>
+                <th>Typ</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="5">Keine Pakete gefunden.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }catch(e){
+      console.error(e);
+      td.textContent = 'Fehler beim Laden der Stopp-Details.';
+    }
+  }
 
   function showPrioAll(){
     const rows=state._prioAllList;
@@ -1031,21 +1261,29 @@ function togglePanel(force){
     const rows=state._prioOpenList;
     openModal(`PRIO – noch nicht zugestellt · ${rows.length}`,rows);
   }
-  function showExpAll(){
-    const src=state._expAllList;
-    const rows=filterByExpressSelection(src);
-    const sel=state.filterExpress==='12'?' (12)':state.filterExpress==='18'?' (18)':'';
-    openModal(`Express${sel} – in Ausrollung (alle) · ${rows.length}`,rows);
+   function showExpAll(){
+    const src  = state._expAllList;
+    const rows = filterByExpressSelection(src);
+    const grouped = groupRowsByStop(rows);
+    const sel = state.filterExpress==='12' ? ' (12)' :
+                state.filterExpress==='18' ? ' (18)' : '';
+    openModal(`Express${sel} – in Ausrollung (alle) · ${grouped.length}`, grouped);
   }
-  function showExpOpen(){
-    const src=state._expOpenList;
-    const rows=filterByExpressSelection(src);
-    const sel=state.filterExpress==='12'?' (12)':state.filterExpress==='18'?' (18)':'';
-    openModal(`Express${sel} – noch nicht zugestellt · ${rows.length}`,rows);
+
+     function showExpOpen(){
+    const src  = state._expOpenList;
+    const rows = filterByExpressSelection(src);
+    const grouped = groupRowsByStop(rows);
+    const sel = state.filterExpress==='12' ? ' (12)' :
+                state.filterExpress==='18' ? ' (18)' : '';
+    openModal(`Express${sel} – noch nicht zugestellt · ${grouped.length}`, grouped);
   }
-  function showExpLate11(){
-    const rows=state._expLate11List.slice();
-    openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${rows.length}`,rows);
+
+
+    function showExpLate11(){
+    const rows    = state._expLate11List.slice();
+    const grouped = groupRowsByStop(rows);
+    openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${grouped.length}`, grouped);
   }
 
   async function refreshViaApi_FAST(){
