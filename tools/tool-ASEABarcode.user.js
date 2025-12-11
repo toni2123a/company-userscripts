@@ -3,8 +3,8 @@
 // @namespace    http://tampermonkey.net/
 // @version      6.2
 // @description  Scanserver ASEA: Nur Barcode-Spalte (Symbol bleibt klein), Klick öffnet großes Overlay. Google-Links entfernt.
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEA_Erweiterung.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEA_Erweiterung.user.js
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEABarcode.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEABarcode.user.js
 // @author
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
 // @grant        none
