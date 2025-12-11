@@ -3,6 +3,8 @@
 // @namespace    http://tampermonkey.net/
 // @version      5.6
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Excel-Import und Mehrfachauswahl (Button/Contextmenü).
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @match        https://scanserver-d001\d{4}\.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
 // @grant        none
