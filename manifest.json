@@ -54,6 +54,20 @@
       "description": "Zeigt den letzten Lagerscan aus den Scanserver-Daten an."
     },
     {
+      "id": "tool-aseapin",
+      "name": "ASEA PIN Freigabe",
+      "version": "5.6",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js",
+      "match": [
+        "https://scanserver-d001\\d{4}\\.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*",
+        "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/scanmonitor\\.cgi.*$/"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Excel-Import und Mehrfachauswahl (Button/Contextmenü)."
+    },
+    {
       "id": "tool-depotportal-label",
       "name": "Depotportal – Paketschein",
       "version": "1.08",
@@ -202,20 +216,6 @@
         "none"
       ],
       "description": "Filter für Anhänge anhand sichtbarer (nicht .hidden) Labels inkl. Negativ-Filter (!CMR) + Frachtbrief: PDFs im Tab, Multi ohne ZIP."
-    },
-    {
-      "id": "tool-aseapin",
-      "name": "Scanmonitor: Systempartner-Tour-Bubbles + QR-Popup",
-      "version": "5.6",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js",
-      "match": [
-        "https://scanserver-d001\\d{4}\\.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*",
-        "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/scanmonitor\\.cgi.*$/"
-      ],
-      "grants": [
-        "none"
-      ],
-      "description": "Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Excel-Import und Mehrfachauswahl (Button/Contextmenü)."
     },
     {
       "id": "tool-zerberus",
