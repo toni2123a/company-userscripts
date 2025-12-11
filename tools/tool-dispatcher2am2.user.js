@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      6.6.0
+// @version      6.7.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
@@ -64,156 +64,160 @@
 
   /* ====== TEIL 2/10 – Styles + Panel/Modal UI ====== */
 
-  function ensureStyles(){
-    if (document.getElementById(NS+'style')) return;
-    const style=document.createElement('style'); style.id=NS+'style';
-    style.textContent = `
-    .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1100px,95vw);max-height:78vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100000;display:none}
-    .${NS}header{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
-    .${NS}toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
-    .${NS}group{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#f9fafb;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:6px 8px}
-    .${NS}label{display:flex;align-items:center;gap:6px;font:600 12px system-ui}
-    .${NS}select{padding:4px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);background:#fff}
-    .${NS}kpis{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-    .${NS}kpi{flex:1 1 auto;background:#f5f5f5;border:1px solid rgba(0,0,0,.08);padding:6px 10px;border-radius:999px;font:600 12px system-ui;white-space:nowrap}
-    .${NS}list{list-style:none;margin:0;padding:0}
-    .${NS}empty{padding:14px 12px;opacity:.75;text-align:center;font:500 12px system-ui}
-    .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer}
-    .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui}
-    .${NS}dot{width:8px;height:8px;border-radius:50%;background:#16a34a}
-    .${NS}dot.off{background:#9ca3af}
-    .${NS}loading{display:none;padding:8px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:600 12px system-ui;background:#fffbe6}
-    .${NS}loading.on{display:block}
-    .${NS}modal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
-    .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
-    .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
-    .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
-    .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
-    .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
-    .${NS}sort-asc::after{content:" ▲";font-size:11px}
-    .${NS}sort-desc::after{content:" ▼";font-size:11px}
-    .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
-    .${NS}eye:hover{background:#f3f4f6}
-    .${NS}badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:11px;border:1px solid rgba(0,0,0,.15);background:#f3f4f6}
-    .${NS}badge-status-ok{background:#16a34a;color:#fff;border-color:#15803d}
-    .${NS}badge-status-problem{background:#dc2626;color:#fff;border-color:#b91c1c}
-    .${NS}badge-status-run{background:#eab308;color:#111827;border-color:#ca8a04}
-    `;
-    document.head.appendChild(style);
-  }
+function ensureStyles(){
+  if (document.getElementById(NS+'style')) return;
+  const style=document.createElement('style'); style.id=NS+'style';
+  style.textContent = `
+  .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1100px,95vw);max-height:78vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100000;display:none}
+  .${NS}header{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
+  .${NS}toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
+  .${NS}group{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#f9fafb;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:6px 8px}
+  .${NS}label{display:flex;align-items:center;gap:6px;font:600 12px system-ui}
+  .${NS}select{padding:4px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);background:#fff}
+  .${NS}kpis{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .${NS}kpi{flex:1 1 auto;background:#f5f5f5;border:1px solid rgba(0,0,0,.08);padding:6px 10px;border-radius:999px;font:600 12px system-ui;white-space:nowrap}
+  .${NS}list{list-style:none;margin:0;padding:0}
+  .${NS}empty{padding:14px 12px;opacity:.75;text-align:center;font:500 12px system-ui}
+  .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer}
+  .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui}
+  .${NS}dot{width:8px;height:8px;border-radius:50%;background:#16a34a}
+  .${NS}dot.off{background:#9ca3af}
+  .${NS}loading{display:none;padding:8px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:600 12px system-ui;background:#fffbe6}
+  .${NS}loading.on{display:block}
+  .${NS}modal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
+  .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
+  .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
+  .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
+  .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
+  .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  function mountUI(){
-    ensureStyles();
-    if (document.getElementById(NS+'panel')) return;
+  /* <<< HIER: neue Klasse für rote Hervorhebung >>> */
+  .${NS}row-late12{background:#fee2e2;}
 
-    const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
-    panel.innerHTML = `
-      <div class="${NS}header">
-        <div class="${NS}toolbar">
-          <div class="${NS}group">
-            <span class="${NS}label">Kommentare:</span>
-            <select id="${NS}filter-comment" class="${NS}select">
-              <option value="all">Alle</option>
-              <option value="with">nur mit</option>
-              <option value="without">nur ohne</option>
-            </select>
-            <span class="${NS}label">Express:</span>
-            <select id="${NS}filter-express" class="${NS}select">
-              <option value="all">alle</option>
-              <option value="18">nur 18er</option>
-              <option value="12">nur 12er</option>
-            </select>
-          </div>
-          <div class="${NS}group">
-            <button class="${NS}btn-sm" data-action="openSettings">Einstellungen</button>
-            <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
-            <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
-            <button class="${NS}btn-sm" data-action="showExpLate11">EXPRESS12 >11:01</button>
-          </div>
+  .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
+  .${NS}sort-asc::after{content:" ▲";font-size:11px}
+  .${NS}sort-desc::after{content:" ▼";font-size:11px}
+  .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
+  .${NS}eye:hover{background:#f3f4f6}
+  .${NS}badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:11px;border:1px solid rgba(0,0,0,.15);background:#f3f4f6}
+  .${NS}badge-status-ok{background:#16a34a;color:#fff;border-color:#15803d}
+  .${NS}badge-status-problem{background:#dc2626;color:#fff;border-color:#b91c1c}
+  .${NS}badge-status-run{background:#eab308;color:#111827;border-color:#ca8a04}
+  `;
+  document.head.appendChild(style);
+}
+
+function mountUI(){
+  ensureStyles();
+  if (document.getElementById(NS+'panel')) return;
+
+  const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
+  panel.innerHTML = `
+    <div class="${NS}header">
+      <div class="${NS}toolbar">
+        <div class="${NS}group">
+          <span class="${NS}label">Kommentare:</span>
+          <select id="${NS}filter-comment" class="${NS}select">
+            <option value="all">Alle</option>
+            <option value="with">nur mit</option>
+            <option value="without">nur ohne</option>
+          </select>
+          <span class="${NS}label">Express:</span>
+          <select id="${NS}filter-express" class="${NS}select">
+            <option value="all">alle</option>
+            <option value="18">nur 18er</option>
+            <option value="12">nur 12er</option>
+          </select>
         </div>
-        <div class="${NS}kpis">
-          <span class="${NS}kpi" id="${NS}chip-prio-all"  data-action="showPrioAll">PRIO in Ausrollung: <b id="${NS}kpi-prio-all">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-prio-open" data-action="showPrioOpen">PRIO noch nicht zugestellt: <b id="${NS}kpi-prio-open">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
-          <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
+        <div class="${NS}group">
+          <button class="${NS}btn-sm" data-action="openSettings">Einstellungen</button>
+          <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
+          <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
+          <button class="${NS}btn-sm" data-action="showExpLate11">EXPRESS12 >11:01</button>
         </div>
       </div>
-      <div id="${NS}loading" class="${NS}loading">Lade …</div>
-      <ul id="${NS}list" class="${NS}list"></ul>
-      <div id="${NS}note-capture" style="padding:8px 12px;opacity:.7">Hinweis: einmal die normale Pickup-Liste laden – der letzte Request wird geklont.</div>
-    `;
-    document.body.appendChild(panel);
+      <div class="${NS}kpis">
+        <span class="${NS}kpi" id="${NS}chip-prio-all"  data-action="showPrioAll">PRIO in Ausrollung: <b id="${NS}kpi-prio-all">0</b></span>
+        <span class="${NS}kpi" id="${NS}chip-prio-open" data-action="showPrioOpen">PRIO noch nicht zugestellt: <b id="${NS}kpi-prio-open">0</b></span>
+        <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
+        <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
+      </div>
+    </div>
+    <div id="${NS}loading" class="${NS}loading">Lade …</div>
+    <ul id="${NS}list" class="${NS}list"></ul>
+    <div id="${NS}note-capture" style="padding:8px 12px;opacity:.7">Hinweis: einmal die normale Pickup-Liste laden – der letzte Request wird geklont.</div>
+  `;
+  document.body.appendChild(panel);
 
-    const modal=document.createElement('div'); modal.id=NS+'modal'; modal.className=NS+'modal';
-    modal.innerHTML = `
-      <div class="${NS}modal-inner">
-        <div class="${NS}modal-head">
-          <div id="${NS}modal-title">Liste</div>
-          <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
-        </div>
-        <div class="${NS}modal-body" id="${NS}modal-body"></div>
-      </div>`;
-    document.body.appendChild(modal);
+  const modal=document.createElement('div'); modal.id=NS+'modal'; modal.className=NS+'modal';
+  modal.innerHTML = `
+    <div class="${NS}modal-inner">
+      <div class="${NS}modal-head">
+        <div id="${NS}modal-title">Liste</div>
+        <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
+      </div>
+      <div class="${NS}modal-body" id="${NS}modal-body"></div>
+    </div>`;
+  document.body.appendChild(modal);
 
-    panel.addEventListener('click', async (e)=>{
-      const k1=e.target.closest('#'+NS+'chip-prio-all');  if(k1){showPrioAll(); return;}
-      const k2=e.target.closest('#'+NS+'chip-prio-open'); if(k2){showPrioOpen(); return;}
-      const k3=e.target.closest('#'+NS+'chip-exp-all');   if(k3){showExpAll(); return;}
-      const k4=e.target.closest('#'+NS+'chip-exp-open');  if(k4){showExpOpen(); return;}
+  panel.addEventListener('click', async (e)=>{
+    const k1=e.target.closest('#'+NS+'chip-prio-all');  if(k1){showPrioAll(); return;}
+    const k2=e.target.closest('#'+NS+'chip-prio-open'); if(k2){showPrioOpen(); return;}
+    const k3=e.target.closest('#'+NS+'chip-exp-all');   if(k3){showExpAll(); return;}
+    const k4=e.target.closest('#'+NS+'chip-exp-open');  if(k4){showExpOpen(); return;}
 
-      const b=e.target.closest('.'+NS+'btn-sm'); if(!b) return;
-      const a=b.dataset.action;
-      if(a==='openSettings'){ openSettingsModal(); return; }
-      if(a==='refreshApi'){ await fullRefresh().catch(console.error); return; }
-      if(a==='showExpLate11'){ showExpLate11(); return; }
+    const b=e.target.closest('.'+NS+'btn-sm'); if(!b) return;
+    const a=b.dataset.action;
+    if(a==='openSettings'){ openSettingsModal(); return; }
+    if(a==='refreshApi'){ await fullRefresh().catch(console.error); return; }
+    if(a==='showExpLate11'){ showExpLate11(); return; }
+  });
+
+  const expSel = document.getElementById(NS+'filter-express');
+  if (expSel){
+    expSel.addEventListener('change', ()=>{
+      state.filterExpress = expSel.value || 'all';
+      if (document.getElementById(NS+'modal')?.style.display === 'flex') {
+        if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
+        else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
+        else showExpAll();
+      }
+      updateKpisForCurrentState();
     });
-
-    const expSel = document.getElementById(NS+'filter-express');
-    if (expSel){
-      expSel.addEventListener('change', ()=>{
-        state.filterExpress = expSel.value || 'all';
-        if (document.getElementById(NS+'modal')?.style.display === 'flex') {
-          if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
-          else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
-          else showExpAll();
-        }
-        updateKpisForCurrentState();
-      });
-    }
-
-    modal.addEventListener('click', e=>{
-      if (e.target.dataset.action === 'closeModal' || e.target === modal) { hideModal(); return; }
-      const eye=e.target.closest('button.'+NS+'eye[data-psn]'); if(eye){ openScanserver(String(eye.dataset.psn||'')); return; }
-      const btn=e.target.closest('button[data-action]'); if(!btn) return;
-      const a=btn.dataset.action;
-      if(a==='guessDepot'){ guessDepotFromVehicles(); return; }
-      if(a==='saveSettings'){ saveSettingsFromModal(); return; }
-    });
-
-    const autoDot  = document.getElementById(NS+'auto-dot');
-    const autoChip = document.getElementById(NS+'auto-chip');
-    function setAutoUI(){ autoDot.classList.toggle('off', !autoEnabled); }
-    autoChip.addEventListener('click', ()=>{ autoEnabled=!autoEnabled; setAutoUI(); scheduleAuto(); });
-    setAutoUI();
-
-    if (!state._bootShown){
-      addEvent({
-        title:'Bereit',
-        meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01',
-        sev:'info', read:true
-      });
-      state._bootShown=true;
-    }
-    render();
   }
 
-  function togglePanel(force){
-    const panel=document.getElementById(NS+'panel'); if(!panel){ mountUI(); return; }
-    const isHidden=getComputedStyle(panel).display==='none';
-    const show = force!=null ? !!force : isHidden;
-    panel.style.setProperty('display', show?'block':'none', 'important');
+  modal.addEventListener('click', e=>{
+    if (e.target.dataset.action === 'closeModal' || e.target === modal) { hideModal(); return; }
+    const eye=e.target.closest('button.'+NS+'eye[data-psn]'); if(eye){ openScanserver(String(eye.dataset.psn||'')); return; }
+    const btn=e.target.closest('button[data-action]'); if(!btn) return;
+    const a=btn.dataset.action;
+    if(a==='guessDepot'){ guessDepotFromVehicles(); return; }
+    if(a==='saveSettings'){ saveSettingsFromModal(); return; }
+  });
+
+  const autoDot  = document.getElementById(NS+'auto-dot');
+  const autoChip = document.getElementById(NS+'auto-chip');
+  function setAutoUI(){ autoDot.classList.toggle('off', !autoEnabled); }
+  autoChip.addEventListener('click', ()=>{ autoEnabled=!autoEnabled; setAutoUI(); scheduleAuto(); });
+  setAutoUI();
+
+  if (!state._bootShown){
+    addEvent({
+      title:'Bereit',
+      meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01',
+      sev:'info', read:true
+    });
+    state._bootShown=true;
   }
+  render();
+}
+
+function togglePanel(force){
+  const panel=document.getElementById(NS+'panel'); if(!panel){ mountUI(); return; }
+  const isHidden=getComputedStyle(panel).display==='none';
+  const show = force!=null ? !!force : isHidden;
+  panel.style.setProperty('display', show?'block':'none', 'important');
+}
 
   /* ====== TEIL 3/10 – Einstellungen (Scanserver) ====== */
 
@@ -689,59 +693,67 @@
     return {pfTs,ptTs,range};
   }
 
-  // Service-Code: zuerst aus der Fahrzeugübersicht (DOM), dann API-Felder, kein Zusatzcode-Fallback
- // Service-Code: zuerst aus der Fahrzeugübersicht (DOM), dann API-Felder inkl. serviceCodes
-function serviceOf(r){
-  if(!r) return '';
+  // Servicecodes: ALLE Codes einsammeln (Array), kein Fallback auf additionalCodes
+  function serviceCodesOf(r){
+    if(!r) return [];
+    const set = new Set();
 
-  const tryVal = v =>
-    (typeof v==='number' || typeof v==='string') ? String(v).trim() : '';
+    const addFromVal = v => {
+      if(v == null) return;
+      String(v)
+        .split(/[^\dA-Za-z]+/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .forEach(code => set.add(code));
+    };
 
-  const tryArrFirst = v =>
-    Array.isArray(v) && v.length ? tryVal(v[0]) : '';
+    const addFromArr = arr => {
+      if(!Array.isArray(arr)) return;
+      arr.forEach(addFromVal);
+    };
 
-  // 1. Wert aus der Original-Tabelle (gridIndex.serviceByPsn) – bleibt wie gehabt
-  try {
-    const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
-    if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
-      const domVal =
-        gridIndex.serviceByPsn.get(pidClean) ||
-        gridIndex.serviceByPsn.get(pidClean.padStart(14,'0'));
-      if (domVal) return String(domVal).trim();
+    // 1. Original-Tabelle (DOM)
+    try {
+      const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
+      if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
+        const domVal =
+          gridIndex.serviceByPsn.get(pidClean) ||
+          gridIndex.serviceByPsn.get(pidClean.padStart(14,'0'));
+        if (domVal) addFromVal(domVal);
+      }
+    } catch(e){}
+
+    // 2. direkte API-Felder
+    addFromVal(r.serviceCode);
+    addFromVal(r.servicecode);
+    addFromVal(r.service_code);
+    addFromArr(r.serviceCodes);
+
+    // 3. service-Objekt
+    if (r.service && typeof r.service === 'object'){
+      addFromVal(r.service.code);
+      addFromVal(r.service.serviceCode);
+      addFromVal(r.service.id);
+      addFromArr(r.service.serviceCodes);
     }
-  } catch(e){
-    // ignorieren, weiter zu API-Feldern
+
+    // 4. product-Objekt
+    if (r.product && typeof r.product === 'object'){
+      addFromVal(r.product.serviceCode);
+      addFromVal(r.product.code);
+      addFromVal(r.product.id);
+      addFromArr(r.product.serviceCodes);
+    }
+
+    const arr = Array.from(set);
+    arr.sort((a,b)=>collator.compare(a,b));
+    return arr;
   }
 
-  // 2. direkte API-Felder (+ neu: serviceCodes-Array)
-  let v = '';
-  v = tryVal(r.serviceCode) ||
-      tryVal(r.servicecode) ||
-      tryVal(r.service_code) ||
-      tryArrFirst(r.serviceCodes);       // <--- NEU
-  if (v) return v;
-
-  // 3. verschachteltes service-Objekt
-  if (r.service && typeof r.service === 'object'){
-    v = tryVal(r.service.code) ||
-        tryVal(r.service.serviceCode) ||
-        tryVal(r.service.id) ||
-        tryArrFirst(r.service.serviceCodes);    // falls dort auch Arrays kommen
-    if (v) return v;
+  function serviceOf(r){
+    const arr = serviceCodesOf(r);
+    return arr[0] || '';
   }
-
-  // 4. verschachteltes product-Objekt
-  if (r.product && typeof r.product === 'object'){
-    v = tryVal(r.product.serviceCode) ||
-        tryVal(r.product.code) ||
-        tryVal(r.product.id) ||
-        tryArrFirst(r.product.serviceCodes);    // fallback, wenn dort arrays liegen
-    if (v) return v;
-  }
-
-  // kein Fallback auf additionalCodes
-  return '';
-}
 
   function statusClass(text){
     const t=String(text||'').toUpperCase();
@@ -754,6 +766,22 @@ function serviceOf(r){
   function normRow(r){
     const pid=parcelId(r) || '';
     const {pfTs,ptTs,range}=buildPredictMeta(r);
+    const svcArr   = serviceCodesOf(r);
+    const expType  = expressTypeOf(r);
+    const isDel    = delivered(r);
+
+    // Flag für „Express 12, nicht zugestellt, Predict > 12:00“
+    let highlightLate12 = false;
+    if (expType === '12' && !isDel && (pfTs || ptTs) && r.date){
+      const cut = new Date(`${r.date}T12:00:00`);
+      if(!isNaN(cut)){
+        const cutTs = +cut;
+        if ((pfTs && pfTs > cutTs) || (ptTs && ptTs > cutTs)) {
+          highlightLate12 = true;
+        }
+      }
+    }
+
     return {
       ...r,
       __pid: pid,
@@ -766,8 +794,10 @@ function serviceOf(r){
       __predToTs:   ptTs,
       __predRangeStr: range,
       __codesStr: (addCodes(r)||[]).join(', ') || '—',
-      __expType: expressTypeOf(r),
-      __serviceCode: serviceOf(r)
+      __expType: expType,
+      __serviceCode: svcArr[0] || '',
+      __serviceCodes: svcArr,
+      __highlightLatePredict12: highlightLate12
     };
   }
 
@@ -788,7 +818,6 @@ function serviceOf(r){
     }
     return out;
   }
-
 
 
   /* ====== TEIL 8/10 – Tabellen-UI, Sortierung, Modal (inkl. Predict immer) ====== */
@@ -821,9 +850,8 @@ function serviceOf(r){
       ? `<span class="${NS}badge ${statusCls}">${esc(statusText)}</span>`
       : '';
 
-    const serviceText = r.__serviceCode || '';
-    const serviceCell = serviceText
-      ? `<span class="${NS}badge">${esc(serviceText)}</span>`
+    const serviceBadges = (r.__serviceCodes && r.__serviceCodes.length)
+      ? r.__serviceCodes.map(c => `<span class="${NS}badge">${esc(c)}</span>`).join(' ')
       : '';
 
     const pred = r.__predRangeStr || '—';
@@ -836,12 +864,13 @@ function serviceOf(r){
       statusCell,
       esc(dtime),
       esc(r.__codesStr),
-      serviceCell,
+      serviceBadges,
       esc(pred)
     ];
 
     return `<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
   }
+
 
   function openModal(title,rowsOrHtml){
     const m=document.getElementById(NS+'modal');
