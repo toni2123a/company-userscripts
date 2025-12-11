@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Scanmonitor: Systempartner-Tour-Bubbles + QR-Popup 
+// @name         ASEA PIN Freigabe 
 // @namespace    http://tampermonkey.net/
 // @version      5.6
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Excel-Import und Mehrfachauswahl (Button/Contextmenü).
