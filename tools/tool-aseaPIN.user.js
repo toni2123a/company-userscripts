@@ -1,13 +1,3 @@
-Weiter zum Inhalt
-Chatverlauf
-
-
-
-
-Du:
-Tampermonkey script. kann man überall wor die depot numer feste drin steht diese aus der url ableiten: Bsp.: Depot: 0010157    die zahlen sich aus der url https://scanserver-d0010157.ssw.dpdit.de/cgi-bin extrahieren so das das bei allen standorten richtig angezeigt wird
-
-script:
 // ==UserScript==
 // @name         ASEA PIN Freigabe 
 // @namespace    http://tampermonkey.net/
