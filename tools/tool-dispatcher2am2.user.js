@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      7.0.0
+// @version      7.0.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
-// @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver.
+// @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver als Popup. Auge auch in aufgeklappten PSNs. (+x) Gruppierung (mehr Pakete am Stop) in ALLEN Listen. KPI-Zählung basiert auf Stop-Gruppierung (wie die Listen), nicht auf Pakete-Anzahl.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        none
@@ -64,183 +64,209 @@
 
   /* ====== TEIL 2/10 – Styles + Panel/Modal UI ====== */
 
-function ensureStyles(){
-  if (document.getElementById(NS+'style')) return;
-  const style=document.createElement('style'); style.id=NS+'style';
-  style.textContent = `
-  .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1100px,95vw);max-height:78vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100000;display:none}
-  .${NS}header{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
-  .${NS}toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
-  .${NS}group{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#f9fafb;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:6px 8px}
-  .${NS}label{display:flex;align-items:center;gap:6px;font:600 12px system-ui}
-  .${NS}select{padding:4px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);background:#fff}
-  .${NS}kpis{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-  .${NS}kpi{flex:1 1 auto;background:#f5f5f5;border:1px solid rgba(0,0,0,.08);padding:6px 10px;border-radius:999px;font:600 12px system-ui;white-space:nowrap}
-  .${NS}list{list-style:none;margin:0;padding:0}
-  .${NS}empty{padding:14px 12px;opacity:.75;text-align:center;font:500 12px system-ui}
-  .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer}
-  .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui}
-  .${NS}dot{width:8px;height:8px;border-radius:50%;background:#16a34a}
-  .${NS}dot.off{background:#9ca3af}
-  .${NS}loading{display:none;padding:8px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:600 12px system-ui;background:#fffbe6}
-  .${NS}loading.on{display:block}
-  .${NS}modal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
-  .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
-  .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
-  .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
-  .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
-  .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  function ensureStyles(){
+    if (document.getElementById(NS+'style')) return;
+    const style=document.createElement('style'); style.id=NS+'style';
+    style.textContent = `
+    .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1100px,95vw);max-height:78vh;overflow:auto;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100000;display:none}
+    .${NS}header{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
+    .${NS}toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
+    .${NS}group{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#f9fafb;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:6px 8px}
+    .${NS}label{display:flex;align-items:center;gap:6px;font:600 12px system-ui}
+    .${NS}select{padding:4px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);background:#fff}
+    .${NS}kpis{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+    .${NS}kpi{flex:1 1 auto;background:#f5f5f5;border:1px solid rgba(0,0,0,.08);padding:6px 10px;border-radius:999px;font:600 12px system-ui;white-space:nowrap}
+    .${NS}list{list-style:none;margin:0;padding:0}
+    .${NS}empty{padding:14px 12px;opacity:.75;text-align:center;font:500 12px system-ui}
+    .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer}
+    .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui}
+    .${NS}dot{width:8px;height:8px;border-radius:50%;background:#16a34a}
+    .${NS}dot.off{background:#9ca3af}
+    .${NS}loading{display:none;padding:8px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:600 12px system-ui;background:#fffbe6}
+    .${NS}loading.on{display:block}
+    .${NS}modal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
+    .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
+    .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
+    .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
+    .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
+    .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+    .${NS}row-late12{background:#fee2e2;}
+    .${NS}detail-row > td{background:#f9fafb;padding:6px 8px;}
+    .${NS}detail-inner{border-top:1px solid rgba(0,0,0,.08);margin-top:4px;padding-top:4px;}
+    .${NS}detail-inner table{width:100%;border-collapse:collapse;font-size:11px;}
+    .${NS}detail-inner th, .${NS}detail-inner td{border-bottom:1px solid rgba(0,0,0,.06);padding:3px 4px;white-space:nowrap;}
+    .${NS}row-express{background:#dcfce7;}
 
-  /* <<< HIER: neue Klasse für rote Hervorhebung >>> */
-  .${NS}row-late12{background:#fee2e2;}
-    .${NS}detail-row > td{
-    background:#f9fafb;
-    padding:6px 8px;
+    .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
+    .${NS}sort-asc::after{content:" ▲";font-size:11px}
+    .${NS}sort-desc::after{content:" ▼";font-size:11px}
+    .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
+    .${NS}eye:hover{background:#f3f4f6}
+    .${NS}badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:11px;border:1px solid rgba(0,0,0,.15);background:#f3f4f6}
+    .${NS}badge-status-ok{background:#16a34a;color:#fff;border-color:#15803d}
+    .${NS}badge-status-problem{background:#dc2626;color:#fff;border-color:#b91c1c}
+    .${NS}badge-status-run{background:#eab308;color:#111827;border-color:#ca8a04}
+
+    .${NS}popup{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:100002}
+    .${NS}popup-inner{background:#fff;width:min(1600px,96vw);height:min(92vh,1100px);border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.22);border:1px solid rgba(0,0,0,.12);overflow:hidden;display:flex;flex-direction:column}
+    .${NS}popup-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;background:#fff}
+    .${NS}popup-iframe{width:100%;height:100%;border:0}
+    `;
+    document.head.appendChild(style);
   }
-  .${NS}detail-inner{
-    border-top:1px solid rgba(0,0,0,.08);
-    margin-top:4px;
-    padding-top:4px;
-  }
-  .${NS}detail-inner table{
-    width:100%;
-    border-collapse:collapse;
-    font-size:11px;
-  }
-  .${NS}detail-inner th,
-  .${NS}detail-inner td{
-    border-bottom:1px solid rgba(0,0,0,.06);
-    padding:3px 4px;
-    white-space:nowrap;
-  }
-  .${NS}row-express{background:#dcfce7;}
 
-
-  .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
-  .${NS}sort-asc::after{content:" ▲";font-size:11px}
-  .${NS}sort-desc::after{content:" ▼";font-size:11px}
-  .${NS}eye{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid rgba(0,0,0,.2);border-radius:6px;background:#fff;margin-right:6px;cursor:pointer;font-size:12px;line-height:1}
-  .${NS}eye:hover{background:#f3f4f6}
-  .${NS}badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:11px;border:1px solid rgba(0,0,0,.15);background:#f3f4f6}
-  .${NS}badge-status-ok{background:#16a34a;color:#fff;border-color:#15803d}
-  .${NS}badge-status-problem{background:#dc2626;color:#fff;border-color:#b91c1c}
-  .${NS}badge-status-run{background:#eab308;color:#111827;border-color:#ca8a04}
-  `;
-  document.head.appendChild(style);
-}
-
-function mountUI(){
-  ensureStyles();
-  if (document.getElementById(NS+'panel')) return;
-
-  const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
-  panel.innerHTML = `
-    <div class="${NS}header">
-      <div class="${NS}toolbar">
-        <div class="${NS}group">
-          <span class="${NS}label">Kommentare:</span>
-          <select id="${NS}filter-comment" class="${NS}select">
-            <option value="all">Alle</option>
-            <option value="with">nur mit</option>
-            <option value="without">nur ohne</option>
-          </select>
-          <span class="${NS}label">Express:</span>
-          <select id="${NS}filter-express" class="${NS}select">
-            <option value="all">alle</option>
-            <option value="18">nur 18er</option>
-            <option value="12">nur 12er</option>
-          </select>
+  function mountPopup(){
+    if (document.getElementById(NS+'popup')) return;
+    const pop=document.createElement('div');
+    pop.id=NS+'popup';
+    pop.className=NS+'popup';
+    pop.innerHTML = `
+      <div class="${NS}popup-inner">
+        <div class="${NS}popup-head">
+          <div id="${NS}popup-title">Scanserver</div>
+          <button class="${NS}btn-sm" data-action="closePopup">Schließen</button>
         </div>
-        <div class="${NS}group">
-          <button class="${NS}btn-sm" data-action="openSettings">Einstellungen</button>
-          <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
-          <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
-          <button class="${NS}btn-sm" data-action="showExpLate11">EXPRESS12 >11:01</button>
-        </div>
+        <iframe id="${NS}popup-iframe" class="${NS}popup-iframe" sandbox="allow-forms allow-same-origin allow-scripts allow-popups"></iframe>
       </div>
-      <div class="${NS}kpis">
-        <span class="${NS}kpi" id="${NS}chip-prio-all"  data-action="showPrioAll">PRIO in Ausrollung: <b id="${NS}kpi-prio-all">0</b></span>
-        <span class="${NS}kpi" id="${NS}chip-prio-open" data-action="showPrioOpen">PRIO noch nicht zugestellt: <b id="${NS}kpi-prio-open">0</b></span>
-        <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
-        <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
-      </div>
-    </div>
-    <div id="${NS}loading" class="${NS}loading">Lade …</div>
-    <ul id="${NS}list" class="${NS}list"></ul>
-    <div id="${NS}note-capture" style="padding:8px 12px;opacity:.7">Hinweis: einmal die normale Pickup-Liste laden – der letzte Request wird geklont.</div>
-  `;
-  document.body.appendChild(panel);
+    `;
+    document.body.appendChild(pop);
 
-  const modal=document.createElement('div'); modal.id=NS+'modal'; modal.className=NS+'modal';
-  modal.innerHTML = `
-    <div class="${NS}modal-inner">
-      <div class="${NS}modal-head">
-        <div id="${NS}modal-title">Liste</div>
-        <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
-      </div>
-      <div class="${NS}modal-body" id="${NS}modal-body"></div>
-    </div>`;
-  document.body.appendChild(modal);
-
-  panel.addEventListener('click', async (e)=>{
-    const k1=e.target.closest('#'+NS+'chip-prio-all');  if(k1){showPrioAll(); return;}
-    const k2=e.target.closest('#'+NS+'chip-prio-open'); if(k2){showPrioOpen(); return;}
-    const k3=e.target.closest('#'+NS+'chip-exp-all');   if(k3){showExpAll(); return;}
-    const k4=e.target.closest('#'+NS+'chip-exp-open');  if(k4){showExpOpen(); return;}
-
-    const b=e.target.closest('.'+NS+'btn-sm'); if(!b) return;
-    const a=b.dataset.action;
-    if(a==='openSettings'){ openSettingsModal(); return; }
-    if(a==='refreshApi'){ await fullRefresh().catch(console.error); return; }
-    if(a==='showExpLate11'){ showExpLate11(); return; }
-  });
-
-  const expSel = document.getElementById(NS+'filter-express');
-  if (expSel){
-    expSel.addEventListener('change', ()=>{
-      state.filterExpress = expSel.value || 'all';
-      if (document.getElementById(NS+'modal')?.style.display === 'flex') {
-        if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
-        else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
-        else showExpAll();
-      }
-      updateKpisForCurrentState();
+    pop.addEventListener('click', (e)=>{
+      if (e.target === pop || e.target?.dataset?.action === 'closePopup') hidePopup();
     });
   }
 
-  modal.addEventListener('click', e=>{
-    if (e.target.dataset.action === 'closeModal' || e.target === modal) { hideModal(); return; }
-    const eye=e.target.closest('button.'+NS+'eye[data-psn]'); if(eye){ openScanserver(String(eye.dataset.psn||'')); return; }
-    const btn=e.target.closest('button[data-action]'); if(!btn) return;
-    const a=btn.dataset.action;
-    if(a==='guessDepot'){ guessDepotFromVehicles(); return; }
-    if(a==='saveSettings'){ saveSettingsFromModal(); return; }
-  });
-
-  const autoDot  = document.getElementById(NS+'auto-dot');
-  const autoChip = document.getElementById(NS+'auto-chip');
-  function setAutoUI(){ autoDot.classList.toggle('off', !autoEnabled); }
-  autoChip.addEventListener('click', ()=>{ autoEnabled=!autoEnabled; setAutoUI(); scheduleAuto(); });
-  setAutoUI();
-
-  if (!state._bootShown){
-    addEvent({
-      title:'Bereit',
-      meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01',
-      sev:'info', read:true
-    });
-    state._bootShown=true;
+  function openPopup(url, title){
+    mountPopup();
+    const pop = document.getElementById(NS+'popup');
+    const t   = document.getElementById(NS+'popup-title');
+    const fr  = document.getElementById(NS+'popup-iframe');
+    if (t)  t.textContent = title || 'Scanserver';
+    if (fr) fr.src = url || 'about:blank';
+    if (pop) pop.style.display = 'flex';
   }
-  render();
-}
+  function hidePopup(){
+    const pop = document.getElementById(NS+'popup');
+    const fr  = document.getElementById(NS+'popup-iframe');
+    if (fr) fr.src = 'about:blank';
+    if (pop) pop.style.display = 'none';
+  }
 
-function togglePanel(force){
-  const panel=document.getElementById(NS+'panel'); if(!panel){ mountUI(); return; }
-  const isHidden=getComputedStyle(panel).display==='none';
-  const show = force!=null ? !!force : isHidden;
-  panel.style.setProperty('display', show?'block':'none', 'important');
-}
+  function mountUI(){
+    ensureStyles();
+    mountPopup();
+    if (document.getElementById(NS+'panel')) return;
+
+    const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
+    panel.innerHTML = `
+      <div class="${NS}header">
+        <div class="${NS}toolbar">
+          <div class="${NS}group">
+            <span class="${NS}label">Kommentare:</span>
+            <select id="${NS}filter-comment" class="${NS}select">
+              <option value="all">Alle</option>
+              <option value="with">nur mit</option>
+              <option value="without">nur ohne</option>
+            </select>
+            <span class="${NS}label">Express:</span>
+            <select id="${NS}filter-express" class="${NS}select">
+              <option value="all">alle</option>
+              <option value="18">nur 18er</option>
+              <option value="12">nur 12er</option>
+            </select>
+          </div>
+          <div class="${NS}group">
+            <button class="${NS}btn-sm" data-action="openSettings">Einstellungen</button>
+            <span class="${NS}chip" id="${NS}auto-chip"><span class="${NS}dot" id="${NS}auto-dot"></span>Auto 60s</span>
+            <button class="${NS}btn-sm" data-action="refreshApi">Aktualisieren (API)</button>
+            <button class="${NS}btn-sm" data-action="showExpLate11">EXPRESS12 >11:01</button>
+          </div>
+        </div>
+        <div class="${NS}kpis">
+          <span class="${NS}kpi" id="${NS}chip-prio-all"  data-action="showPrioAll">PRIO in Ausrollung: <b id="${NS}kpi-prio-all">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-prio-open" data-action="showPrioOpen">PRIO noch nicht zugestellt: <b id="${NS}kpi-prio-open">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-exp-all"  data-action="showExpAll">EXPRESS in Ausrollung: <b id="${NS}kpi-exp-all">0</b></span>
+          <span class="${NS}kpi" id="${NS}chip-exp-open" data-action="showExpOpen">EXPRESS noch nicht zugestellt: <b id="${NS}kpi-exp-open">0</b></span>
+        </div>
+      </div>
+      <div id="${NS}loading" class="${NS}loading">Lade …</div>
+      <ul id="${NS}list" class="${NS}list"></ul>
+      <div id="${NS}note-capture" style="padding:8px 12px;opacity:.7">Hinweis: einmal die normale Pickup-Liste laden – der letzte Request wird geklont.</div>
+    `;
+    document.body.appendChild(panel);
+
+    const modal=document.createElement('div'); modal.id=NS+'modal'; modal.className=NS+'modal';
+    modal.innerHTML = `
+      <div class="${NS}modal-inner">
+        <div class="${NS}modal-head">
+          <div id="${NS}modal-title">Liste</div>
+          <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
+        </div>
+        <div class="${NS}modal-body" id="${NS}modal-body"></div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    panel.addEventListener('click', async (e)=>{
+      const k1=e.target.closest('#'+NS+'chip-prio-all');  if(k1){showPrioAll(); return;}
+      const k2=e.target.closest('#'+NS+'chip-prio-open'); if(k2){showPrioOpen(); return;}
+      const k3=e.target.closest('#'+NS+'chip-exp-all');   if(k3){showExpAll(); return;}
+      const k4=e.target.closest('#'+NS+'chip-exp-open');  if(k4){showExpOpen(); return;}
+
+      const b=e.target.closest('.'+NS+'btn-sm'); if(!b) return;
+      const a=b.dataset.action;
+      if(a==='openSettings'){ openSettingsModal(); return; }
+      if(a==='refreshApi'){ await fullRefresh().catch(console.error); return; }
+      if(a==='showExpLate11'){ showExpLate11(); return; }
+    });
+
+    const expSel = document.getElementById(NS+'filter-express');
+    if (expSel){
+      expSel.addEventListener('change', ()=>{
+        state.filterExpress = expSel.value || 'all';
+        if (document.getElementById(NS+'modal')?.style.display === 'flex') {
+          if (/PRIO/i.test(state._modal.title) && /noch nicht zugestellt/i.test(state._modal.title)) showPrioOpen();
+          else if (/PRIO/i.test(state._modal.title)) showPrioAll();
+          else if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
+          else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
+          else showExpAll();
+        }
+        updateKpisForCurrentState();
+      });
+    }
+
+    modal.addEventListener('click', e=>{
+      if (e.target.dataset.action === 'closeModal' || e.target === modal) { hideModal(); return; }
+      const eye=e.target.closest('button.'+NS+'eye[data-psn]'); if(eye){ openScanserver(String(eye.dataset.psn||'')); return; }
+      const btn=e.target.closest('button[data-action]'); if(!btn) return;
+      const a=btn.dataset.action;
+      if(a==='guessDepot'){ guessDepotFromVehicles(); return; }
+      if(a==='saveSettings'){ saveSettingsFromModal(); return; }
+    });
+
+    const autoDot  = document.getElementById(NS+'auto-dot');
+    const autoChip = document.getElementById(NS+'auto-chip');
+    function setAutoUI(){ autoDot.classList.toggle('off', !autoEnabled); }
+    autoChip.addEventListener('click', ()=>{ autoEnabled=!autoEnabled; setAutoUI(); scheduleAuto(); });
+    setAutoUI();
+
+    if (!state._bootShown){
+      addEvent({
+        title:'Bereit',
+        meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01 • Scanserver im Popup • (+x) Gruppierung in allen Listen • KPI = Stop-Anzahl',
+        sev:'info', read:true
+      });
+      state._bootShown=true;
+    }
+    render();
+  }
+
+  function togglePanel(force){
+    const panel=document.getElementById(NS+'panel'); if(!panel){ mountUI(); return; }
+    const isHidden=getComputedStyle(panel).display==='none';
+    const show = force!=null ? !!force : isHidden;
+    panel.style.setProperty('display', show?'block':'none', 'important');
+  }
 
   /* ====== TEIL 3/10 – Einstellungen (Scanserver) ====== */
 
@@ -369,7 +395,12 @@ function togglePanel(force){
     params.set('_csv','0');
     return `${base}?${params.toString()}`;
   }
-  function openScanserver(psn){ const url=buildScanserverUrl(psn); if(url) window.open(url,'_blank','noopener'); }
+
+  function openScanserver(psn){
+    const url = buildScanserverUrl(psn);
+    if (!url) return;
+    openPopup(url, `Scanserver · ${String(psn||'').replace(/\D+/g,'')}`);
+  }
 
   /* ====== TEIL 4/10 – Network-Hook (API klonen) ====== */
 
@@ -440,9 +471,7 @@ function togglePanel(force){
 
   /* ====== TEIL 5/10 – Fahrer-Map aus Fahrzeugübersicht ====== */
 
-  const gridIndex = {
-    tour2driver: new Map()
-  };
+  const gridIndex = { tour2driver: new Map() };
   const deliveryDetailsCache = new Map();
 
   function detectTourDriverCols(tbl){
@@ -642,8 +671,7 @@ function togglePanel(force){
     return {rows, total: totalKnown || rows.length};
   }
 
-
-/* ====== TEIL 7/10 – Normalisierung, Status/Fahrer/Predict/Service ====== */
+  /* ====== TEIL 7/10 – Normalisierung, Status/Fahrer/Predict/Service ====== */
 
   const parcelId   = r => r.__pidOverride || r.parcelNumber || (Array.isArray(r.parcelNumbers)&&r.parcelNumbers[0]) || r.id || '';
   const addrOf     = r => [r.street,r.houseno].filter(Boolean).join(' ');
@@ -651,19 +679,6 @@ function togglePanel(force){
   const addCodes   = r => Array.isArray(r.additionalCodes)? r.additionalCodes.map(String): [];
   const isDelivery = r => String(r?.orderType||'').toUpperCase()==='DELIVERY';
   const isPRIO     = r => String(r?.priority||r?.prio||'').toUpperCase()==='PRIO';
-
-  const hasExpress12 = r => {
-    const el=r?.elements;
-    if(Array.isArray(el)) return el.map(String).includes('023');
-    return typeof el==='string'?/\b023\b/.test(el):false;
-  };
-  const hasExpress18 = r => {
-    const el=r?.elements;
-    if(Array.isArray(el)) return el.map(String).includes('010');
-    return typeof el==='string'?/\b010\b/.test(el):false;
-  };
-  const hasExpressAny = r => hasExpress12(r)||hasExpress18(r);
-  const expressTypeOf = r => hasExpress12(r)?'12':(hasExpress18(r)?'18':'');
 
   const composeDateTime = (dateStr,timeStr)=>{
     if(!dateStr || !timeStr) return null;
@@ -717,7 +732,6 @@ function togglePanel(force){
     return {pfTs,ptTs,range};
   }
 
-  // Servicecodes: ALLE Codes einsammeln (Array), kein Fallback auf additionalCodes
   function serviceCodesOf(r){
     if(!r) return [];
     const set = new Set();
@@ -736,7 +750,6 @@ function togglePanel(force){
       arr.forEach(addFromVal);
     };
 
-    // 1. Original-Tabelle (DOM)
     try {
       const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
       if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
@@ -747,13 +760,11 @@ function togglePanel(force){
       }
     } catch(e){}
 
-    // 2. direkte API-Felder
     addFromVal(r.serviceCode);
     addFromVal(r.servicecode);
     addFromVal(r.service_code);
     addFromArr(r.serviceCodes);
 
-    // 3. service-Objekt
     if (r.service && typeof r.service === 'object'){
       addFromVal(r.service.code);
       addFromVal(r.service.serviceCode);
@@ -761,7 +772,6 @@ function togglePanel(force){
       addFromArr(r.service.serviceCodes);
     }
 
-    // 4. product-Objekt
     if (r.product && typeof r.product === 'object'){
       addFromVal(r.product.serviceCode);
       addFromVal(r.product.code);
@@ -773,7 +783,7 @@ function togglePanel(force){
     arr.sort((a,b)=>collator.compare(a,b));
     return arr;
   }
-  // AM2 = EXPRESS12
+
   const EXPRESS12_CODES = new Set([
     '104','107','135','196','210','225','226','227','231','232','234','237','238','239','240',
     '243','245','247','249','255','261','262','267','269','286','310','311','323','412','414',
@@ -781,7 +791,6 @@ function togglePanel(force){
     '786','797','811'
   ]);
 
-  // PM2 = EXPRESS18
   const EXPRESS18_CODES = new Set([
     '155','157','158','161','163','164','166','168','171','174',
     '219','224','230','236','265','318','324','378','419','422','423',
@@ -789,33 +798,15 @@ function togglePanel(force){
     '787','799','812'
   ]);
 
-    const EXPRESS_SERVICE_WHITELIST = new Set([
-    ...EXPRESS12_CODES,
-    ...EXPRESS18_CODES
-  ]);
-
-  function hasExpressServiceCode(r){
-    const arr = (r.__serviceCodes && r.__serviceCodes.length)
-      ? r.__serviceCodes
-      : serviceCodesOf(r);
-    return arr.some(c => EXPRESS_SERVICE_WHITELIST.has(String(c)));
-  }
+  const EXPRESS_SERVICE_WHITELIST = new Set([ ...EXPRESS12_CODES, ...EXPRESS18_CODES ]);
 
   function rowHasExpress12BySvc(r){
     const arr = r.__serviceCodes || serviceCodesOf(r);
     return arr.some(c => EXPRESS12_CODES.has(String(c)));
   }
-
   function rowHasExpress18BySvc(r){
     const arr = r.__serviceCodes || serviceCodesOf(r);
     return arr.some(c => EXPRESS18_CODES.has(String(c)));
-  }
-
-
-
-  function serviceOf(r){
-    const arr = serviceCodesOf(r);
-    return arr[0] || '';
   }
 
   function statusClass(text){
@@ -829,19 +820,14 @@ function togglePanel(force){
   function normRow(r){
     const pid=parcelId(r) || '';
     const {pfTs,ptTs,range}=buildPredictMeta(r);
-        const svcArr   = serviceCodesOf(r);
+    const svcArr   = serviceCodesOf(r);
     const isExpSvc = svcArr.some(c => EXPRESS_SERVICE_WHITELIST.has(String(c)));
 
     const isExp12  = svcArr.some(c => EXPRESS12_CODES.has(String(c)));
-    const isExp18  = !isExp12 && svcArr.some(c => EXPRESS18_CODES.has(String(c)));
-    const expType  = isExp12 ? '12' : (isExp18 ? '18' : '');
-
     const isDel    = delivered(r);
 
-
-    // Flag für „Express 12, nicht zugestellt, Predict > 12:00“
     let highlightLate12 = false;
-     if (isExp12 && !isDel && (pfTs || ptTs) && r.date){
+    if (isExp12 && !isDel && (pfTs || ptTs) && r.date){
       const cut = new Date(`${r.date}T12:00:00`);
       if(!isNaN(cut)){
         const cutTs = +cut;
@@ -863,11 +849,10 @@ function togglePanel(force){
       __predToTs:   ptTs,
       __predRangeStr: range,
       __codesStr: (addCodes(r)||[]).join(', ') || '—',
-      __expType: expType,
       __serviceCode: svcArr[0] || '',
       __serviceCodes: svcArr,
       __highlightLatePredict12: highlightLate12,
-      __isExpressSvc: isExpSvc       // << NEU
+      __isExpressSvc: isExpSvc
     };
   }
 
@@ -889,8 +874,7 @@ function togglePanel(force){
     return out;
   }
 
-
-  /* ====== TEIL 8/10 – Tabellen-UI, Sortierung, Modal (inkl. Predict immer) ====== */
+  /* ====== TEIL 8/10 – Tabellen-UI, Sortierung, Modal ====== */
 
   function buildHeaderHtml(){
     const ths=['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode','Servicecode','Predict'];
@@ -907,7 +891,7 @@ function togglePanel(force){
       </div>`;
   }
 
-   function rowHtml(r){
+  function rowHtml(r){
     const pkgCount = Number(r.__pkgCount || 1);
     const psnLabel = (r.__pid && pkgCount > 1)
       ? `${r.__pid} (+${pkgCount-1})`
@@ -916,14 +900,13 @@ function togglePanel(force){
     const pLink = r.__pid
       ? `<a class="${NS}plink" href=https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid} target="_blank" rel="noopener">${esc(psnLabel)}</a>`
       : '—';
-    const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
+
+    const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen (Popup)" data-psn="${esc(r.__pid)}">👁</button>` : '';
     const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
 
     const statusText = r.__status || '';
     const statusCls  = statusClass(statusText);
-    const statusCell = statusText
-      ? `<span class="${NS}badge ${statusCls}">${esc(statusText)}</span>`
-      : '';
+    const statusCell = statusText ? `<span class="${NS}badge ${statusCls}">${esc(statusText)}</span>` : '';
 
     const serviceBadges = (r.__serviceCodes && r.__serviceCodes.length)
       ? r.__serviceCodes.map(c => `<span class="${NS}badge">${esc(c)}</span>`).join(' ')
@@ -950,8 +933,7 @@ function togglePanel(force){
     return `<tr ${dataAttrs.join(' ')}>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
   }
 
-
-   function openModal(title,rowsOrHtml){
+  function openModal(title,rowsOrHtml){
     const m=document.getElementById(NS+'modal');
     const t=document.getElementById(NS+'modal-title');
     const b=document.getElementById(NS+'modal-body');
@@ -1005,20 +987,14 @@ function togglePanel(force){
 
       renderAll();
 
-      // <<< HIER: neuer Click-Handler für Zeilen >>>
-           if (tbody){
+      if (tbody){
         tbody.addEventListener('click', ev => {
           const tr = ev.target.closest('tr');
           if (!tr) return;
-
-          // Klick auf das Auge → Scanserver, nicht aufklappen
           if (ev.target.closest('.'+NS+'eye')) return;
-
-          // Inline-Detail ein/ausblenden
           toggleStopDetailInline(tr);
         });
       }
-
 
     } else {
       if(b) b.innerHTML=rowsOrHtml||'';
@@ -1075,7 +1051,6 @@ function togglePanel(force){
     const prioAll  = prioDeliveries;
     const prioOpen = prioDeliveries.filter(r=>!delivered(r));
 
-      // Express-Basis: nur Einträge mit Express-Servicecode
     const expRows=[...exp12Rows, ...exp18Rows].filter(r => r.__isExpressSvc);
 
     const seen=new Set();
@@ -1090,7 +1065,6 @@ function togglePanel(force){
     const expAll  = expDeliveries;
     const expOpen = expDeliveries.filter(r=>!delivered(r));
 
-    // „>11:01“ nur für 12er, ebenfalls über Servicecodes
     const expLate11 = expDeliveries
       .filter(rowHasExpress12BySvc)
       .filter(r=>{
@@ -1098,45 +1072,18 @@ function togglePanel(force){
         return (ft.getHours()>11) || (ft.getHours()===11 && ft.getMinutes()>=1);
       });
 
-
     return {prioAll,prioOpen,expAll,expOpen,expLate11};
   }
 
-   function filterByExpressSelection(rows){
+  function filterByExpressSelection(rows){
     if(state.filterExpress==='12') return rows.filter(rowHasExpress12BySvc);
     if(state.filterExpress==='18') return rows.filter(rowHasExpress18BySvc);
     return rows;
   }
 
-
-   function getFilteredExpressCounts(){
-    const f=state.filterExpress;
-    const filt = f==='12'
-      ? rowHasExpress12BySvc
-      : f==='18'
-      ? rowHasExpress18BySvc
-      : null;
-
-    const expAllList  = filt ? state._expAllList.filter(filt)  : state._expAllList;
-    const expOpenList = filt ? state._expOpenList.filter(filt) : state._expOpenList;
-    return {expAllCount:expAllList.length, expOpenCount:expOpenList.length};
-  }
-
-
-  function updateKpisForCurrentState(){
-    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
-    setKpis({
-      prioAll: state._prioAllList.length,
-      prioOpen:state._prioOpenList.length,
-      expAll:expAllCount,
-      expOpen:expOpenCount
-    });
-  }
   function groupRowsByStop(rows){
     const map = new Map();
-
     for (const r of rows){
-      // Schlüssel: stopId, sonst id, sonst Fallback
       const key =
         (r.stopId != null ? String(r.stopId) :
         (r.id     != null ? String(r.id)     :
@@ -1144,19 +1091,41 @@ function togglePanel(force){
 
       let g = map.get(key);
       if (!g){
-        // Basis ist die erste Zeile dieses Stopps
         g = { ...r };
         g.__pkgCount = 1;
-        g.__deliveryId = r.id != null ? r.id : null;   // für /dispatcher/api/delivery/{id}
+        g.__deliveryId = r.id != null ? r.id : null;
         map.set(key, g);
       } else {
         g.__pkgCount++;
       }
     }
-
     return Array.from(map.values());
   }
-   async function toggleStopDetailInline(tr){
+
+  // >>> NEU: KPI zählt Stops (wie Listen)
+  function countStops(rows){
+    return groupRowsByStop(rows || []).length;
+  }
+
+  function getFilteredExpressCounts(){
+    const rowsAll  = groupRowsByStop(filterByExpressSelection(state._expAllList || []));
+    const rowsOpen = groupRowsByStop(filterByExpressSelection(state._expOpenList || []));
+    return {expAllCount: rowsAll.length, expOpenCount: rowsOpen.length};
+  }
+
+  function updateKpisForCurrentState(){
+    const prioAllStops  = countStops(state._prioAllList);
+    const prioOpenStops = countStops(state._prioOpenList);
+    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
+    setKpis({
+      prioAll: prioAllStops,
+      prioOpen: prioOpenStops,
+      expAll: expAllCount,
+      expOpen: expOpenCount
+    });
+  }
+
+  async function toggleStopDetailInline(tr){
     if (!tr || !lastOkRequest) return;
     const delId = tr.getAttribute('data-delivery');
     if (!delId) return;
@@ -1164,14 +1133,12 @@ function togglePanel(force){
     const tbody = tr.parentNode;
     if (!tbody) return;
 
-    // Wenn bereits eine Detail-Zeile darunter ist → einklappen
     const next = tr.nextElementSibling;
     if (next && next.classList.contains(NS + 'detail-row')){
       next.remove();
       return;
     }
 
-    // Neue Detailzeile einfügen
     const detailRow = document.createElement('tr');
     detailRow.className = NS + 'detail-row';
     const colSpan = tr.children.length || 1;
@@ -1182,7 +1149,6 @@ function togglePanel(force){
     tbody.insertBefore(detailRow, tr.nextSibling);
 
     try{
-      // Cache nutzen
       let detail = deliveryDetailsCache.get(delId);
       if (!detail){
         const headers = buildHeaders(lastOkRequest.headers);
@@ -1204,11 +1170,16 @@ function togglePanel(force){
         const isExpSvc = EXPRESS_SERVICE_WHITELIST.has(String(svc));
         const els = Array.isArray(p.elements) ? p.elements.join(', ') : (p.elements || '');
         const prio = p.priority || '';
-        const psn  = p.parcelNumber || '';
+        const psn  = String(p.parcelNumber || '').replace(/\D+/g,'');
+        const psn14 = psn.length===13 ? ('0'+psn) : psn;
+
+        const eyeBtn = psn14
+          ? `<button class="${NS}eye" title="Scanserver öffnen (Popup)" data-psn="${esc(psn14)}">👁</button>`
+          : '';
 
         return `
           <tr class="${isExpSvc ? NS+'row-express' : ''}">
-            <td>${esc(psn)}</td>
+            <td>${eyeBtn}${esc(psn14 || '—')}</td>
             <td>${esc(svc || '—')}</td>
             <td>${esc(prio || '—')}</td>
             <td>${esc(els || '—')}</td>
@@ -1254,35 +1225,32 @@ function togglePanel(force){
   }
 
   function showPrioAll(){
-    const rows=state._prioAllList;
-    openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`,rows);
+    const grouped = groupRowsByStop(state._prioAllList);
+    openModal(`PRIO – in Ausrollung (alle) · ${grouped.length}`, grouped);
   }
   function showPrioOpen(){
-    const rows=state._prioOpenList;
-    openModal(`PRIO – noch nicht zugestellt · ${rows.length}`,rows);
+    const grouped = groupRowsByStop(state._prioOpenList);
+    openModal(`PRIO – noch nicht zugestellt · ${grouped.length}`, grouped);
   }
-   function showExpAll(){
-    const src  = state._expAllList;
-    const rows = filterByExpressSelection(src);
+
+  function showExpAll(){
+    const rows = filterByExpressSelection(state._expAllList);
     const grouped = groupRowsByStop(rows);
     const sel = state.filterExpress==='12' ? ' (12)' :
                 state.filterExpress==='18' ? ' (18)' : '';
     openModal(`Express${sel} – in Ausrollung (alle) · ${grouped.length}`, grouped);
   }
 
-     function showExpOpen(){
-    const src  = state._expOpenList;
-    const rows = filterByExpressSelection(src);
+  function showExpOpen(){
+    const rows = filterByExpressSelection(state._expOpenList);
     const grouped = groupRowsByStop(rows);
     const sel = state.filterExpress==='12' ? ' (12)' :
                 state.filterExpress==='18' ? ' (18)' : '';
     openModal(`Express${sel} – noch nicht zugestellt · ${grouped.length}`, grouped);
   }
 
-
-    function showExpLate11(){
-    const rows    = state._expLate11List.slice();
-    const grouped = groupRowsByStop(rows);
+  function showExpLate11(){
+    const grouped = groupRowsByStop(state._expLate11List.slice());
     openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${grouped.length}`, grouped);
   }
 
@@ -1308,13 +1276,12 @@ function togglePanel(force){
     state._expOpenList  = expOpen.slice();
     state._expLate11List= expLate11.slice();
 
-    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
-    setKpis({prioAll:prioAll.length, prioOpen:prioOpen.length, expAll:expAllCount, expOpen:expOpenCount});
+    updateKpisForCurrentState();
 
     state.events=[{
       id:++state.nextId,
       title:'Aktualisiert (FAST)',
-      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
+      meta:`PRIO (Stops): in Ausrollung ${countStops(state._prioAllList)} • offen ${countStops(state._prioOpenList)} • EXPRESS (Stops): in Ausrollung ${getFilteredExpressCounts().expAllCount} • offen ${getFilteredExpressCounts().expOpenCount} • „>11:01“ (Stops): ${countStops(state._expLate11List)}`,
       sev:'info',read:true,ts:Date.now()
     }];
   }
@@ -1325,6 +1292,7 @@ function togglePanel(force){
       fetchPaged((b,p)=>buildUrlElements(b,p,'023')),
       fetchPaged((b,p)=>buildUrlElements(b,p,'010'))
     ]);
+
     const prioN  = expandAndNorm(prioRes.rows);
     const exp12N = expandAndNorm(exp12Rows);
     const exp18N = expandAndNorm(exp18Rows);
@@ -1337,13 +1305,12 @@ function togglePanel(force){
     state._expOpenList  = expOpen.slice();
     state._expLate11List= expLate11.slice();
 
-    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
-    setKpis({prioAll:prioAll.length, prioOpen:prioOpen.length, expAll:expAllCount, expOpen:expOpenCount});
+    updateKpisForCurrentState();
 
     state.events=[{
       id:++state.nextId,
       title:'Aktualisiert',
-      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
+      meta:`PRIO (Stops): in Ausrollung ${countStops(state._prioAllList)} • offen ${countStops(state._prioOpenList)} • EXPRESS (Stops): in Ausrollung ${getFilteredExpressCounts().expAllCount} • offen ${getFilteredExpressCounts().expOpenCount} • „>11:01“ (Stops): ${countStops(state._expLate11List)}`,
       sev:'info',read:true,ts:Date.now()
     }];
   }
@@ -1373,7 +1340,7 @@ function togglePanel(force){
       isBusy=true; setLoading(true); dimButtons(true);
       addEvent({
         title:'Aktualisiere (API)…',
-        meta:'FAST-Paging • Fahrer aus Fahrzeugübersicht • Status & Servicecode direkt aus API',
+        meta:'FAST-Paging • Fahrer aus Fahrzeugübersicht • Status & Servicecode direkt aus API • Scanserver im Popup • (+x) Gruppierung • KPI = Stops',
         sev:'info',read:true
       });
       render();
