@@ -1,16 +1,16 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      5.8
+// @version      6.0
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Excel-Import und Mehrfachauswahl (Button/Contextmenü).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
-// @match        https://scanserver-d001*.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*
-// @match        http://scanserver-d001*.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*
+// Läuft auf allen passenden scanserver-d001#### Hosts:
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
+
 
 (function () {
     'use strict';
