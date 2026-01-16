@@ -56,11 +56,9 @@
     {
       "id": "tool-aseapin",
       "name": "ASEA PIN Freigabe",
-      "version": "5.8",
+      "version": "6.0",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js",
       "match": [
-        "https://scanserver-d001*.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*",
-        "http://scanserver-d001*.ssw.dpdit.de/cgi-bin/scanmonitor.cgi*",
         "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/scanmonitor\\.cgi.*$/"
       ],
       "grants": [
