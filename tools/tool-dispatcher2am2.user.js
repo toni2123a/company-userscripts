@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      7.0.1
+// @version      7.2.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
-// @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver als Popup. Auge auch in aufgeklappten PSNs. (+x) Gruppierung (mehr Pakete am Stop) in ALLEN Listen. KPI-Zählung basiert auf Stop-Gruppierung (wie die Listen), nicht auf Pakete-Anzahl.
+// @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver. + Systempartner aus lokaler TourMap (IndexedDB).
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        none
@@ -40,6 +40,7 @@
   const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const norm = s => String(s||'').replace(/\s+/g,' ').trim();
+  const tourKey = t => String(t||'').replace(/[^\dA-Za-z]/g,'').trim();
 
   const state = {
     filterExpress: 'all',
@@ -51,7 +52,7 @@
     _expAllList: [],
     _expOpenList: [],
     _expLate11List: [],
-    _modal: { rows: [], opts: {}, title: '' }
+    _modal: { rows: [], opts: {}, title: '', selected: new Set() }
   };
 
   let lastOkRequest = null;
@@ -61,6 +62,130 @@
   let isLoading     = false;
 
   const collator = new Intl.Collator('de', { numeric:true, sensitivity:'base' });
+
+  /* ====== NEU: Tour->Systempartner Map aus IndexedDB (fvpr_db.tourMap) ====== */
+
+  const TP_IDB_NAME = 'fvpr_db';
+  const TP_IDB_VER  = 2;
+  const TP_STORE    = 'tourMap';
+  let tourPartnerMap = new Map(); // tourKey -> partner
+
+// ====== NEU: Partner-Emails aus fvpr_db.partners ======
+const TP_PARTNERS_STORE = 'partners';
+
+async function tpIdbGet(store, key){
+  const db = await tpIdbOpen();
+  return new Promise((res, rej) => {
+    const r = db.transaction(store,'readonly').objectStore(store).get(key);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+async function getPartnerMailRecord(partnerName){
+  const key = norm(partnerName || '');
+  if(!key) return null;
+  try{
+    return await tpIdbGet(TP_PARTNERS_STORE, key);
+  }catch(e){
+    console.warn('[PM] getPartnerMailRecord', e);
+    return null;
+  }
+}
+
+function splitEmails(raw){ return (raw||'').split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean); }
+function isEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
+function normalizeEmailList(raw){
+  const arr = splitEmails(raw);
+  const valid=[], invalid=[], seen=new Set();
+  for(const a of arr){
+    const low=a.toLowerCase();
+    if(seen.has(low)) continue;
+    seen.add(low);
+    (isEmail(a)?valid:invalid).push(a);
+  }
+  return {valid, invalid};
+}
+function openMailto(subject, to, cc){
+  const toStr = (to || '').trim();
+  const ccStr = (cc || '').trim();
+
+  const params = new URLSearchParams();
+  if (subject) params.set('subject', subject);
+  if (ccStr)   params.set('cc', ccStr);
+
+  // Wichtig: Empfänger steht im "mailto:"-Pfad, nicht als Parameter
+  const href = `mailto:${encodeURIComponent(toStr)}?${params.toString()}`;
+  window.location.href = href;
+}
+
+async function copyHtmlToClipboard(html){
+  try{
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error('ClipboardItem nicht verfügbar');
+
+    const blobHtml = new Blob([html], { type: 'text/html' });
+    const blobTxt  = new Blob([html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()], { type: 'text/plain' });
+
+    const item = new ClipboardItem({
+      'text/html': blobHtml,
+      'text/plain': blobTxt
+    });
+
+    await navigator.clipboard.write([item]);
+    return true;
+  }catch(e){
+    console.warn('[PM] copyHtmlToClipboard failed', e);
+    // Fallback: wenigstens Text kopieren
+    try{
+      await navigator.clipboard.writeText(
+        html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()
+      );
+      return true;
+    }catch(e2){
+      console.warn('[PM] clipboard text fallback failed', e2);
+      return false;
+    }
+  }
+}
+
+  function tpIdbOpen(){
+    return new Promise((res,rej)=>{
+      const req = indexedDB.open(TP_IDB_NAME, TP_IDB_VER);
+      req.onupgradeneeded = () => {
+        const db=req.result;
+        if(!db.objectStoreNames.contains(TP_STORE)){
+          db.createObjectStore(TP_STORE,{keyPath:'tour'});
+        }
+      };
+      req.onsuccess=()=>res(req.result);
+      req.onerror=()=>rej(req.error);
+    });
+  }
+
+  async function tpIdbAll(store){
+    const db=await tpIdbOpen();
+    return new Promise((res,rej)=>{
+      const r=db.transaction(store,'readonly').objectStore(store).getAll();
+      r.onsuccess=()=>res(r.result||[]);
+      r.onerror=()=>rej(r.error);
+    });
+  }
+
+  async function loadTourPartnerMap(){
+    try{
+      const rows = await tpIdbAll(TP_STORE);
+      const m = new Map();
+      for(const r of rows){
+        const t = tourKey(r.tour||'');
+        const p = norm(r.partner||'');
+        if(t && p) m.set(t,p);
+      }
+      tourPartnerMap = m;
+    }catch(e){
+      console.warn('[PM] loadTourPartnerMap', e);
+      tourPartnerMap = new Map();
+    }
+  }
 
   /* ====== TEIL 2/10 – Styles + Panel/Modal UI ====== */
 
@@ -86,18 +211,16 @@
     .${NS}loading.on{display:block}
     .${NS}modal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.35);z-index:100001}
     .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
-    .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
+   .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
     .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
     .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
     .${NS}tbl th, .${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
     .${NS}row-late12{background:#fee2e2;}
     .${NS}detail-row > td{background:#f9fafb;padding:6px 8px;}
     .${NS}detail-inner{border-top:1px solid rgba(0,0,0,.08);margin-top:4px;padding-top:4px;}
     .${NS}detail-inner table{width:100%;border-collapse:collapse;font-size:11px;}
     .${NS}detail-inner th, .${NS}detail-inner td{border-bottom:1px solid rgba(0,0,0,.06);padding:3px 4px;white-space:nowrap;}
     .${NS}row-express{background:#dcfce7;}
-
     .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
     .${NS}sort-asc::after{content:" ▲";font-size:11px}
     .${NS}sort-desc::after{content:" ▼";font-size:11px}
@@ -107,55 +230,12 @@
     .${NS}badge-status-ok{background:#16a34a;color:#fff;border-color:#15803d}
     .${NS}badge-status-problem{background:#dc2626;color:#fff;border-color:#b91c1c}
     .${NS}badge-status-run{background:#eab308;color:#111827;border-color:#ca8a04}
-
-    .${NS}popup{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:100002}
-    .${NS}popup-inner{background:#fff;width:min(1600px,96vw);height:min(92vh,1100px);border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.22);border:1px solid rgba(0,0,0,.12);overflow:hidden;display:flex;flex-direction:column}
-    .${NS}popup-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;background:#fff}
-    .${NS}popup-iframe{width:100%;height:100%;border:0}
     `;
     document.head.appendChild(style);
   }
 
-  function mountPopup(){
-    if (document.getElementById(NS+'popup')) return;
-    const pop=document.createElement('div');
-    pop.id=NS+'popup';
-    pop.className=NS+'popup';
-    pop.innerHTML = `
-      <div class="${NS}popup-inner">
-        <div class="${NS}popup-head">
-          <div id="${NS}popup-title">Scanserver</div>
-          <button class="${NS}btn-sm" data-action="closePopup">Schließen</button>
-        </div>
-        <iframe id="${NS}popup-iframe" class="${NS}popup-iframe" sandbox="allow-forms allow-same-origin allow-scripts allow-popups"></iframe>
-      </div>
-    `;
-    document.body.appendChild(pop);
-
-    pop.addEventListener('click', (e)=>{
-      if (e.target === pop || e.target?.dataset?.action === 'closePopup') hidePopup();
-    });
-  }
-
-  function openPopup(url, title){
-    mountPopup();
-    const pop = document.getElementById(NS+'popup');
-    const t   = document.getElementById(NS+'popup-title');
-    const fr  = document.getElementById(NS+'popup-iframe');
-    if (t)  t.textContent = title || 'Scanserver';
-    if (fr) fr.src = url || 'about:blank';
-    if (pop) pop.style.display = 'flex';
-  }
-  function hidePopup(){
-    const pop = document.getElementById(NS+'popup');
-    const fr  = document.getElementById(NS+'popup-iframe');
-    if (fr) fr.src = 'about:blank';
-    if (pop) pop.style.display = 'none';
-  }
-
   function mountUI(){
     ensureStyles();
-    mountPopup();
     if (document.getElementById(NS+'panel')) return;
 
     const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
@@ -198,13 +278,17 @@
 
     const modal=document.createElement('div'); modal.id=NS+'modal'; modal.className=NS+'modal';
     modal.innerHTML = `
-      <div class="${NS}modal-inner">
-        <div class="${NS}modal-head">
-          <div id="${NS}modal-title">Liste</div>
-          <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
-        </div>
-        <div class="${NS}modal-body" id="${NS}modal-body"></div>
-      </div>`;
+  <div class="${NS}modal-inner">
+    <div class="${NS}modal-head">
+      <div id="${NS}modal-title">Liste</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="${NS}btn-sm" data-action="mailSelected" style="display:none" id="${NS}mail-selected">Mail an Systempartner</button>
+        <button class="${NS}btn-sm" data-action="closeModal">Schließen</button>
+      </div>
+    </div>
+    <div class="${NS}modal-body" id="${NS}modal-body"></div>
+  </div>`;
+
     document.body.appendChild(modal);
 
     panel.addEventListener('click', async (e)=>{
@@ -225,9 +309,7 @@
       expSel.addEventListener('change', ()=>{
         state.filterExpress = expSel.value || 'all';
         if (document.getElementById(NS+'modal')?.style.display === 'flex') {
-          if (/PRIO/i.test(state._modal.title) && /noch nicht zugestellt/i.test(state._modal.title)) showPrioOpen();
-          else if (/PRIO/i.test(state._modal.title)) showPrioAll();
-          else if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
+          if (/noch nicht zugestellt/i.test(state._modal.title)) showExpOpen();
           else if (/falsch einsortiert/i.test(state._modal.title)) showExpLate11();
           else showExpAll();
         }
@@ -242,6 +324,8 @@
       const a=btn.dataset.action;
       if(a==='guessDepot'){ guessDepotFromVehicles(); return; }
       if(a==='saveSettings'){ saveSettingsFromModal(); return; }
+      if(a==='mailSelected'){ mailSelectedLate11().catch(console.error); return; }
+
     });
 
     const autoDot  = document.getElementById(NS+'auto-dot');
@@ -253,7 +337,7 @@
     if (!state._bootShown){
       addEvent({
         title:'Bereit',
-        meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01 • Scanserver im Popup • (+x) Gruppierung in allen Listen • KPI = Stop-Anzahl',
+        meta:'Status & Servicecode direkt aus API • Fahrer aus Fahrzeugübersicht • Systempartner aus lokaler TourMap • sortierbare Spalten • Predict-Zeitfenster • EXPRESS12 >11:01',
         sev:'info', read:true
       });
       state._bootShown=true;
@@ -395,12 +479,7 @@
     params.set('_csv','0');
     return `${base}?${params.toString()}`;
   }
-
-  function openScanserver(psn){
-    const url = buildScanserverUrl(psn);
-    if (!url) return;
-    openPopup(url, `Scanserver · ${String(psn||'').replace(/\D+/g,'')}`);
-  }
+  function openScanserver(psn){ const url=buildScanserverUrl(psn); if(url) window.open(url,'_blank','noopener'); }
 
   /* ====== TEIL 4/10 – Network-Hook (API klonen) ====== */
 
@@ -471,7 +550,9 @@
 
   /* ====== TEIL 5/10 – Fahrer-Map aus Fahrzeugübersicht ====== */
 
-  const gridIndex = { tour2driver: new Map() };
+  const gridIndex = {
+    tour2driver: new Map()
+  };
   const deliveryDetailsCache = new Map();
 
   function detectTourDriverCols(tbl){
@@ -499,7 +580,7 @@
         tds[i]?.querySelector?.('[title]')?.getAttribute('title') ||
         tds[i]?.innerText || tds[i]?.textContent || ''
       );
-      const tour = get(iTour).replace(/[^\dA-Za-z]/g,'');
+      const tour = tourKey(get(iTour));
       const drv  = get(iDrv);
       if(tour && drv && !map.has(tour)){ map.set(tour,drv); added++; }
     }
@@ -709,11 +790,16 @@
   function driverOf(r){
     const direct = r.driverName || r.driver || r.courierName || r.riderName || r.tourDriver || '';
     if(direct && direct.trim()) return direct.trim();
-    const key = String(tourOf(r)||'').replace(/[^\dA-Za-z]/g,'');
+    const key = tourKey(tourOf(r)||'');
     const viaGrid =
       (gridIndex.tour2driver && gridIndex.tour2driver.get(key)) ||
       (window.__pmTour2Driver instanceof Map ? window.__pmTour2Driver.get(key) : '');
     return (viaGrid || '—').trim() || '—';
+  }
+
+  function partnerOfTour(tour){
+    const k = tourKey(tour||'');
+    return tourPartnerMap.get(k) || '—';
   }
 
   function formatHHMM(d){
@@ -750,16 +836,6 @@
       arr.forEach(addFromVal);
     };
 
-    try {
-      const pidClean = String(parcelId(r) || '').replace(/\D+/g,'');
-      if (pidClean && typeof gridIndex !== 'undefined' && gridIndex.serviceByPsn instanceof Map){
-        const domVal =
-          gridIndex.serviceByPsn.get(pidClean) ||
-          gridIndex.serviceByPsn.get(pidClean.padStart(14,'0'));
-        if (domVal) addFromVal(domVal);
-      }
-    } catch(e){}
-
     addFromVal(r.serviceCode);
     addFromVal(r.servicecode);
     addFromVal(r.service_code);
@@ -786,7 +862,7 @@
 
   const EXPRESS12_CODES = new Set([
     '104','107','135','196','210','225','226','227','231','232','234','237','238','239','240',
-    '243','245','247','249','255','261','262','267','269','286','310','311','323','412','414',
+    '243','245','247','249','255','261','262','267','269','286','310','311','323','379','412','414',
     '452','453','458','459','488','490','503','505','530','531','537','538','542','547','567',
     '786','797','811'
   ]);
@@ -798,12 +874,16 @@
     '787','799','812'
   ]);
 
-  const EXPRESS_SERVICE_WHITELIST = new Set([ ...EXPRESS12_CODES, ...EXPRESS18_CODES ]);
+  const EXPRESS_SERVICE_WHITELIST = new Set([
+    ...EXPRESS12_CODES,
+    ...EXPRESS18_CODES
+  ]);
 
   function rowHasExpress12BySvc(r){
     const arr = r.__serviceCodes || serviceCodesOf(r);
     return arr.some(c => EXPRESS12_CODES.has(String(c)));
   }
+
   function rowHasExpress18BySvc(r){
     const arr = r.__serviceCodes || serviceCodesOf(r);
     return arr.some(c => EXPRESS18_CODES.has(String(c)));
@@ -824,6 +904,9 @@
     const isExpSvc = svcArr.some(c => EXPRESS_SERVICE_WHITELIST.has(String(c)));
 
     const isExp12  = svcArr.some(c => EXPRESS12_CODES.has(String(c)));
+    const isExp18  = !isExp12 && svcArr.some(c => EXPRESS18_CODES.has(String(c)));
+    const expType  = isExp12 ? '12' : (isExp18 ? '18' : '');
+
     const isDel    = delivered(r);
 
     let highlightLate12 = false;
@@ -837,18 +920,23 @@
       }
     }
 
+    const t = tourOf(r) || '';
+    const sysPartner = partnerOfTour(t);
+
     return {
       ...r,
       __pid: pid,
       __addr: [addrOf(r), placeOf(r)].filter(Boolean).join(' · ') || '—',
       __driver: driverOf(r),
       __tourNum: Number(tourOf(r) || 0),
+      __systempartner: sysPartner,           // <<< NEU
       __status: statusOf(r) || '',
       __delivTs: deliveredTime(r) ? deliveredTime(r).getTime() : 0,
       __predFromTs: pfTs,
       __predToTs:   ptTs,
       __predRangeStr: range,
       __codesStr: (addCodes(r)||[]).join(', ') || '—',
+      __expType: expType,
       __serviceCode: svcArr[0] || '',
       __serviceCodes: svcArr,
       __highlightLatePredict12: highlightLate12,
@@ -876,37 +964,48 @@
 
   /* ====== TEIL 8/10 – Tabellen-UI, Sortierung, Modal ====== */
 
-  function buildHeaderHtml(){
-    const ths=['Paketscheinnummer','Adresse','Fahrer','Tour','Status','Zustellzeit','Zusatzcode','Servicecode','Predict'];
-    return `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
-  }
+  function buildHeaderHtml(selectable=false){
+  const base = ['Paketscheinnummer','Adresse','Fahrer','Tour','Systempartner','Status','Zustellzeit','Zusatzcode','Servicecode','Predict'];
+  const ths  = selectable ? ['✓', ...base] : base;
+  return `<tr>${ths.map((h,i)=>`<th data-col="${i}">${h}</th>`).join('')}</tr>`;
+}
 
-  function buildTableShell(){
-    return `
-      <div id="${NS}vt-wrap" style="position:relative;height:min(70vh,720px);overflow:auto">
-        <table class="${NS}tbl">
-          <thead>${buildHeaderHtml()}</thead>
-          <tbody id="${NS}vt-body"></tbody>
-        </table>
-      </div>`;
-  }
+function buildTableShell(selectable=false){
+  return `
+    <div id="${NS}vt-wrap" style="position:relative;height:min(70vh,720px);overflow:auto">
+      <table class="${NS}tbl">
+        <thead>${buildHeaderHtml(selectable)}</thead>
+        <tbody id="${NS}vt-body"></tbody>
+      </table>
+    </div>`;
+}
 
-  function rowHtml(r){
+
+  function rowHtml(r, selectable=false){
+      // key für Auswahl: stopId > deliveryId > psn
+  const selKey = String(r.stopId ?? r.id ?? r.__pid ?? '');
+  const checked = selectable && state._modal.selected?.has(selKey) ? 'checked' : '';
+  const selCell = selectable
+    ? `<input type="checkbox" data-sel="1" data-key="${esc(selKey)}" ${checked} />`
+    : null;
     const pkgCount = Number(r.__pkgCount || 1);
     const psnLabel = (r.__pid && pkgCount > 1)
       ? `${r.__pid} (+${pkgCount-1})`
       : (r.__pid || '—');
 
     const pLink = r.__pid
-      ? `<a class="${NS}plink" href=https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid} target="_blank" rel="noopener">${esc(psnLabel)}</a>`
+      ? `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${r.__pid}"
+ target="_blank" rel="noopener">${esc(psnLabel)}</a>`
       : '—';
 
-    const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen (Popup)" data-psn="${esc(r.__pid)}">👁</button>` : '';
+    const eye = r.__pid ? `<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(r.__pid)}">👁</button>` : '';
     const dtime = r.__delivTs ? formatHHMM(new Date(r.__delivTs)) : '—';
 
     const statusText = r.__status || '';
     const statusCls  = statusClass(statusText);
-    const statusCell = statusText ? `<span class="${NS}badge ${statusCls}">${esc(statusText)}</span>` : '';
+    const statusCell = statusText
+      ? `<span class="${NS}badge ${statusCls}">${esc(statusText)}</span>`
+      : '';
 
     const serviceBadges = (r.__serviceCodes && r.__serviceCodes.length)
       ? r.__serviceCodes.map(c => `<span class="${NS}badge">${esc(c)}</span>`).join(' ')
@@ -919,18 +1018,19 @@
       esc(r.__addr),
       esc(r.__driver),
       esc(String(r.__tourNum||'—')),
+      esc(String(r.__systempartner||'—')),  // <<< NEU
       statusCell,
       esc(dtime),
       esc(r.__codesStr),
       serviceBadges,
       esc(pred)
     ];
-
+    const finalCells = selectable ? [selCell, ...cells] : cells;
     const dataAttrs = [];
     if (r.id != null)     dataAttrs.push(`data-delivery="${esc(String(r.id))}"`);
     if (r.stopId != null) dataAttrs.push(`data-stop="${esc(String(r.stopId))}"`);
 
-    return `<tr ${dataAttrs.join(' ')}>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+    return `<tr ${dataAttrs.join(' ')}>${finalCells.map(v=>`<td>${v}</td>`).join('')}</tr>`;
   }
 
   function openModal(title,rowsOrHtml){
@@ -940,65 +1040,100 @@
     if(t) t.textContent=title||'';
 
     if(Array.isArray(rowsOrHtml)){
-      const rows=rowsOrHtml.slice();
-      state._modal={rows,opts:{showPredict:true},title:title||''};
+  const rows = rowsOrHtml.slice();
+  const selectable = /falsch einsortiert/i.test(title||'');
 
-      if(b) b.innerHTML=buildTableShell();
-      const tbody=document.getElementById(NS+'vt-body');
-      const wrap =document.getElementById(NS+'vt-wrap');
+  state._modal = {
+    rows,
+    opts: { showPredict:true, selectable },
+    title: title || '',
+    selected: state._modal.selected instanceof Set ? state._modal.selected : new Set()
+  };
 
-      function renderAll(){
-        if(!tbody) return;
-        tbody.innerHTML = rows.map(r=>rowHtml(r)).join('');
-      }
+  // NUR EINMAL setzen
+  if(b) b.innerHTML = buildTableShell(selectable);
 
-      const thead = wrap.querySelector('thead');
-      if(thead){
-        thead.addEventListener('click',ev=>{
-          const th=ev.target.closest('th'); if(!th) return;
-          const col=Number(th.dataset.col||0);
-          Array.from(thead.querySelectorAll('th')).forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
-          const asc=!(th.dataset.dir==='asc'); th.dataset.dir=asc?'asc':'desc';
-          th.classList.add(asc?NS+'sort-asc':NS+'sort-desc');
+  // JETZT DOM-Refs holen (nach dem innerHTML!)
+  const tbody = document.getElementById(NS+'vt-body');
+  const wrap  = document.getElementById(NS+'vt-wrap');
 
-          const getKey=r=>{
-            switch(col){
-              case 0: return r.__pid;
-              case 1: return r.__addr;
-              case 2: return r.__driver;
-              case 3: return r.__tourNum;
-              case 4: return r.__status || '';
-              case 5: return r.__delivTs;
-              case 6: return r.__codesStr;
-              case 7: return r.__serviceCode || '';
-              case 8: return r.__predFromTs || 0;
-              default: return '';
-            }
-          };
-          rows.sort((a,b)=>{
-            const A=getKey(a),B=getKey(b);
-            if(typeof A==='number' && typeof B==='number') return asc?(A-B):(B-A);
-            return asc ? collator.compare(String(A),String(B)) : collator.compare(String(B),String(A));
-          });
-          state._modal.rows=rows;
-          renderAll();
-        });
-      }
+  function renderAll(){
+    if(!tbody) return;
+    tbody.innerHTML = rows.map(r => rowHtml(r, selectable)).join('');
+  }
 
+  // Mail-Button nur in Late11 anzeigen
+  const mailBtn = document.getElementById(NS+'mail-selected');
+  if(mailBtn) mailBtn.style.display = selectable ? '' : 'none';
+
+  // Checkbox handler (nur wenn selectable)
+  if (tbody && selectable){
+    tbody.addEventListener('change', ev=>{
+      const cb = ev.target.closest('input[type="checkbox"][data-sel="1"]');
+      if(!cb) return;
+      const key = String(cb.dataset.key||'');
+      if(!key) return;
+      if(cb.checked) state._modal.selected.add(key);
+      else state._modal.selected.delete(key);
+    }, { passive:true });
+  }
+
+  // Sortierung
+  const thead = wrap?.querySelector('thead');
+  if(thead){
+    thead.addEventListener('click',ev=>{
+      const th=ev.target.closest('th'); if(!th) return;
+      const col=Number(th.dataset.col||0);
+
+      Array.from(thead.querySelectorAll('th')).forEach(x=>x.classList.remove(NS+'sort-asc',NS+'sort-desc'));
+      const asc=!(th.dataset.dir==='asc'); th.dataset.dir=asc?'asc':'desc';
+      th.classList.add(asc?NS+'sort-asc':NS+'sort-desc');
+
+      const offset = selectable ? 1 : 0; // <- WICHTIG: Checkbox-Spalte verschiebt Indizes
+
+      const getKey=r=>{
+        switch(col - offset){
+          case 0: return r.__pid;
+          case 1: return r.__addr;
+          case 2: return r.__driver;
+          case 3: return r.__tourNum;
+          case 4: return r.__systempartner || '';
+          case 5: return r.__status || '';
+          case 6: return r.__delivTs;
+          case 7: return r.__codesStr;
+          case 8: return r.__serviceCode || '';
+          case 9: return r.__predFromTs || 0;
+          default: return '';
+        }
+      };
+
+      rows.sort((a,b)=>{
+        const A=getKey(a),B=getKey(b);
+        if(typeof A==='number' && typeof B==='number') return asc?(A-B):(B-A);
+        return asc ? collator.compare(String(A),String(B)) : collator.compare(String(B),String(A));
+      });
+
+      state._modal.rows = rows;
       renderAll();
+    }, { passive:true });
+  }
 
-      if (tbody){
-        tbody.addEventListener('click', ev => {
-          const tr = ev.target.closest('tr');
-          if (!tr) return;
-          if (ev.target.closest('.'+NS+'eye')) return;
-          toggleStopDetailInline(tr);
-        });
-      }
+  renderAll();
 
-    } else {
-      if(b) b.innerHTML=rowsOrHtml||'';
-    }
+  // Detail toggle
+  if (tbody){
+    tbody.addEventListener('click', ev => {
+      const tr = ev.target.closest('tr');
+      if (!tr) return;
+      if (ev.target.closest('.'+NS+'eye')) return;
+      toggleStopDetailInline(tr);
+    }, { passive:true });
+  }
+
+} else {
+  if(b) b.innerHTML = rowsOrHtml || '';
+}
+
 
     if(m) m.style.display='flex';
   }
@@ -1081,6 +1216,29 @@
     return rows;
   }
 
+  function getFilteredExpressCounts(){
+    const f=state.filterExpress;
+    const filt = f==='12'
+      ? rowHasExpress12BySvc
+      : f==='18'
+      ? rowHasExpress18BySvc
+      : null;
+
+    const expAllList  = filt ? state._expAllList.filter(filt)  : state._expAllList;
+    const expOpenList = filt ? state._expOpenList.filter(filt) : state._expOpenList;
+    return {expAllCount:expAllList.length, expOpenCount:expOpenList.length};
+  }
+
+  function updateKpisForCurrentState(){
+    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
+    setKpis({
+      prioAll: state._prioAllList.length,
+      prioOpen:state._prioOpenList.length,
+      expAll:expAllCount,
+      expOpen:expOpenCount
+    });
+  }
+
   function groupRowsByStop(rows){
     const map = new Map();
     for (const r of rows){
@@ -1100,29 +1258,6 @@
       }
     }
     return Array.from(map.values());
-  }
-
-  // >>> NEU: KPI zählt Stops (wie Listen)
-  function countStops(rows){
-    return groupRowsByStop(rows || []).length;
-  }
-
-  function getFilteredExpressCounts(){
-    const rowsAll  = groupRowsByStop(filterByExpressSelection(state._expAllList || []));
-    const rowsOpen = groupRowsByStop(filterByExpressSelection(state._expOpenList || []));
-    return {expAllCount: rowsAll.length, expOpenCount: rowsOpen.length};
-  }
-
-  function updateKpisForCurrentState(){
-    const prioAllStops  = countStops(state._prioAllList);
-    const prioOpenStops = countStops(state._prioOpenList);
-    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
-    setKpis({
-      prioAll: prioAllStops,
-      prioOpen: prioOpenStops,
-      expAll: expAllCount,
-      expOpen: expOpenCount
-    });
   }
 
   async function toggleStopDetailInline(tr){
@@ -1166,27 +1301,30 @@
       const parcels = Array.isArray(detail.parcels) ? detail.parcels : [];
 
       const rowsHtml = parcels.map(p => {
-        const svc = p.serviceCode || '';
-        const isExpSvc = EXPRESS_SERVICE_WHITELIST.has(String(svc));
-        const els = Array.isArray(p.elements) ? p.elements.join(', ') : (p.elements || '');
-        const prio = p.priority || '';
-        const psn  = String(p.parcelNumber || '').replace(/\D+/g,'');
-        const psn14 = psn.length===13 ? ('0'+psn) : psn;
+  const svc = p.serviceCode || '';
+  const isExpSvc = EXPRESS_SERVICE_WHITELIST.has(String(svc));
+  const els = Array.isArray(p.elements) ? p.elements.join(', ') : (p.elements || '');
+  const prio = p.priority || '';
 
-        const eyeBtn = psn14
-          ? `<button class="${NS}eye" title="Scanserver öffnen (Popup)" data-psn="${esc(psn14)}">👁</button>`
-          : '';
+  let psn = String(p.parcelNumber || '').replace(/\D+/g,'');
+  if (psn.length === 13) psn = '0' + psn;
 
-        return `
-          <tr class="${isExpSvc ? NS+'row-express' : ''}">
-            <td>${eyeBtn}${esc(psn14 || '—')}</td>
-            <td>${esc(svc || '—')}</td>
-            <td>${esc(prio || '—')}</td>
-            <td>${esc(els || '—')}</td>
-            <td>${isExpSvc ? 'EXPRESS' : 'Normal'}</td>
-          </tr>
-        `;
-      }).join('');
+  const psnCell = psn
+    ? `${`<button class="${NS}eye" title="Scanserver öffnen" data-psn="${esc(psn)}">👁</button>`}` +
+      `<a class="${NS}plink" href="https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${esc(psn)}" target="_blank" rel="noopener">${esc(psn)}</a>`
+    : '—';
+
+  return `
+    <tr class="${isExpSvc ? NS+'row-express' : ''}">
+      <td>${psnCell}</td>
+      <td>${esc(svc || '—')}</td>
+      <td>${esc(prio || '—')}</td>
+      <td>${esc(els || '—')}</td>
+      <td>${isExpSvc ? 'EXPRESS' : 'Normal'}</td>
+    </tr>
+  `;
+}).join('');
+
 
       const addr = [
         detail.addressStreet,
@@ -1225,16 +1363,16 @@
   }
 
   function showPrioAll(){
-    const grouped = groupRowsByStop(state._prioAllList);
-    openModal(`PRIO – in Ausrollung (alle) · ${grouped.length}`, grouped);
+    const rows=state._prioAllList;
+    openModal(`PRIO – in Ausrollung (alle) · ${rows.length}`,rows);
   }
   function showPrioOpen(){
-    const grouped = groupRowsByStop(state._prioOpenList);
-    openModal(`PRIO – noch nicht zugestellt · ${grouped.length}`, grouped);
+    const rows=state._prioOpenList;
+    openModal(`PRIO – noch nicht zugestellt · ${rows.length}`,rows);
   }
-
   function showExpAll(){
-    const rows = filterByExpressSelection(state._expAllList);
+    const src  = state._expAllList;
+    const rows = filterByExpressSelection(src);
     const grouped = groupRowsByStop(rows);
     const sel = state.filterExpress==='12' ? ' (12)' :
                 state.filterExpress==='18' ? ' (18)' : '';
@@ -1242,7 +1380,8 @@
   }
 
   function showExpOpen(){
-    const rows = filterByExpressSelection(state._expOpenList);
+    const src  = state._expOpenList;
+    const rows = filterByExpressSelection(src);
     const grouped = groupRowsByStop(rows);
     const sel = state.filterExpress==='12' ? ' (12)' :
                 state.filterExpress==='18' ? ' (18)' : '';
@@ -1250,7 +1389,8 @@
   }
 
   function showExpLate11(){
-    const grouped = groupRowsByStop(state._expLate11List.slice());
+    const rows    = state._expLate11List.slice();
+    const grouped = groupRowsByStop(rows);
     openModal(`Express 12 – falsch einsortiert (>11:01 geplant) · ${grouped.length}`, grouped);
   }
 
@@ -1276,12 +1416,13 @@
     state._expOpenList  = expOpen.slice();
     state._expLate11List= expLate11.slice();
 
-    updateKpisForCurrentState();
+    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
+    setKpis({prioAll:prioAll.length, prioOpen:prioOpen.length, expAll:expAllCount, expOpen:expOpenCount});
 
     state.events=[{
       id:++state.nextId,
       title:'Aktualisiert (FAST)',
-      meta:`PRIO (Stops): in Ausrollung ${countStops(state._prioAllList)} • offen ${countStops(state._prioOpenList)} • EXPRESS (Stops): in Ausrollung ${getFilteredExpressCounts().expAllCount} • offen ${getFilteredExpressCounts().expOpenCount} • „>11:01“ (Stops): ${countStops(state._expLate11List)}`,
+      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
       sev:'info',read:true,ts:Date.now()
     }];
   }
@@ -1292,7 +1433,6 @@
       fetchPaged((b,p)=>buildUrlElements(b,p,'023')),
       fetchPaged((b,p)=>buildUrlElements(b,p,'010'))
     ]);
-
     const prioN  = expandAndNorm(prioRes.rows);
     const exp12N = expandAndNorm(exp12Rows);
     const exp18N = expandAndNorm(exp18Rows);
@@ -1305,12 +1445,13 @@
     state._expOpenList  = expOpen.slice();
     state._expLate11List= expLate11.slice();
 
-    updateKpisForCurrentState();
+    const {expAllCount,expOpenCount}=getFilteredExpressCounts();
+    setKpis({prioAll:prioAll.length, prioOpen:prioOpen.length, expAll:expAllCount, expOpen:expOpenCount});
 
     state.events=[{
       id:++state.nextId,
       title:'Aktualisiert',
-      meta:`PRIO (Stops): in Ausrollung ${countStops(state._prioAllList)} • offen ${countStops(state._prioOpenList)} • EXPRESS (Stops): in Ausrollung ${getFilteredExpressCounts().expAllCount} • offen ${getFilteredExpressCounts().expOpenCount} • „>11:01“ (Stops): ${countStops(state._expLate11List)}`,
+      meta:`PRIO: in Ausrollung ${prioAll.length} • offen ${prioOpen.length} • EXPRESS: in Ausrollung ${expAll.length} • offen ${expOpenCount} • „>11:01“ (12er): ${expLate11.length}`,
       sev:'info',read:true,ts:Date.now()
     }];
   }
@@ -1340,12 +1481,13 @@
       isBusy=true; setLoading(true); dimButtons(true);
       addEvent({
         title:'Aktualisiere (API)…',
-        meta:'FAST-Paging • Fahrer aus Fahrzeugübersicht • Status & Servicecode direkt aus API • Scanserver im Popup • (+x) Gruppierung • KPI = Stops',
+        meta:'FAST-Paging • Fahrer aus Fahrzeugübersicht • Systempartner aus lokaler TourMap',
         sev:'info',read:true
       });
       render();
 
       await buildTourDriverMap();
+      await loadTourPartnerMap();       // <<< NEU
       await refreshViaApi_SAFE();
     }catch(e){
       console.error(e);
@@ -1354,6 +1496,109 @@
       setLoading(false); dimButtons(false); isBusy=false; render();
     }
   }
+
+ async function mailSelectedLate11(){
+  const modal = state._modal || {};
+  const rows  = Array.isArray(modal.rows) ? modal.rows : [];
+  const selectedKeys = modal.selected instanceof Set ? modal.selected : new Set();
+  if(!rows.length){ alert('Keine Daten.'); return; }
+  if(selectedKeys.size===0){ alert('Keine Zeilen markiert.'); return; }
+
+  const selected = rows.filter(r=>{
+    const key = String(r.stopId ?? r.id ?? r.__pid ?? '');
+    return selectedKeys.has(key);
+  });
+
+  // nach Partner gruppieren
+  const byPartner = new Map();
+  for(const r of selected){
+    const p = norm(r.__systempartner || '—');
+    if(!byPartner.has(p)) byPartner.set(p,[]);
+    byPartner.get(p).push(r);
+  }
+
+  for(const [partner, list] of byPartner){
+    if(!partner || partner==='—'){
+      alert('Mindestens eine Auswahl hat keinen Systempartner.');
+      continue;
+    }
+
+    const rec = await getPartnerMailRecord(partner);
+    const toRaw = rec?.to || '';
+    const ccRaw = rec?.cc || '';
+    const alias = rec?.alias || partner;
+
+    const toL = normalizeEmailList(toRaw);
+    const ccL = normalizeEmailList(ccRaw);
+
+    if(toL.valid.length===0){
+      alert(`Für Systempartner "${partner}" ist keine gültige E-Mail-Adresse hinterlegt (fvpr_db.partners).`);
+      continue;
+    }
+
+    const subject = `Express 12 – falsch einsortiert (>11:01) – ${alias} – ${new Date().toLocaleDateString('de-DE')}`;
+
+    // HTML Tabelle bauen (Outlook: Strg+V)
+    const html = buildLate11MailHtml(alias, list);
+
+    const ok = await copyHtmlToClipboard(html);
+    openMailto(subject, toL.valid.join(','), ccL.valid.join(','));
+    if(ok){
+      alert(`Mail-Entwurf für "${alias}" geöffnet.\nHTML ist in der Zwischenablage – im Mail-Body STRG+V.`);
+    } else {
+      alert(`Mail-Entwurf für "${alias}" geöffnet.\nKopieren fehlgeschlagen – bitte Tabelle manuell kopieren.`);
+    }
+  }
+}
+
+function buildLate11MailHtml(partner, rows){
+  const escH = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+  const now = new Date();
+  const stamp = now.toLocaleString('de-DE');
+
+  const bodyRows = rows.map(r=>{
+    const psn = escH(r.__pid || '—');
+    const tour = escH(String(r.__tourNum||r.tour||'—'));
+    const addr = escH(r.__addr || '—');
+    const driver = escH(r.__driver || '—');
+    const pred = escH(r.__predRangeStr || '—');
+    const svc = escH((r.__serviceCodes||[]).join(' ') || r.__serviceCode || '—');
+    const status = escH(r.__status || '—');
+    return `
+      <tr>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${psn}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${tour}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${addr}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${driver}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${status}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${svc}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${pred}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div style="font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;">
+      <div style="margin:0 0 10px 0;color:#334155">
+        <b>${escH(partner)}</b> – Express 12 „falsch einsortiert“ (geplant > 11:01)<br/>
+        Stand: ${escH(stamp)}
+      </div>
+      <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;min-width:700px;">
+        <thead>
+          <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">PSN</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Tour</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Adresse</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Fahrer</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Status</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Service</th>
+            <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Predict</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
+  `;
+}
 
   function scheduleAuto(){
     try{
