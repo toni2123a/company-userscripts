@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.2
+// @version      5.4.3
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -41,6 +41,7 @@ const dateStamp=()=>{ const d=new Date(); return `${d.getFullYear()}-${pad2(d.ge
 
 const sum = (vs,proj)=>vs.reduce((a,v)=>a+(proj(v)||0),0);
 const avg = (vs,proj)=>{ const arr=vs.map(proj).filter(x=>x!=null); return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0; };
+const tourKey = t => String(t || '').replace(/[^\dA-Za-z]/g,'').trim();
 
 const groupByPartner=rows=>{ const m=new Map(); for(const r of rows){ if(!m.has(r.partner)) m.set(r.partner,[]); m.get(r.partner).push(r); } return m; };
 
@@ -49,13 +50,106 @@ function toast(msg, ok=true){ const el=document.createElement('div'); el.style.c
 
 /* ====== TEIL 2/12 – IndexedDB ====== */
 
-const IDB_NAME='fvpr_db', IDB_VER=1;
+const IDB_NAME='fvpr_db', IDB_VER=2;
 
-function idbOpen(){ return new Promise((res,rej)=>{ const req=indexedDB.open(IDB_NAME,IDB_VER); req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains('partners')) db.createObjectStore('partners',{keyPath:'name'}); if(!db.objectStoreNames.contains('settings')){ const s=db.createObjectStore('settings',{keyPath:'id'}); s.put({id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:'', apiKey:''}); } }; req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
-async function idbGet(store,key){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readonly').objectStore(store).get(key); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); }); }
-async function idbPut(store,val){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readwrite').objectStore(store).put(val); r.onsuccess=()=>res(true); r.onerror=()=>rej(r.error); }); }
-async function idbDel(store,key){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readwrite').objectStore(store).delete(key); r.onsuccess=()=>res(true); r.onerror=()=>rej(r.error); }); }
-async function idbAll(store){ const db=await idbOpen(); return new Promise((res,rej)=>{ const r=db.transaction(store,'readonly').objectStore(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const req = indexedDB.open(IDB_NAME, IDB_VER);
+
+    req.onupgradeneeded = ()=>{
+      const db=req.result;
+
+      if(!db.objectStoreNames.contains('partners'))
+        db.createObjectStore('partners',{keyPath:'name'});
+
+      if(!db.objectStoreNames.contains('tourMap'))
+        db.createObjectStore('tourMap',{keyPath:'tour'}); // {tour, partner, updatedAt}
+
+      if(!db.objectStoreNames.contains('settings')){
+        const s=db.createObjectStore('settings',{keyPath:'id'});
+        s.put({
+          id:'global',
+          subjectPrefix:'Aktueller Tour.Report',
+          distTo:'',
+          distCc:'',
+          signature:'',
+          httpGateway:'',
+          apiKey:''
+        });
+      }
+    };
+
+    req.onsuccess=()=>res(req.result);
+    req.onerror=()=>rej(req.error);
+  });
+}
+
+async function idbGet(store,key){
+  const db=await idbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(store,'readonly').objectStore(store).get(key);
+    r.onsuccess=()=>res(r.result||null);
+    r.onerror=()=>rej(r.error);
+  });
+}
+async function idbPut(store,val){
+  const db=await idbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(store,'readwrite').objectStore(store).put(val);
+    r.onsuccess=()=>res(true);
+    r.onerror=()=>rej(r.error);
+  });
+}
+async function idbDel(store,key){
+  const db=await idbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(store,'readwrite').objectStore(store).delete(key);
+    r.onsuccess=()=>res(true);
+    r.onerror=()=>rej(r.error);
+  });
+}
+async function idbAll(store){
+  const db=await idbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(store,'readonly').objectStore(store).getAll();
+    r.onsuccess=()=>res(r.result||[]);
+    r.onerror=()=>rej(r.error);
+  });
+}
+
+async function idbPutMany(store, arr){
+  if(!arr || !arr.length) return;
+  const db = await idbOpen();
+  await new Promise((res,rej)=>{
+    const tx = db.transaction(store,'readwrite');
+    const st = tx.objectStore(store);
+    for(const v of arr) st.put(v);
+    tx.oncomplete = ()=>res(true);
+    tx.onerror = ()=>rej(tx.error);
+  });
+}
+
+async function cacheTourPartner(rows){
+  try{
+    const now = Date.now();
+    const m = new Map(); // tourKey -> partner
+    for(const r of (rows||[])){
+      const t = tourKey(r.tour);
+      const p = norm(r.partner);
+      if(t && p) m.set(t,p);
+    }
+    if(!m.size) return;
+
+    const recs = [];
+    for(const [tour, partner] of m.entries()){
+      recs.push({ tour, partner, updatedAt: now });
+    }
+    await idbPutMany('tourMap', recs);
+  }catch(e){
+    console.warn('[fvpr] cacheTourPartner', e);
+  }
+}
+
 
 async function ensureSettingsRecord(){
   const def={id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:GATEWAY_DEFAULT, apiKey:GATEWAY_API_KEY};
@@ -347,6 +441,7 @@ function ensureStyles(){
   border-radius:12px;
   z-index:2147483646;
 }
+
 
 .${NS}hdr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
 .${NS}pill{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -828,6 +923,7 @@ function mailSummaryHtml(per,totals,signature){
 async function getAggregates(){
   const {ok,rows}=await readAllRows();
   if(!ok||rows.length===0) return null;
+    cacheTourPartner(rows);
   const groups=groupByPartner(rows);
   const per=[];
   for(const [partner,list] of groups){
