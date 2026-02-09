@@ -122,6 +122,20 @@
       "description": "Neue Spalte mit L&F-Mail-Button + Status Änderung auf abgeschlossen"
     },
     {
+      "id": "tool_dispatcher_kpi",
+      "name": "DPD Dispatcher – KPI Monitor (Depot flexibel)",
+      "version": "2.1.3",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "unsafeWindow",
+        "GM_xmlhttpRequest"
+      ],
+      "description": "Dispatcher KPI Monitor"
+    },
+    {
       "id": "tool-dispatcher.partner",
       "name": "DPD Dispatcher – Partner-Report Mailer",
       "version": "5.4.3",
