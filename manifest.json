@@ -17,7 +17,7 @@
     {
       "id": "tool-aseabarcode",
       "name": "ASEA 🚀 Nur Barcode als Popup",
-      "version": "6.2",
+      "version": "6.3",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-ASEABarcode.user.js",
       "match": [
         "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/report_inbound_ofd\\.cgi.*$/"
@@ -25,7 +25,7 @@
       "grants": [
         "none"
       ],
-      "description": "Scanserver ASEA: Nur Barcode-Spalte (Symbol bleibt klein), Klick öffnet großes Overlay. Google-Links entfernt."
+      "description": "Scanserver ASEA: Nur Barcode-Spalte (Symbol bleibt klein), Klick öffnet großes Overlay inkl. Kopieren-Button."
     },
     {
       "id": "tool-asea_erweiterung",
