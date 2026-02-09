@@ -4,6 +4,8 @@
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
 // @version      2.1.3
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @description  Dispatcher KPI Monitor
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-start
