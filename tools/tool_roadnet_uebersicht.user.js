@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.5.0
+// @version      1.6.0
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -485,11 +485,12 @@
   const DEBOUNCE_MS = 220;
   const AUTOFIT_TO_WIDTH = true;
   const BRIDGE_ENABLED = true;
-  const BRIDGE_PRIMARY_ENDPOINT = 'http://10.14.7.169/DPD_Dashboard/roadnet_tu_push.php'; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
+  const BRIDGE_PRIMARY_ENDPOINT = ''; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
   const BRIDGE_FALLBACK_ENDPOINTS = [
     'http://localhost/DPD_Dashboard/roadnet_tu_push.php'
   ];
   const BRIDGE_ENDPOINT_STORAGE_KEY = 'rn_tu_bridge_endpoint';
+  const BRIDGE_DEPOT_STORAGE_KEY = 'rn_tu_bridge_depot';
   const BRIDGE_CLIENT_ID = ''; // Optional Standortkennung, z.B. 'D0157'
   const BRIDGE_DEPOT = ''; // Optional fest setzen, z.B. 'D0157'
   const BRIDGE_TOKEN = ''; // Optional: muss mit roadnet_tu_push.php übereinstimmen
@@ -568,6 +569,9 @@
     sort: { ...MODEL_UNLOAD.defaultSort },
     rows: [],
     lastStamp: '',
+    inferredDepot: '',
+    manualDepot: '',
+    depotPromptShown: false,
     scrollLeft: 0,
     scrollTop: 0,
     scale: 1
@@ -630,9 +634,192 @@
     return '';
   }
 
-  function detectBridgeDepot() {
+  function readStoredBridgeDepot() {
+    try {
+      return normalizeBridgeDepot(localStorage.getItem(BRIDGE_DEPOT_STORAGE_KEY) || '');
+    } catch {
+      return '';
+    }
+  }
+
+  function writeStoredBridgeDepot(raw) {
+    const depot = normalizeBridgeDepot(raw);
+    try {
+      if (depot) localStorage.setItem(BRIDGE_DEPOT_STORAGE_KEY, depot);
+      else localStorage.removeItem(BRIDGE_DEPOT_STORAGE_KEY);
+    } catch {}
+    return depot;
+  }
+
+  function getConfiguredBridgeDepot() {
     const fromConfig = normalizeBridgeDepot(BRIDGE_DEPOT);
     if (fromConfig) return fromConfig;
+
+    const fromState = normalizeBridgeDepot(state.manualDepot);
+    if (fromState) return fromState;
+
+    const fromStorage = readStoredBridgeDepot();
+    if (fromStorage) {
+      state.manualDepot = fromStorage;
+      return fromStorage;
+    }
+    return '';
+  }
+
+  function updateDepotUI() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const depotEl = panel.querySelector(`.${NS}depotvalue`);
+    if (!depotEl) return;
+    const depot = getConfiguredBridgeDepot();
+    depotEl.textContent = depot || 'nicht gesetzt';
+    depotEl.style.color = depot ? '#065f46' : '#991b1b';
+  }
+
+  function promptBridgeDepot(force = false) {
+    const fixed = normalizeBridgeDepot(BRIDGE_DEPOT);
+    if (fixed) {
+      state.manualDepot = fixed;
+      updateDepotUI();
+      return fixed;
+    }
+
+    let seed = getConfiguredBridgeDepot() || '';
+    while (true) {
+      const input = window.prompt('Bitte Standort/Depot eingeben (z.B. D0157, 0157 oder 157).', seed);
+      if (input == null) {
+        if (force) toast('Depot bleibt erforderlich fuer den Export', false);
+        updateDepotUI();
+        return '';
+      }
+
+      const depot = normalizeBridgeDepot(input);
+      if (!depot) {
+        alert('Ungueltiges Depot. Erlaubt sind z.B. D0157, 0157 oder 157.');
+        seed = norm(input);
+        continue;
+      }
+
+      state.manualDepot = writeStoredBridgeDepot(depot);
+      state.depotPromptShown = true;
+      updateDepotUI();
+      toast(`Depot ${state.manualDepot} gespeichert`, true);
+      return state.manualDepot;
+    }
+  }
+
+  function ensureBridgeDepotConfigured(forcePrompt = false) {
+    const configured = getConfiguredBridgeDepot();
+    if (configured) {
+      updateDepotUI();
+      return configured;
+    }
+
+    if (!forcePrompt && state.depotPromptShown) {
+      updateDepotUI();
+      return '';
+    }
+
+    state.depotPromptShown = true;
+    return promptBridgeDepot(forcePrompt);
+  }
+
+  function parseBridgeDepotCandidates(raw) {
+    const out = new Set();
+    const text = String(raw ?? '').toUpperCase();
+    if (!text) return [];
+
+    const direct = normalizeBridgeDepot(text);
+    if (direct) out.add(direct);
+
+    const addDigits = (digits) => {
+      const depot = normalizeBridgeDepot(String(digits || '').replace(/[^\d]/g, ''));
+      if (depot) out.add(depot);
+    };
+
+    for (const m of text.matchAll(/\bDE(\d{4})\b/g)) addDigits(m[1]);
+    for (const m of text.matchAll(/\bDE(\d{4})[A-Z0-9]*/g)) addDigits(m[1]);
+    for (const m of text.matchAll(/\b0010(\d{3,4})\b/g)) addDigits(m[1]);
+    for (const m of text.matchAll(/\bD(\d{4})\b/g)) addDigits(m[1]);
+
+    return Array.from(out);
+  }
+
+  function getBridgeDepotCandidatesFromCell(td) {
+    if (!td) return [];
+    const out = new Set();
+    const texts = [
+      bestCellText(td),
+      td.innerText,
+      td.textContent,
+      td.getAttribute('title'),
+      td.getAttribute('aria-label'),
+      td.getAttribute('data-original-title'),
+      td.getAttribute('data-tooltip'),
+      td.getAttribute('data-title')
+    ];
+
+    for (const t of texts) {
+      for (const cand of parseBridgeDepotCandidates(t)) out.add(cand);
+    }
+    return Array.from(out);
+  }
+
+  function inferBridgeDepotFromTable(headerMap, bodyRows) {
+    if (!Array.isArray(bodyRows) || !bodyRows.length) return '';
+
+    const counts = new Map();
+    const add = (depot, weight) => {
+      if (!depot) return;
+      counts.set(depot, (counts.get(depot) || 0) + weight);
+    };
+    const addFromCell = (td, weight) => {
+      for (const cand of getBridgeDepotCandidatesFromCell(td)) add(cand, weight);
+    };
+
+    const idxFromHeaders = (candidates) => {
+      for (const cand of candidates) {
+        const key = normKey(cand);
+        if (headerMap.has(key)) return headerMap.get(key);
+        for (const [hk, idx] of headerMap.entries()) {
+          if (hk.includes(key)) return idx;
+        }
+      }
+      return null;
+    };
+
+    const preferredCols = [
+      { idx: idxFromHeaders(['code empfangsstandort', 'empfangsstandort', 'nach']), weight: 6 },
+      { idx: idxFromHeaders(['name empfangsstandort', 'bezeichnung nach']), weight: 4 },
+      { idx: idxFromHeaders(['code abgangsstandort', 'abgangsstandort', 'von']), weight: 3 },
+      { idx: idxFromHeaders(['von bu', 'von business unit']), weight: 3 }
+    ].filter(x => x.idx != null);
+
+    for (const tr of bodyRows) {
+      const tds = Array.from(tr.querySelectorAll('td'));
+      if (!tds.length) continue;
+
+      for (const pref of preferredCols) {
+        if (pref.idx >= 0 && pref.idx < tds.length) addFromCell(tds[pref.idx], pref.weight);
+      }
+
+      for (const td of tds) addFromCell(td, 1);
+    }
+
+    let bestDepot = '';
+    let bestScore = 0;
+    for (const [depot, score] of counts.entries()) {
+      if (score > bestScore) {
+        bestDepot = depot;
+        bestScore = score;
+      }
+    }
+    return bestScore >= 2 ? bestDepot : '';
+  }
+
+  function detectBridgeDepot() {
+    const configured = getConfiguredBridgeDepot();
+    if (configured) return configured;
 
     try {
       const qp = new URLSearchParams(location.search);
@@ -642,6 +829,8 @@
         normalizeBridgeDepot(qp.get('Depot'));
       if (fromQuery) return fromQuery;
     } catch {}
+
+    if (state.inferredDepot) return state.inferredDepot;
 
     const titleMatch = norm(document.title).toUpperCase().match(/\bD\d{4}\b/);
     if (titleMatch) return titleMatch[0];
@@ -672,7 +861,8 @@
       return;
     }
 
-    const depot = detectBridgeDepot();
+    const depot = ensureBridgeDepotConfigured(false);
+    if (!depot) return;
     const columns = state.model.cols.map(c => ({ key: c.key, title: c.title }));
     const rows = state.rows.slice(0, BRIDGE_MAX_ROWS).map((r) => {
       const row = {};
@@ -1116,6 +1306,12 @@
               Stand: <span class="${NS}stamp" style="font:800 11px system-ui;color:#111;"></span>
             </div>
             <div class="${NS}sub" style="font:800 11px system-ui;color:#111;margin-top:2px;"></div>
+            <div class="${NS}depotline" style="font:700 10px system-ui;color:#374151;margin-top:2px;">
+              Depot: <span class="${NS}depotvalue" style="font:800 10px system-ui;color:#991b1b;">nicht gesetzt</span>
+              <button class="${NS}btn-depot" type="button" style="cursor:pointer;margin-left:6px;border:1px solid rgba(0,0,0,.12);background:#fff;border-radius:8px;padding:1px 6px;font:700 10px system-ui;">
+                Depot setzen
+              </button>
+            </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
             <button class="${NS}btn-copy" type="button" style="cursor:pointer;border:1px solid rgba(0,0,0,.12);background:#fff;border-radius:10px;padding:4px 8px;font:800 10px system-ui;">
@@ -1152,6 +1348,11 @@
       }
     });
 
+    panel.querySelector(`.${NS}btn-depot`).addEventListener('click', () => {
+      ensureBridgeDepotConfigured(true);
+      render();
+    });
+
     const sb = panel.querySelector(`.${SCROLL_BOX_CLASS}`);
     sb.addEventListener('scroll', () => {
       state.scrollLeft = sb.scrollLeft;
@@ -1170,14 +1371,16 @@
 
     stamp.textContent = state.lastStamp || '';
     sub.textContent = state.model.title;
+    updateDepotUI();
+    const depot = getConfiguredBridgeDepot();
 
     const rows = sortRows(state.rows);
     const badges = computeBadges(rows);
     const cols = state.model.cols;
 
     hint.textContent = rows.length
-      ? `Zeilen: ${rows.length} | Sortierung: ${cols.find(x => x.key === state.sort.key)?.title ?? state.sort.key} (${state.sort.dir})`
-      : 'Keine Daten erkannt.';
+      ? `Zeilen: ${rows.length} | Depot: ${depot || 'nicht gesetzt'} | Sortierung: ${cols.find(x => x.key === state.sort.key)?.title ?? state.sort.key} (${state.sort.dir})`
+      : `Keine Daten erkannt.${depot ? ` Depot: ${depot}` : ' Depot nicht gesetzt.'}`;
 
     const thStyle =
       'position:sticky;top:0;background:linear-gradient(#eef5ff,#eaf2ff);' +
@@ -1321,6 +1524,8 @@
     const headerMap = buildHeaderIndexMap(headerCells);
     const pick = makePicker(headerMap);
     const idx = state.model.resolve(headerMap, pick);
+    const inferredDepot = inferBridgeDepotFromTable(headerMap, bodyRows);
+    if (inferredDepot) state.inferredDepot = inferredDepot;
 
     const out = [];
     for (const tr of bodyRows) {
@@ -1360,6 +1565,7 @@
 
   ensureOpenButton();
   ensurePanel();
+  if (BRIDGE_ENABLED) ensureBridgeDepotConfigured(false);
   installObserver();
   if (BRIDGE_ENABLED) {
     setTimeout(() => extractData(), 1500);
