@@ -485,7 +485,7 @@
   const DEBOUNCE_MS = 220;
   const AUTOFIT_TO_WIDTH = true;
   const BRIDGE_ENABLED = true;
-  const BRIDGE_PRIMARY_ENDPOINT = ''; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
+  const BRIDGE_PRIMARY_ENDPOINT = 'http://10.14.7.169/DPD_Dashboard/roadnet_tu_push.php'; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
   const BRIDGE_FALLBACK_ENDPOINTS = [
     'http://localhost/DPD_Dashboard/roadnet_tu_push.php'
   ];
