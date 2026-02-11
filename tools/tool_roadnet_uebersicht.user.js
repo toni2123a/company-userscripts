@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.3.7
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
-// @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
+// @version      1.5.0
+// @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
+// @match        https://roadnet.dpdgroup.com/execution/trips*
 // @match        http://lts.dpdit.de/*
 // @match        https://lts.dpdit.de/*
 // @run-at       document-idle
@@ -485,6 +484,18 @@
   const SCROLL_BOX_CLASS = `${NS}scrollbox`;
   const DEBOUNCE_MS = 220;
   const AUTOFIT_TO_WIDTH = true;
+  const BRIDGE_ENABLED = true;
+  const BRIDGE_PRIMARY_ENDPOINT = ''; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
+  const BRIDGE_FALLBACK_ENDPOINTS = [
+    'http://localhost/DPD_Dashboard/roadnet_tu_push.php'
+  ];
+  const BRIDGE_ENDPOINT_STORAGE_KEY = 'rn_tu_bridge_endpoint';
+  const BRIDGE_CLIENT_ID = ''; // Optional Standortkennung, z.B. 'D0157'
+  const BRIDGE_DEPOT = ''; // Optional fest setzen, z.B. 'D0157'
+  const BRIDGE_TOKEN = ''; // Optional: muss mit roadnet_tu_push.php übereinstimmen
+  const BRIDGE_MIN_INTERVAL_MS = 15000;
+  const BRIDGE_POLL_INTERVAL_MS = 15000;
+  const BRIDGE_MAX_ROWS = 700;
 
   const MODEL_UNLOAD = {
     modeKey: 'unload',
@@ -561,6 +572,142 @@
     scrollTop: 0,
     scale: 1
   };
+  const bridgeState = { lastSig: '', lastSentAt: 0, inFlight: false };
+
+  function normalizeBridgeEndpoint(raw) {
+    const t = norm(raw);
+    if (!t) return '';
+    if (!/^https?:\/\//i.test(t)) return '';
+    return t.replace(/\/+$/, '');
+  }
+
+  function buildBridgeEndpoints() {
+    const out = [];
+    const seen = new Set();
+    const push = (url) => {
+      const cleaned = normalizeBridgeEndpoint(url);
+      if (!cleaned || seen.has(cleaned)) return;
+      seen.add(cleaned);
+      out.push(cleaned);
+    };
+
+    try {
+      push(localStorage.getItem(BRIDGE_ENDPOINT_STORAGE_KEY) || '');
+    } catch {}
+
+    push(BRIDGE_PRIMARY_ENDPOINT);
+    (Array.isArray(BRIDGE_FALLBACK_ENDPOINTS) ? BRIDGE_FALLBACK_ENDPOINTS : []).forEach(push);
+    return out;
+  }
+
+  function postBridgePayload(payload, endpoints, idx = 0) {
+    if (!Array.isArray(endpoints) || idx >= endpoints.length) {
+      return Promise.reject(new Error('no_endpoint_available'));
+    }
+    const endpoint = endpoints[idx];
+    return fetch(endpoint, {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Roadnet-Token': BRIDGE_TOKEN
+      },
+      body: JSON.stringify(payload)
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text().then(() => endpoint);
+      })
+      .catch(() => postBridgePayload(payload, endpoints, idx + 1));
+  }
+
+  function normalizeBridgeDepot(raw) {
+    const t = norm(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (/^D\d{4}$/.test(t)) return t;
+    if (/^\d{4}$/.test(t)) return `D${t}`;
+    if (/^\d{3}$/.test(t)) return `D0${t}`;
+    return '';
+  }
+
+  function detectBridgeDepot() {
+    const fromConfig = normalizeBridgeDepot(BRIDGE_DEPOT);
+    if (fromConfig) return fromConfig;
+
+    try {
+      const qp = new URLSearchParams(location.search);
+      const fromQuery =
+        normalizeBridgeDepot(qp.get('depot')) ||
+        normalizeBridgeDepot(qp.get('depotId')) ||
+        normalizeBridgeDepot(qp.get('Depot'));
+      if (fromQuery) return fromQuery;
+    } catch {}
+
+    const titleMatch = norm(document.title).toUpperCase().match(/\bD\d{4}\b/);
+    if (titleMatch) return titleMatch[0];
+
+    return '';
+  }
+
+  function buildBridgeSignature(model, rows) {
+    const first = rows[0] || {};
+    const last = rows[rows.length - 1] || {};
+    const core = [
+      model.modeKey,
+      rows.length,
+      rows.slice(0, 10).map(r => model.cols.map(c => norm(r[c.key])).join('|')).join('||'),
+      model.cols.map(c => norm(first[c.key])).join('|'),
+      model.cols.map(c => norm(last[c.key])).join('|')
+    ];
+    return core.join('###');
+  }
+
+  function syncBridgeSnapshot(force = false) {
+    if (!BRIDGE_ENABLED || bridgeState.inFlight) return;
+    if (!Array.isArray(state.rows) || !state.rows.length) return;
+
+    const nowMs = Date.now();
+    const sig = buildBridgeSignature(state.model, state.rows);
+    if (!force && sig === bridgeState.lastSig && (nowMs - bridgeState.lastSentAt) < BRIDGE_MIN_INTERVAL_MS) {
+      return;
+    }
+
+    const depot = detectBridgeDepot();
+    const columns = state.model.cols.map(c => ({ key: c.key, title: c.title }));
+    const rows = state.rows.slice(0, BRIDGE_MAX_ROWS).map((r) => {
+      const row = {};
+      for (const c of state.model.cols) row[c.key] = norm(r[c.key]);
+      return row;
+    });
+    const payload = {
+      source: 'roadnet_transport_units',
+      clientId: norm(BRIDGE_CLIENT_ID),
+      mode: state.model.modeKey,
+      title: state.model.title,
+      stamp: state.lastStamp,
+      depot,
+      columns,
+      rows,
+      sourceUrl: location.href,
+      exportedAt: new Date().toISOString()
+    };
+    const endpoints = buildBridgeEndpoints();
+    if (!endpoints.length) return;
+
+    bridgeState.inFlight = true;
+    postBridgePayload(payload, endpoints, 0)
+      .then((usedEndpoint) => {
+        bridgeState.lastSig = sig;
+        bridgeState.lastSentAt = nowMs;
+        try {
+          localStorage.setItem(BRIDGE_ENDPOINT_STORAGE_KEY, usedEndpoint);
+        } catch {}
+      })
+      .catch(() => {})
+      .finally(() => {
+        bridgeState.inFlight = false;
+      });
+  }
 
   function findActiveMode() {
     const cands = Array.from(document.querySelectorAll('a,button,li,span,div'))
@@ -1158,7 +1305,7 @@
 
   function extractData() {
     const panel = document.getElementById(PANEL_ID);
-    if (panel && panel.style.display === 'none') return;
+    const shouldRender = !!(panel && panel.style.display !== 'none');
 
     syncModelFromUI();
 
@@ -1166,7 +1313,7 @@
     if (!root) {
       state.rows = [];
       state.lastStamp = '';
-      render();
+      if (shouldRender) render();
       return;
     }
 
@@ -1195,8 +1342,9 @@
     const now = new Date();
     state.lastStamp = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
     state.rows = out;
+    syncBridgeSnapshot();
 
-    render();
+    if (shouldRender) render();
   }
 
   const extractDebounced = debounce(extractData, DEBOUNCE_MS);
@@ -1204,7 +1352,7 @@
   function installObserver() {
     const obs = new MutationObserver(() => {
       const panel = document.getElementById(PANEL_ID);
-      if (!panel || panel.style.display === 'none') return;
+      if ((!panel || panel.style.display === 'none') && !BRIDGE_ENABLED) return;
       extractDebounced();
     });
     obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
@@ -1213,4 +1361,8 @@
   ensureOpenButton();
   ensurePanel();
   installObserver();
+  if (BRIDGE_ENABLED) {
+    setTimeout(() => extractData(), 1500);
+    setInterval(() => extractData(), BRIDGE_POLL_INTERVAL_MS);
+  }
 })();
