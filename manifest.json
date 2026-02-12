@@ -233,7 +233,7 @@
     {
       "id": "tool_roadnet_uebersicht",
       "name": "Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)",
-      "version": "1.7.7",
+      "version": "1.7.8",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js",
       "match": [
         "https://roadnet.dpdgroup.com/execution/transport_units*",
