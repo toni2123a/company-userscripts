@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.7.4
-// @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
+// @version      1.7.5
+// @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
 // @match        http://lts.dpdit.de/*
@@ -135,6 +135,19 @@
     const SESSION_RE = /^\/\(S\([^)]+\)\)\//i;
     const WBL_RE = /\/WBLebenslauf\.aspx$/i;
     const INDEX_RE = /\/index\.aspx$/i;
+    const WBL_HEADER_FALLBACK = [
+      'WB Nr',
+      'Scandepot:',
+      'Scanart:',
+      'Zieldepot:',
+      'Datum:',
+      'Uhrzeit:',
+      'Plombennummer:',
+      'Auslastung (%):',
+      'Express',
+      'Bemerkung:'
+    ];
+    const WBL_LABEL_STYLE_ID = 'rn-wbl-header-label-style';
 
     let current = { left: '', right: '' };
     let submitLoop = null;
@@ -289,6 +302,178 @@
       return false;
     }
 
+    function findWblResultTable() {
+      const allTables = Array.from(document.querySelectorAll('table'));
+      if (!allTables.length) return null;
+
+      const textScore = (txt) => {
+        let score = 0;
+        const t = String(txt || '').toLowerCase();
+        if (t.includes('wb nr')) score += 45;
+        if (t.includes('plombennummer')) score += 24;
+        if (t.includes('scanart')) score += 22;
+        if (t.includes('scandepot')) score += 20;
+        if (t.includes('zieldepot')) score += 20;
+        if (t.includes('auslastung')) score += 20;
+        if (t.includes('bemerkung')) score += 18;
+        return score;
+      };
+
+      let best = null;
+      let bestScore = -1;
+      for (const t of allTables) {
+        const rows = Array.from(t.querySelectorAll('tr'));
+        if (rows.length < 2) continue;
+
+        let maxCols = 0;
+        for (const r of rows.slice(0, 8)) {
+          const c = r.querySelectorAll('th,td').length;
+          if (c > maxCols) maxCols = c;
+        }
+        if (maxCols < 6) continue;
+
+        const hasScopeHeader = !!t.querySelector('th[scope="col"]');
+        const hasAnyHeader = !!t.querySelector('th');
+        const score =
+          textScore(t.innerText || t.textContent || '') +
+          (hasScopeHeader ? 60 : 0) +
+          (hasAnyHeader ? 20 : 0) +
+          Math.min(rows.length, 35) +
+          Math.min(maxCols, 18);
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = t;
+        }
+      }
+      return best;
+    }
+
+    function forceVisibleWblHeaders(table) {
+      if (!table) return;
+      const ths = Array.from(table.querySelectorAll('th[scope="col"], thead th, tr:first-child th'));
+      if (!ths.length) return;
+
+      const tr = ths[0].closest('tr');
+      if (tr) {
+        tr.style.setProperty('color', '#111', 'important');
+        tr.style.setProperty('font-weight', '700', 'important');
+      }
+      for (const th of ths) {
+        th.style.setProperty('color', '#111', 'important');
+        th.style.setProperty('-webkit-text-fill-color', '#111', 'important');
+        th.style.setProperty('font-weight', '700', 'important');
+        th.style.setProperty('font-size', '12px', 'important');
+        th.style.setProperty('line-height', '1.2', 'important');
+        th.style.setProperty('background-color', '#e9f0fb', 'important');
+        th.style.setProperty('text-shadow', 'none', 'important');
+        th.style.setProperty('opacity', '1', 'important');
+        th.style.setProperty('visibility', 'visible', 'important');
+        th.style.setProperty('text-indent', '0', 'important');
+        th.style.setProperty('white-space', 'nowrap', 'important');
+        th.style.setProperty('overflow', 'visible', 'important');
+        th.style.setProperty('min-height', '20px', 'important');
+      }
+    }
+
+    function ensureWblLabelStyle() {
+      if (document.getElementById(WBL_LABEL_STYLE_ID)) return;
+      const styleEl = document.createElement('style');
+      styleEl.id = WBL_LABEL_STYLE_ID;
+      styleEl.textContent = [
+        'table#lGridScan th[data-rn-label]{position:absolute !important;overflow:visible !important;}',
+        'table#lGridScan th[data-rn-label]::after{',
+        'content: attr(data-rn-label);',
+        'position: relative;',
+        'display: inline-block;',
+        'margin-left: 2px;',
+        'color:#111 !important;',
+        '-webkit-text-fill-color:#111 !important;',
+        'font:700 12px/1.2 Arial, sans-serif !important;',
+        'text-shadow:none !important;',
+        'white-space:nowrap;',
+        'opacity:1 !important;',
+        'visibility:visible !important;',
+        '}'
+      ].join('');
+      (document.head || document.documentElement).appendChild(styleEl);
+    }
+
+    function fillExistingWblHeaderTexts(table) {
+      if (!table) return false;
+      const ths = Array.from(table.querySelectorAll('th[scope="col"], thead th, tr:first-child th'));
+      if (!ths.length) return false;
+      ensureWblLabelStyle();
+
+      const clean = (s) => String(s ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+      const nonEmptyCount = ths.reduce((cnt, th) => cnt + (clean(th.textContent).length ? 1 : 0), 0);
+      const probablyBroken = (ths.length >= 8 && nonEmptyCount <= 2);
+      const mapCount = Math.min(ths.length, WBL_HEADER_FALLBACK.length);
+
+      let changed = false;
+      for (let i = 0; i < mapCount; i++) {
+        const th = ths[i];
+        if (!th) continue;
+        th.setAttribute('data-rn-label', WBL_HEADER_FALLBACK[i]);
+        const current = clean(th.textContent);
+        if (probablyBroken || current === '' || current === '-') {
+          th.textContent = WBL_HEADER_FALLBACK[i];
+          changed = true;
+        }
+      }
+      return changed;
+    }
+
+    function injectFallbackWblHeader(table) {
+      if (!table || table.querySelector('th')) return false;
+      const firstBodyRow = table.querySelector('tbody tr') || table.querySelector('tr');
+      if (!firstBodyRow) return false;
+      const bodyCells = Array.from(firstBodyRow.querySelectorAll('td'));
+      if (bodyCells.length < 6) return false;
+
+      let thead = table.querySelector('thead');
+      if (!thead) {
+        thead = document.createElement('thead');
+        const tbody = table.querySelector('tbody');
+        if (tbody) table.insertBefore(thead, tbody);
+        else table.insertBefore(thead, table.firstChild);
+      }
+      if (thead.querySelector('tr[data-rn-wbl-fallback="1"]')) return true;
+
+      const tr = document.createElement('tr');
+      tr.setAttribute('data-rn-wbl-fallback', '1');
+      tr.style.setProperty('color', '#111', 'important');
+      tr.style.setProperty('font-weight', '700', 'important');
+
+      const count = Math.min(bodyCells.length, WBL_HEADER_FALLBACK.length);
+      for (let i = 0; i < count; i++) {
+        const th = document.createElement('th');
+        th.setAttribute('scope', 'col');
+        th.textContent = WBL_HEADER_FALLBACK[i];
+        th.style.setProperty('color', '#111', 'important');
+        th.style.setProperty('font-weight', '700', 'important');
+        th.style.setProperty('background-color', '#e9f0fb', 'important');
+        th.style.setProperty('text-shadow', 'none', 'important');
+        tr.appendChild(th);
+      }
+
+      thead.insertBefore(tr, thead.firstChild);
+      return true;
+    }
+
+    function ensureWblHeadersVisible() {
+      if (!WBL_RE.test(location.pathname)) return;
+      const table = findWblResultTable();
+      if (!table) return;
+
+      if (!table.querySelector('th')) {
+        injectFallbackWblHeader(table);
+      }
+
+      fillExistingWblHeaderTexts(table);
+      forceVisibleWblHeaders(table);
+    }
+
     function hasResults() {
       const tables = Array.from(document.querySelectorAll('table'));
       for (const t of tables) {
@@ -296,7 +481,10 @@
         if (txt.includes('wb nr')) {
           const bodyRows = t.querySelectorAll('tbody tr').length;
           const allRows = t.querySelectorAll('tr').length;
-          if (bodyRows >= 1 || allRows >= 2) return true;
+          if (bodyRows >= 1 || allRows >= 2) {
+            setTimeout(() => ensureWblHeadersVisible(), 0);
+            return true;
+          }
         }
       }
       return false;
@@ -455,13 +643,16 @@
     });
 
     window.addEventListener('load', () => {
+      ensureWblHeadersVisible();
       processPending();
       if (peekPending()) startPendingWatcher();
     });
 
+    setTimeout(() => ensureWblHeadersVisible(), 350);
     if (peekPending()) startPendingWatcher();
 
     const obs = new MutationObserver(() => {
+      ensureWblHeadersVisible();
       const p = peekPending();
       if (!p) return;
       if (hasResults()) {
