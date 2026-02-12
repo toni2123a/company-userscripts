@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.7.7
+// @version      1.7.8
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -1906,10 +1906,69 @@
     obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
   }
 
+  /* ===================== AUTO-CLICK: Entladung + Fernverkehr ===================== */
+  const AUTOCLICK_ENABLED = true;
+  const AUTOCLICK_TARGETS = ['Entladung', 'Fernverkehr'];
+  const AUTOCLICK_MAX_WAIT_MS = 30000;
+  const AUTOCLICK_POLL_MS = 500;
+  const AUTOCLICK_DONE_KEY = 'rn_autoclick_done';
+
+  function autoClickTargets() {
+    if (!AUTOCLICK_ENABLED) return;
+    if (!location.href.includes('/execution/transport_units')) return;
+
+    const sessionKey = AUTOCLICK_DONE_KEY + '_' + location.href.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 80);
+    try {
+      if (sessionStorage.getItem(sessionKey) === '1') return;
+    } catch {}
+
+    const started = Date.now();
+    const remaining = [...AUTOCLICK_TARGETS];
+    let clickedAny = false;
+
+    const poll = setInterval(() => {
+      if (!remaining.length || (Date.now() - started) > AUTOCLICK_MAX_WAIT_MS) {
+        clearInterval(poll);
+        if (clickedAny) {
+          try { sessionStorage.setItem(sessionKey, '1'); } catch {}
+        }
+        return;
+      }
+
+      const target = remaining[0];
+      const candidates = Array.from(document.querySelectorAll('a,button,li,span,div,label'))
+        .filter(el => {
+          const t = norm(el.textContent);
+          return t === target && isVisible(el);
+        });
+
+      if (!candidates.length) return;
+
+      const isAlreadyActive = (el) => {
+        const cls = String(el.className || '');
+        const pCls = el.parentElement ? String(el.parentElement.className || '') : '';
+        return /active|selected|ui-state-active|ui-tabs-active|current/i.test(cls) ||
+               /active|selected|ui-state-active|ui-tabs-active|current/i.test(pCls);
+      };
+
+      const el = candidates[0];
+      if (isAlreadyActive(el)) {
+        remaining.shift();
+        return;
+      }
+
+      el.click();
+      clickedAny = true;
+      remaining.shift();
+    }, AUTOCLICK_POLL_MS);
+  }
+
+  /* ===================== BOOTSTRAP ===================== */
   ensureOpenButton();
   ensurePanel();
   if (BRIDGE_ENABLED) ensureBridgeDepotConfigured(false);
   installObserver();
+  autoClickTargets();
   if (BRIDGE_ENABLED) {
     setTimeout(() => extractData(), 1500);
     setInterval(() => extractData(), BRIDGE_POLL_INTERVAL_MS);
