@@ -1,9 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.7.5
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
+// @version      1.7.7
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -682,9 +680,9 @@
   const BRIDGE_FALLBACK_ENDPOINTS = [];
   const BRIDGE_ENDPOINT_STORAGE_KEY = 'rn_tu_bridge_endpoint';
   const BRIDGE_DEPOT_STORAGE_KEY = 'rn_tu_bridge_depot';
-  const BRIDGE_CLIENT_ID = ''; // Optional Standortkennung, z.B. 'D0157'
+  const BRIDGE_CLIENT_ID = 'roadnet-default'; // Mit roadnet_bridge_clients.json abgestimmt
   const BRIDGE_DEPOT = ''; // Optional fest setzen, z.B. 'D0157'
-  const BRIDGE_TOKEN = ''; // Optional: muss mit roadnet_tu_push.php übereinstimmen
+  const BRIDGE_TOKEN = '12c87869d52fc4651843512b595fc79ba8251d450988cbf4199e5918b33ecbd0'; // Pflicht bei requireClient=true: lokal im Userscript setzen
   const BRIDGE_MIN_INTERVAL_MS = 15000;
   const BRIDGE_POLL_INTERVAL_MS = 15000;
   const BRIDGE_MAX_ROWS = 700;
