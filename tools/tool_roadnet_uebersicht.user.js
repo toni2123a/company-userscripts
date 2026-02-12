@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.6.0
+// @version      1.7.4
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -485,10 +485,8 @@
   const DEBOUNCE_MS = 220;
   const AUTOFIT_TO_WIDTH = true;
   const BRIDGE_ENABLED = true;
-  const BRIDGE_PRIMARY_ENDPOINT = ''; // z.B. https://mein-server.example/DPD_Dashboard/roadnet_tu_push.php
-  const BRIDGE_FALLBACK_ENDPOINTS = [
-    'http://localhost/DPD_Dashboard/roadnet_tu_push.php'
-  ];
+  const BRIDGE_PRIMARY_ENDPOINT = 'http://10.14.7.169/DPD_Dashboard/roadnet_tu_push.php';
+  const BRIDGE_FALLBACK_ENDPOINTS = [];
   const BRIDGE_ENDPOINT_STORAGE_KEY = 'rn_tu_bridge_endpoint';
   const BRIDGE_DEPOT_STORAGE_KEY = 'rn_tu_bridge_depot';
   const BRIDGE_CLIENT_ID = ''; // Optional Standortkennung, z.B. 'D0157'
@@ -576,7 +574,70 @@
     scrollTop: 0,
     scale: 1
   };
-  const bridgeState = { lastSig: '', lastSentAt: 0, inFlight: false };
+  const BRIDGE_LOG_MAX = 120;
+  const bridgeState = {
+    lastSig: '',
+    lastSentAt: 0,
+    inFlight: false,
+    statusLabel: 'Idle',
+    statusColor: '#4b5563',
+    logs: []
+  };
+
+  function bridgeTriggerLabel(trigger) {
+    return trigger === 'manual' ? 'MANUELL' : 'AUTO';
+  }
+
+  function timeStampShort(d = new Date()) {
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+
+  function setBridgeStatus(label, color = '#4b5563') {
+    bridgeState.statusLabel = norm(label) || 'Idle';
+    bridgeState.statusColor = color || '#4b5563';
+    renderBridgeLog();
+  }
+
+  function addBridgeLog(level, msg) {
+    const entry = {
+      ts: timeStampShort(new Date()),
+      level: String(level || 'info').toLowerCase(),
+      msg: norm(msg) || '-'
+    };
+    bridgeState.logs.push(entry);
+    if (bridgeState.logs.length > BRIDGE_LOG_MAX) {
+      bridgeState.logs.splice(0, bridgeState.logs.length - BRIDGE_LOG_MAX);
+    }
+
+    const line = `[RN-BRIDGE ${entry.level.toUpperCase()} ${entry.ts}] ${entry.msg}`;
+    if (entry.level === 'error') console.error(line);
+    else if (entry.level === 'warn') console.warn(line);
+    else console.log(line);
+
+    renderBridgeLog();
+  }
+
+  function clearBridgeLog() {
+    bridgeState.logs.length = 0;
+    renderBridgeLog();
+  }
+
+  function renderBridgeLog() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+
+    const statusEl = panel.querySelector(`.${NS}bridge-status`);
+    if (statusEl) {
+      statusEl.textContent = bridgeState.statusLabel || 'Idle';
+      statusEl.style.color = bridgeState.statusColor || '#4b5563';
+    }
+
+    const logEl = panel.querySelector(`.${NS}bridge-log`);
+    if (!logEl) return;
+    const lines = bridgeState.logs.map((e) => `${e.ts} [${String(e.level || '').toUpperCase()}] ${e.msg}`);
+    logEl.textContent = lines.length ? lines.join('\n') : 'Noch keine Bridge-Logs.';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 
   function normalizeBridgeEndpoint(raw) {
     const t = norm(raw);
@@ -595,20 +656,27 @@
       out.push(cleaned);
     };
 
+    push(BRIDGE_PRIMARY_ENDPOINT);
+    (Array.isArray(BRIDGE_FALLBACK_ENDPOINTS) ? BRIDGE_FALLBACK_ENDPOINTS : []).forEach(push);
     try {
       push(localStorage.getItem(BRIDGE_ENDPOINT_STORAGE_KEY) || '');
     } catch {}
-
-    push(BRIDGE_PRIMARY_ENDPOINT);
-    (Array.isArray(BRIDGE_FALLBACK_ENDPOINTS) ? BRIDGE_FALLBACK_ENDPOINTS : []).forEach(push);
     return out;
   }
 
-  function postBridgePayload(payload, endpoints, idx = 0) {
+  function postBridgePayload(payload, endpoints, idx = 0, trigger = 'auto') {
     if (!Array.isArray(endpoints) || idx >= endpoints.length) {
-      return Promise.reject(new Error('no_endpoint_available'));
+      const err = new Error('no_endpoint_available');
+      addBridgeLog('error', `${bridgeTriggerLabel(trigger)}: kein erreichbarer Endpoint.`);
+      return Promise.reject(err);
     }
+
     const endpoint = endpoints[idx];
+    const attempt = idx + 1;
+    const total = endpoints.length;
+    const startedAt = Date.now();
+    addBridgeLog('info', `${bridgeTriggerLabel(trigger)}: Versuch ${attempt}/${total} -> ${endpoint}`);
+
     return fetch(endpoint, {
       method: 'POST',
       mode: 'cors',
@@ -619,16 +687,37 @@
       },
       body: JSON.stringify(payload)
     })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text().then(() => endpoint);
+      .then((r) => r.text().then((bodyText) => ({ r, bodyText })))
+      .then(({ r, bodyText }) => {
+        const durationMs = Date.now() - startedAt;
+        const bodyPreview = norm(bodyText).slice(0, 220);
+        if (!r.ok) {
+          addBridgeLog(
+            'warn',
+            `${bridgeTriggerLabel(trigger)}: ${endpoint} -> HTTP ${r.status} (${durationMs}ms)` +
+            (bodyPreview ? ` | ${bodyPreview}` : '')
+          );
+          return postBridgePayload(payload, endpoints, idx + 1, trigger);
+        }
+        addBridgeLog(
+          'ok',
+          `${bridgeTriggerLabel(trigger)}: ${endpoint} -> HTTP ${r.status} (${durationMs}ms)` +
+          (bodyPreview ? ` | ${bodyPreview}` : '')
+        );
+        return endpoint;
       })
-      .catch(() => postBridgePayload(payload, endpoints, idx + 1));
+      .catch((err) => {
+        const durationMs = Date.now() - startedAt;
+        const message = norm(err && err.message ? err.message : String(err || 'network_error'));
+        addBridgeLog('error', `${bridgeTriggerLabel(trigger)}: ${endpoint} Fehler nach ${durationMs}ms: ${message}`);
+        return postBridgePayload(payload, endpoints, idx + 1, trigger);
+      });
   }
 
   function normalizeBridgeDepot(raw) {
     const t = norm(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (/^D\d{4}$/.test(t)) return t;
+    if (/^D\d{3}$/.test(t)) return `D0${t.slice(1)}`;
     if (/^\d{4}$/.test(t)) return `D${t}`;
     if (/^\d{3}$/.test(t)) return `D0${t}`;
     return '';
@@ -741,6 +830,7 @@
     for (const m of text.matchAll(/\bDE(\d{4})[A-Z0-9]*/g)) addDigits(m[1]);
     for (const m of text.matchAll(/\b0010(\d{3,4})\b/g)) addDigits(m[1]);
     for (const m of text.matchAll(/\bD(\d{4})\b/g)) addDigits(m[1]);
+    for (const m of text.matchAll(/\bD(\d{3})\b/g)) addDigits(m[1]);
 
     return Array.from(out);
   }
@@ -851,18 +941,47 @@
     return core.join('###');
   }
 
-  function syncBridgeSnapshot(force = false) {
-    if (!BRIDGE_ENABLED || bridgeState.inFlight) return;
-    if (!Array.isArray(state.rows) || !state.rows.length) return;
+  function syncBridgeSnapshot(force = false, trigger = 'auto') {
+    const triggerLabel = bridgeTriggerLabel(trigger);
+    if (!BRIDGE_ENABLED) {
+      if (trigger === 'manual') {
+        setBridgeStatus('Bridge deaktiviert', '#991b1b');
+        addBridgeLog('warn', `${triggerLabel}: Bridge ist deaktiviert.`);
+      }
+      return;
+    }
+
+    if (bridgeState.inFlight) {
+      if (trigger === 'manual') {
+        setBridgeStatus('Senden laeuft bereits', '#b45309');
+        addBridgeLog('warn', `${triggerLabel}: Export laeuft bereits, bitte kurz warten.`);
+      }
+      return;
+    }
+
+    if (!Array.isArray(state.rows) || !state.rows.length) {
+      if (trigger === 'manual') {
+        setBridgeStatus('Keine Daten erkannt', '#b45309');
+        addBridgeLog('warn', `${triggerLabel}: keine Tabellenzeilen erkannt.`);
+      }
+      return;
+    }
 
     const nowMs = Date.now();
     const sig = buildBridgeSignature(state.model, state.rows);
     if (!force && sig === bridgeState.lastSig && (nowMs - bridgeState.lastSentAt) < BRIDGE_MIN_INTERVAL_MS) {
+      if (trigger === 'manual') {
+        addBridgeLog('info', `${triggerLabel}: Daten unveraendert, manueller Send wurde trotzdem erzwungen.`);
+      }
       return;
     }
 
     const depot = ensureBridgeDepotConfigured(false);
-    if (!depot) return;
+    if (!depot) {
+      setBridgeStatus('Depot fehlt', '#991b1b');
+      addBridgeLog('warn', `${triggerLabel}: kein Depot gesetzt, Export abgebrochen.`);
+      return;
+    }
     const columns = state.model.cols.map(c => ({ key: c.key, title: c.title }));
     const rows = state.rows.slice(0, BRIDGE_MAX_ROWS).map((r) => {
       const row = {};
@@ -882,18 +1001,40 @@
       exportedAt: new Date().toISOString()
     };
     const endpoints = buildBridgeEndpoints();
-    if (!endpoints.length) return;
+    if (!endpoints.length) {
+      setBridgeStatus('Kein Endpoint', '#991b1b');
+      addBridgeLog('error', `${triggerLabel}: kein Endpoint konfiguriert.`);
+      return;
+    }
+
+    setBridgeStatus(`${triggerLabel}: Sende...`, '#1d4ed8');
+    addBridgeLog(
+      'info',
+      `${triggerLabel}: Start mode=${state.model.modeKey} depot=${depot} rows=${rows.length} endpoints=${endpoints.length}`
+    );
 
     bridgeState.inFlight = true;
-    postBridgePayload(payload, endpoints, 0)
+    postBridgePayload(payload, endpoints, 0, trigger)
       .then((usedEndpoint) => {
         bridgeState.lastSig = sig;
         bridgeState.lastSentAt = nowMs;
         try {
           localStorage.setItem(BRIDGE_ENDPOINT_STORAGE_KEY, usedEndpoint);
         } catch {}
+        setBridgeStatus(`${triggerLabel}: OK ${timeStampShort(new Date())}`, '#065f46');
+        addBridgeLog('ok', `${triggerLabel}: Export erfolgreich ueber ${usedEndpoint}`);
+        if (trigger === 'manual') {
+          toast(`Test-Senden erfolgreich (${rows.length} Zeilen)`, true);
+        }
       })
-      .catch(() => {})
+      .catch((err) => {
+        const msg = norm(err && err.message ? err.message : String(err || 'send_failed'));
+        setBridgeStatus(`${triggerLabel}: Fehler`, '#991b1b');
+        addBridgeLog('error', `${triggerLabel}: Export fehlgeschlagen (${msg})`);
+        if (trigger === 'manual') {
+          toast('Test-Senden fehlgeschlagen', false);
+        }
+      })
       .finally(() => {
         bridgeState.inFlight = false;
       });
@@ -1314,6 +1455,9 @@
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
+            <button class="${NS}btn-send-test" type="button" style="cursor:pointer;border:1px solid rgba(0,0,0,.12);background:#ecfeff;border-radius:10px;padding:4px 8px;font:800 10px system-ui;color:#0f766e;">
+              Senden (Test)
+            </button>
             <button class="${NS}btn-copy" type="button" style="cursor:pointer;border:1px solid rgba(0,0,0,.12);background:#fff;border-radius:10px;padding:4px 8px;font:800 10px system-ui;">
               In Zwischenablage kopieren
             </button>
@@ -1346,6 +1490,11 @@
           toast('Kopieren fehlgeschlagen', false);
         }
       }
+    });
+
+    panel.querySelector(`.${NS}btn-send-test`).addEventListener('click', () => {
+      extractData({ skipBridgeSync: true });
+      syncBridgeSnapshot(true, 'manual');
     });
 
     panel.querySelector(`.${NS}btn-depot`).addEventListener('click', () => {
@@ -1506,7 +1655,8 @@
     });
   }
 
-  function extractData() {
+  function extractData(opts = {}) {
+    const skipBridgeSync = !!(opts && opts.skipBridgeSync);
     const panel = document.getElementById(PANEL_ID);
     const shouldRender = !!(panel && panel.style.display !== 'none');
 
@@ -1547,7 +1697,9 @@
     const now = new Date();
     state.lastStamp = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
     state.rows = out;
-    syncBridgeSnapshot();
+    if (!skipBridgeSync) {
+      syncBridgeSnapshot(false, 'auto');
+    }
 
     if (shouldRender) render();
   }
