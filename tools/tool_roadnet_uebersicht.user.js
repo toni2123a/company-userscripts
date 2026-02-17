@@ -1,9 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.7.9
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
+// @version      1.8.2
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -673,6 +671,7 @@
   const NS = 'rn-tu-';
   const PANEL_ID = `${NS}panel`;
   const BTN_ID = `${NS}openbtn`;
+  const BTN_OV_ID = `${NS}openbtn-uebentl`;
   const TABLE_WRAP_CLASS = `${NS}tw`;
   const SCROLL_BOX_CLASS = `${NS}scrollbox`;
   const DEBOUNCE_MS = 220;
@@ -688,6 +687,13 @@
   const BRIDGE_MIN_INTERVAL_MS = 15000;
   const BRIDGE_POLL_INTERVAL_MS = 15000;
   const BRIDGE_MAX_ROWS = 700;
+  const ROADNET_SOFT_REFRESH_ENABLED = true;
+  const ROADNET_SOFT_REFRESH_INTERVAL_MS = 60000;
+  const ROADNET_HARD_REFRESH_ENABLED = true;
+  const ROADNET_HARD_REFRESH_INTERVAL_MS = 300000;
+  const ROADNET_HARD_REFRESH_IDLE_MS = 120000;
+  const ROADNET_STALE_RELOAD_ENABLED = true;
+  const ROADNET_STALE_RELOAD_AFTER_MS = 60000;
 
   const MODEL_UNLOAD = {
     modeKey: 'unload',
@@ -707,17 +713,23 @@
       { key: 'carrier', title: 'Frachtführer' }
     ],
     resolve: (_headerMap, pick) => ({
-      status:  pick(['status']),
-      from:    pick(['abgangsort', 'code abgangsstation', 'abgang']),
-      depAct:  pick(['tatsächliche abfahrt', 'tatsaechliche abfahrt']),
-      lts:     pick(['nummer transporteinheit', 'lts #', 'lts', 'nummer transporte']),
-      arrAct:  pick(['tatsächliche ankunft', 'tatsaechliche ankunft', 'ankunft']),
-      unlBeg:  pick(['entladung beginn', 'entladebeginn']),
-      unlEnd:  pick(['entladung ende']),
-      load:    pick(['auslastung']),
-      type:    pick(['art transporteinheit', 'typ', 'transportart', 'art transporteinh']),
-      seal:    pick(['plombennummer', 'plombe']),
-      carrier: pick(['bezeichnung frachtführer', 'bezeichnung frachtfuehrer'])
+      status:  pick(['status', 'status transporteinheit', 'te status', 'tu status']),
+      from:    pick([
+        'abgangsort', 'name abgangsstandort', 'code abgangsstation', 'code abgangsstandort',
+        'abgangsstandort', 'abgang', 'von', 'von bu', 'von business unit', 'from', 'origin'
+      ]),
+      depAct:  pick(['tatsächliche abfahrt', 'tatsaechliche abfahrt', 'actual departure', 'departure actual']),
+      lts:     pick([
+        'nummer transporteinheit', 'transporteinheit nr', 'transport unit number', 'transport unit no',
+        'lts #', 'lts', 'nummer transporte', 'wb nr', 'wbnr', 'bruecke'
+      ]),
+      arrAct:  pick(['tatsächliche ankunft', 'tatsaechliche ankunft', 'ankunft', 'actual arrival', 'arrival actual']),
+      unlBeg:  pick(['entladung beginn', 'entladebeginn', 'entladung start', 'unload start', 'unloading start']),
+      unlEnd:  pick(['entladung ende', 'entladeende', 'entladung abgeschlossen', 'unload end', 'unloading end']),
+      load:    pick(['auslastung', 'auslastung %', 'load', 'load %', 'fill level', '%']),
+      type:    pick(['art transporteinheit', 'typ', 'transportart', 'art transporteinh', 'verkehr', 'traffic']),
+      seal:    pick(['plombennummer', 'plombe', 'seal', 'seal number']),
+      carrier: pick(['bezeichnung frachtführer', 'bezeichnung frachtfuehrer', 'frachtführer', 'frachtfuehrer', 'carrier'])
     }),
     special: { statusErfasstKey: 'status', statusErfasstText: 'erfasst' }
   };
@@ -740,17 +752,24 @@
       { key: 'type',     title: 'Art' }
     ],
     resolve: (_headerMap, pick) => ({
-      status:  pick(['status']),
-      toName:  pick(['name empfangsstandort', 'empfangsort', 'empfangsstandort', 'an', 'code empfangsstation', 'empfangsstation']),
-      depPlan: pick(['geplante abfahrt', 'geplant abfahrt']),
-      depAct:  pick(['tatsächliche abfahrt', 'tatsaechliche abfahrt']),
-      loadBeg: pick(['beladung beginn']),
-      loadEnd: pick(['beladung ende']),
-      lts:     pick(['nummer transporteinheit', 'lts #', 'lts', 'nummer transporte']),
-      sealDep: pick(['plombennummer abfahrt', 'plombe abfahrt']),
-      loadPct: pick(['auslastung']),
-      carrier: pick(['bezeichnung frachtführer', 'bezeichnung frachtfuehrer']),
-      type:    pick(['art transporteinheit', 'typ', 'transportart', 'art transporteinh'])
+      status:  pick(['status', 'status transporteinheit', 'te status', 'tu status']),
+      toName:  pick([
+        'name empfangsstandort', 'name empfangsstation', 'empfangsort', 'empfangsstandort',
+        'an', 'nach', 'code empfangsstation', 'code empfangsstandort', 'empfangsstation',
+        'to', 'destination'
+      ]),
+      depPlan: pick(['geplante abfahrt', 'geplant abfahrt', 'planned departure', 'departure planned']),
+      depAct:  pick(['tatsächliche abfahrt', 'tatsaechliche abfahrt', 'actual departure', 'departure actual']),
+      loadBeg: pick(['beladung beginn', 'beladung start', 'loading start']),
+      loadEnd: pick(['beladung ende', 'beladung abgeschlossen', 'loading end']),
+      lts:     pick([
+        'nummer transporteinheit', 'transporteinheit nr', 'transport unit number', 'transport unit no',
+        'lts #', 'lts', 'nummer transporte', 'wb nr', 'wbnr', 'bruecke'
+      ]),
+      sealDep: pick(['plombennummer abfahrt', 'plombe abfahrt', 'seal departure', 'seal']),
+      loadPct: pick(['auslastung', 'auslastung %', 'load', 'load %', 'fill level', '%']),
+      carrier: pick(['bezeichnung frachtführer', 'bezeichnung frachtfuehrer', 'frachtführer', 'frachtfuehrer', 'carrier']),
+      type:    pick(['art transporteinheit', 'typ', 'transportart', 'art transporteinh', 'verkehr', 'traffic'])
     }),
     special: { statusErfasstKey: null }
   };
@@ -765,7 +784,12 @@
     depotPromptShown: false,
     scrollLeft: 0,
     scrollTop: 0,
-    scale: 1
+    scale: 1,
+    lastUserInteractionAt: Date.now(),
+    lastSoftRefreshAt: 0,
+    lastHardRefreshAt: Date.now(),
+    lastExtractSignature: '',
+    lastDataChangeAt: Date.now()
   };
   const BRIDGE_LOG_MAX = 120;
   const bridgeState = {
@@ -1079,7 +1103,7 @@
     ].filter(x => x.idx != null);
 
     for (const tr of bodyRows) {
-      const tds = Array.from(tr.querySelectorAll('td'));
+      const tds = getRowCells(tr);
       if (!tds.length) continue;
 
       for (const pref of preferredCols) {
@@ -1122,16 +1146,25 @@
   }
 
   function buildBridgeSignature(model, rows) {
-    const first = rows[0] || {};
-    const last = rows[rows.length - 1] || {};
-    const core = [
-      model.modeKey,
-      rows.length,
-      rows.slice(0, 10).map(r => model.cols.map(c => norm(r[c.key])).join('|')).join('||'),
-      model.cols.map(c => norm(first[c.key])).join('|'),
-      model.cols.map(c => norm(last[c.key])).join('|')
-    ];
-    return core.join('###');
+    let hash = 2166136261 >>> 0;
+    const push = (value) => {
+      const text = norm(value);
+      for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      hash ^= 124;
+      hash = Math.imul(hash, 16777619) >>> 0;
+    };
+
+    push(model.modeKey);
+    push(String(rows.length));
+    for (const row of rows) {
+      for (const col of model.cols) {
+        push(row && row[col.key] != null ? row[col.key] : '');
+      }
+    }
+    return `${model.modeKey}#${rows.length}#${hash.toString(16)}`;
   }
 
   function syncBridgeSnapshot(force = false, trigger = 'auto') {
@@ -1266,40 +1299,93 @@
     }
   }
 
+  function getRowCells(rowEl) {
+    if (!rowEl) return [];
+    const cells = Array.from(rowEl.querySelectorAll('td,[role="gridcell"],[role="cell"]'));
+    return cells.filter(isVisible);
+  }
+
+  function scoreRoadnetRoot(el) {
+    if (!el || !isVisible(el) || el.closest(`#${PANEL_ID}`)) return -1;
+    const bodyRows = Array.from(el.querySelectorAll('tbody tr,[role="row"]'))
+      .filter((row) => getRowCells(row).length);
+    const rowCount = bodyRows.length;
+    if (!rowCount) return -1;
+
+    const headerCells = Array.from(el.querySelectorAll('thead th,[role="columnheader"]'));
+    const headerText = headerCells.map((h) => norm(h.innerText || h.textContent || '')).join(' | ').toLowerCase();
+    const modeHint = norm(el.innerText || el.textContent || '').slice(0, 1800).toLowerCase();
+
+    let score = rowCount;
+    if (String(el.className || '').includes('ui-datatable')) score += 40;
+    if (headerText.includes('status')) score += 50;
+    if (headerText.includes('lts') || headerText.includes('transporteinheit') || headerText.includes('wb')) score += 50;
+    if (headerText.includes('auslast') || headerText.includes('%') || headerText.includes('load')) score += 20;
+    if (modeHint.includes('entladung') || modeHint.includes('beladung')) score += 10;
+    return score;
+  }
+
   function findRoadnetDataTableRoot() {
     const direct = document.getElementById('frm_transport_units:tbl');
-    if (direct && direct.classList.contains('ui-datatable')) return direct;
+    if (direct && isVisible(direct)) return direct;
 
-    const cands = Array.from(document.querySelectorAll('div.ui-datatable[id$=":tbl"]'))
-      .filter(isVisible)
-      .filter(el => !el.closest(`#${PANEL_ID}`));
-    if (!cands.length) return null;
-    if (cands.length === 1) return cands[0];
+    const selectors = [
+      'div.ui-datatable[id$=":tbl"]',
+      'div.ui-datatable',
+      'table[role="grid"]',
+      'table[aria-label*="Transport"]',
+      'table[aria-label*="transport"]',
+      'table[id*="transport"]',
+      'table'
+    ];
 
-    let best = null, bestScore = -1;
-    for (const el of cands) {
-      const rows = el.querySelectorAll('tbody tr').length;
-      if (rows > bestScore) { bestScore = rows; best = el; }
+    const seen = new Set();
+    const cands = [];
+    for (const sel of selectors) {
+      for (const el of Array.from(document.querySelectorAll(sel))) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        cands.push(el);
+      }
     }
-    return best;
+
+    let best = null;
+    let bestScore = -1;
+    for (const el of cands) {
+      const score = scoreRoadnetRoot(el);
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return bestScore > 0 ? best : null;
   }
 
   function getPrimefacesTableParts(root) {
     const headerTh = Array.from(root.querySelectorAll('.ui-datatable-scrollable-header thead th')).filter(isVisible);
-    const headerCells = headerTh.length ? headerTh : Array.from(root.querySelectorAll('thead th'));
+    let headerCells = headerTh.length
+      ? headerTh
+      : Array.from(root.querySelectorAll('thead th,[role="columnheader"]')).filter(isVisible);
+    if (!headerCells.length && root.tagName && String(root.tagName).toLowerCase() === 'table') {
+      const firstRow = root.querySelector('tr');
+      if (firstRow) {
+        headerCells = Array.from(firstRow.querySelectorAll('th,td')).filter(isVisible);
+      }
+    }
 
     const bodyRows1 = Array.from(root.querySelectorAll('.ui-datatable-scrollable-body tbody tr'))
-      .filter(tr => tr.querySelectorAll('td').length);
-    const bodyRows2 = Array.from(root.querySelectorAll('tbody tr'))
-      .filter(tr => tr.querySelectorAll('td').length);
+      .filter(tr => getRowCells(tr).length);
+    const bodyRows2 = Array.from(root.querySelectorAll('tbody tr,[role="row"]'))
+      .filter(tr => getRowCells(tr).length);
 
     const combined = [...bodyRows1, ...bodyRows2];
     const uniq = [];
-    const seen = new Set();
+    const seenKeys = new Set();
     for (const r of combined) {
-      const sig = (r.getAttribute('data-rk') || '') + '|' + norm(r.innerText).slice(0, 120);
-      if (seen.has(sig)) continue;
-      seen.add(sig);
+      const cells = getRowCells(r);
+      const sig = (r.getAttribute('data-rk') || '') + '|' + cells.map((c) => norm(c.innerText || c.textContent || '')).join('|');
+      if (seenKeys.has(sig)) continue;
+      seenKeys.add(sig);
       uniq.push(r);
     }
     return { headerCells, bodyRows: uniq };
@@ -1609,6 +1695,594 @@
     return btn;
   }
 
+  function clickTabByExactText(targetText) {
+    const target = norm(targetText);
+    if (!target) return false;
+
+    const candidates = Array.from(document.querySelectorAll('a,button,li,span,div,label'))
+      .filter((el) => norm(el.textContent) === target && isVisible(el));
+    if (!candidates.length) return false;
+
+    const preferred =
+      candidates.find((el) => el.tagName === 'A' || el.tagName === 'BUTTON') ||
+      candidates[0];
+
+    try {
+      preferred.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      preferred.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      preferred.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    } catch {
+      try {
+        preferred.click();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  function ensureEntladungShortcutButton() {
+    if (!location.href.includes('/execution/transport_units')) return null;
+    if (window.__RN_OV_ENTL_RUNNING) return document.getElementById(BTN_OV_ID);
+    window.__RN_OV_ENTL_RUNNING = true;
+
+    const OVERLAY_ID = 'rnOvEntlOverlay';
+    const STYLE_ID = 'rnOvEntlStyle';
+    const OPEN_KEY = 'rnOvEntlOverlayOpen';
+
+    const n = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const nk = (s) =>
+      n(s)
+        .toLowerCase()
+        .replace(/\u00a0/g, ' ')
+        .replace(/[^\p{L}\p{N}%# ]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const esc = (s) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const fmtStamp = () => {
+      const d = new Date();
+      const p = (x) => String(x).padStart(2, '0');
+      return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    };
+
+    const fmtWB = (raw) => {
+      const digits = n(raw).replace(/\D/g, '');
+      if (digits.length === 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+      return n(raw);
+    };
+
+    const fmtPct = (raw) => {
+      const t = n(raw).replace(/\./g, '').replace(',', '.').replace(/[^\d.\-]/g, '');
+      if (!t) return '';
+      const v = parseFloat(t);
+      if (!Number.isFinite(v)) return '';
+      return `${Number.isInteger(v) ? String(v) : v.toFixed(1).replace('.', ',')}%`;
+    };
+
+    const isVisibleEl = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+
+    const isOverlayVisible = () => {
+      const el = document.getElementById(OVERLAY_ID);
+      return !!el && getComputedStyle(el).display !== 'none';
+    };
+
+    const setOverlayOpen = (open) => {
+      try { sessionStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch {}
+    };
+    const getOverlayOpen = () => {
+      try { return sessionStorage.getItem(OPEN_KEY) === '1'; } catch { return false; }
+    };
+
+    function ensureEntladungTab() {
+      const tabs = Array.from(document.querySelectorAll('a,button,li,span,div'))
+        .filter((el) => n(el.textContent) === 'Entladung' && isVisibleEl(el));
+      if (!tabs.length) return false;
+
+      const activeRe = /ui-state-active|ui-tabs-active|ui-tabs-selected|active|selected|current/i;
+      const active = tabs.some((el) =>
+        activeRe.test(String(el.className || '')) ||
+        activeRe.test(String(el.parentElement?.className || '')) ||
+        !!el.closest?.('.ui-state-active, .ui-tabs-active, .ui-tabs-selected, .active, .selected, .current')
+      );
+      if (active) return true;
+
+      const el = tabs.find((x) => x.tagName === 'A' || x.tagName === 'BUTTON') || tabs[0];
+      try {
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return true;
+      } catch {
+        try { el.click(); return true; } catch { return false; }
+      }
+    }
+
+    function clickRefreshButton() {
+      const cands = Array.from(document.querySelectorAll('button,a,span'))
+        .filter(isVisibleEl)
+        .filter((el) => {
+          const t = n(el.textContent);
+          const ti = n(el.getAttribute('title'));
+          const ar = n(el.getAttribute('aria-label'));
+          const cl = String(el.className || '');
+          return /aktualisieren/i.test(t) || /refresh|reload|aktualisieren/i.test(ti) || /refresh|reload|aktualisieren/i.test(ar) || /refresh/i.test(cl);
+        });
+
+      const btn = cands.find((el) => el.tagName === 'BUTTON') || cands[0];
+      if (!btn) return false;
+      try {
+        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return true;
+      } catch {
+        try { btn.click(); return true; } catch { return false; }
+      }
+    }
+
+    function tableRoot() {
+      const direct = document.getElementById('frm_transport_units:tbl');
+      if (direct && direct.classList.contains('ui-datatable')) return direct;
+
+      const cands = Array.from(document.querySelectorAll('div.ui-datatable[id$=":tbl"]')).filter(isVisibleEl);
+      if (!cands.length) return null;
+      if (cands.length === 1) return cands[0];
+
+      let best = cands[0];
+      let bestRows = -1;
+      for (const c of cands) {
+        const rows = c.querySelectorAll('tbody tr').length;
+        if (rows > bestRows) {
+          bestRows = rows;
+          best = c;
+        }
+      }
+      return best;
+    }
+
+    function headerMap(root) {
+      const heads = Array.from(root.querySelectorAll('.ui-datatable-scrollable-header thead th')).filter(isVisibleEl);
+      const h = heads.length ? heads : Array.from(root.querySelectorAll('thead th'));
+      const map = new Map();
+      h.forEach((th, idx) => {
+        const key = nk(n(th.innerText ?? th.textContent ?? ''));
+        if (key && !map.has(key)) map.set(key, idx);
+      });
+      return map;
+    }
+
+    function pickIdx(hm, keys) {
+      for (const k of keys) {
+        const key = nk(k);
+        if (hm.has(key)) return hm.get(key);
+        for (const [hk, idx] of hm.entries()) {
+          if (hk.includes(key)) return idx;
+        }
+      }
+      return null;
+    }
+
+    function cellText(td) {
+      if (!td) return '';
+      const main = n(td.innerText ?? td.textContent ?? '');
+      if (/[A-Za-zÄÖÜäöü]/.test(main)) return main;
+      const attrs = [
+        td.getAttribute('title'),
+        td.getAttribute('aria-label'),
+        td.getAttribute('data-original-title'),
+        td.getAttribute('data-tooltip'),
+        td.getAttribute('data-title')
+      ].map(n).filter(Boolean);
+      return attrs.find((x) => /[A-Za-zÄÖÜäöü]/.test(x)) || main;
+    }
+
+    function extractRows() {
+      const root = tableRoot();
+      if (!root) return [];
+
+      const hm = headerMap(root);
+      const idx = {
+        status: pickIdx(hm, ['status']),
+        carrier: pickIdx(hm, ['frachtführer', 'frachtfuehrer', 'carrier', 'dienstleister', 'transporteur', 'unternehmer', 'spedition']),
+        from: pickIdx(hm, ['herkunft', 'abgangsort', 'abgang', 'von', 'name abgangsstandort', 'code abgangsstation']),
+        wb: pickIdx(hm, ['wb nr', 'nummer transporteinheit', 'lts #', 'lts', 'nummer transporte', 'transporteinheit']),
+        fuel: pickIdx(hm, ['auslastung', 'auslastung (%)', 'fuellstand', 'füllstand']),
+        unlBeg: pickIdx(hm, ['entladung beginn', 'entladebeginn']),
+        unlEnd: pickIdx(hm, ['entladung ende', 'entladeende']),
+        traffic: pickIdx(hm, ['verkehrsart', 'art', 'transportart'])
+      };
+
+      const rowsA = Array.from(root.querySelectorAll('.ui-datatable-scrollable-body tbody tr')).filter((tr) => tr.querySelectorAll('td').length);
+      const rowsB = Array.from(root.querySelectorAll('tbody tr')).filter((tr) => tr.querySelectorAll('td').length);
+      const merged = [...rowsA, ...rowsB];
+
+      const uniq = [];
+      const seen = new Set();
+      for (const tr of merged) {
+        const sig = (tr.getAttribute('data-rk') || '') + '|' + n(tr.innerText).slice(0, 180);
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        uniq.push(tr);
+      }
+
+      const out = [];
+      for (const tr of uniq) {
+        const tds = Array.from(tr.querySelectorAll('td'));
+        if (!tds.length) continue;
+        const get = (k) => {
+          const i = idx[k];
+          if (i == null || i < 0 || i >= tds.length) return '';
+          return cellText(tds[i]);
+        };
+        const row = {
+          status: get('status'),
+          carrier: get('carrier'),
+          from: get('from'),
+          wb: get('wb'),
+          fuel: get('fuel'),
+          unlBeg: get('unlBeg'),
+          unlEnd: get('unlEnd'),
+          traffic: get('traffic')
+        };
+        if (Object.values(row).some((v) => n(v))) out.push(row);
+      }
+      return out;
+    }
+
+    const isPickup = (row) => {
+      const t = nk(row.traffic);
+      return t.includes('pickup') || t === 'pickup';
+    };
+    const isUnloaded = (row) => {
+      const s = nk(row.status);
+      return s.includes('entladen') || !!n(row.unlEnd);
+    };
+    const isAtGate = (row) => !!n(row.unlBeg) && !n(row.unlEnd);
+
+    function ensureUI() {
+      if (!document.getElementById(BTN_OV_ID)) {
+        const btn = document.createElement('button');
+        btn.id = BTN_OV_ID;
+        btn.type = 'button';
+        btn.textContent = 'ÜbEntl';
+        btn.style.cssText = 'position:fixed;right:14px;top:168px;z-index:2147483647;cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(10,15,25,.62);color:#eaf2ff;border-radius:9px;padding:2px 5px;font:900 8.5px system-ui;line-height:1;letter-spacing:.2px;box-shadow:0 8px 22px rgba(0,0,0,.20)';
+        btn.addEventListener('click', () => toggleOverlay());
+        document.body.appendChild(btn);
+      }
+
+      if (!document.getElementById(STYLE_ID)) {
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = `
+          #${OVERLAY_ID}{position:fixed;inset:0;z-index:2147483646;display:none;color:#eef6ff;background:radial-gradient(1000px 600px at 20% -10%,rgba(71,120,220,.27),rgba(8,12,20,0) 60%),linear-gradient(180deg,#0b1220,#070c16 55%,#060a13);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+          .ovTop{height:64px;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(5,10,18,.35);}
+          .ovTitle{font-weight:950;font-size:clamp(18px,1.6vw,34px)}
+          .ovMeta{display:flex;gap:16px;align-items:center;color:rgba(234,242,255,.78);font-weight:800;font-size:clamp(12px,1vw,18px)}
+          .ovClose{cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#fff;border-radius:14px;padding:8px 12px;font-weight:950;font-size:clamp(12px,1vw,18px)}
+          .ovBody{height:calc(100vh - 64px);padding:16px 18px 18px;box-sizing:border-box;display:grid;grid-template-columns:1.05fr 2.2fr 2.2fr;grid-template-rows:auto auto 1fr;gap:14px;}
+          .ovCard{border:1px solid rgba(255,255,255,.08);background:rgba(9,15,30,.55);border-radius:16px;box-shadow:0 22px 70px rgba(0,0,0,.32);overflow:hidden;min-width:0;}
+          .ovKpi{grid-column:1 / 4;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+          .ovKInner{padding:16px 16px 12px}
+          .ovLbl{color:rgba(234,242,255,.78);font-weight:900;font-size:clamp(12px,1.3vw,25px)}
+          .ovVal{margin-top:6px;font-weight:1000;line-height:1;font-size:clamp(42px,6.2vw,140px)}
+          .ovSub{margin-top:6px;font-weight:850;font-size:clamp(10px,.85vw,14px);color:rgba(234,242,255,.70)}
+          .ovProg{grid-column:1 / 4;padding:12px 14px}
+          .ovBar{height:16px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.10)}
+          .ovBarIn{height:100%;width:0;background:linear-gradient(90deg,rgba(34,197,94,.95),rgba(59,130,246,.95));}
+          .ovProgText{display:flex;justify-content:space-between;margin-top:8px;font-weight:900;color:rgba(234,242,255,.78);font-size:clamp(11px,.95vw,16px)}
+          .ovSide{grid-column:1;display:flex;flex-direction:column;min-height:0;}
+          .ovMain1{grid-column:2;min-height:0;}
+          .ovMain2{grid-column:3;min-height:0;}
+          .ovHead{padding:14px 14px 12px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center}
+          .ovHTitle{font-weight:1000;font-size:clamp(16px,1.7vw,30px)}
+          .ovHCount{font-weight:1000;font-size:clamp(16px,1.7vw,30px);color:rgba(234,242,255,.88)}
+          .ovList{padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto;max-height:100%}
+          .ovRow{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
+          .ovRowN{font-weight:950;font-size:clamp(13px,1.2vw,22px);word-break:break-word;padding-right:10px}
+          .ovRowC{font-weight:1000;font-size:clamp(16px,1.8vw,30px)}
+          .ovTableWrap{height:100%;display:flex;flex-direction:column;min-height:0}
+          .ovTableBody{overflow:auto;min-height:0;background:rgba(9,15,30,.10)}
+          .ovTable{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+          .ovTable th{position:sticky;top:0;z-index:2;background:rgba(12,18,32,.96);border-bottom:1px solid rgba(255,255,255,.12);text-align:left;padding:10px 12px;font-weight:950;font-size:clamp(13px,1.2vw,22px)}
+          .ovTable td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px 12px;font-weight:900;font-size:clamp(12px,1.2vw,20px);line-height:1.06;word-break:break-word}
+          .ovZ0{background:rgba(255,255,255,0)} .ovZ1{background:rgba(255,255,255,.03)}
+          .ovWB{white-space:nowrap;font-variant-numeric:tabular-nums}
+          .ovFuel{white-space:nowrap}
+          .ovBadge{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;font-weight:1000;font-size:clamp(10px,.95vw,16px);border:1px solid rgba(255,255,255,.12);word-break:break-word}
+          .ovBRed{background:rgba(239,68,68,.22);color:#ffd7d7;border-color:rgba(239,68,68,.40)}
+          .ovBGreen{background:rgba(34,197,94,.20);color:#d6ffe5;border-color:rgba(34,197,94,.40)}
+          .ovBGray{background:rgba(148,163,184,.16);color:rgba(234,242,255,.90);border-color:rgba(148,163,184,.28)}
+        `;
+        document.head.appendChild(style);
+      }
+
+      if (!document.getElementById(OVERLAY_ID)) {
+        const wrap = document.createElement('div');
+        wrap.id = OVERLAY_ID;
+        wrap.innerHTML = `
+          <div class="ovTop">
+            <div class="ovTitle">Frühschicht – Übersicht Entladung</div>
+            <div class="ovMeta">
+              <div>Stand: <span id="ovStamp">—</span></div>
+              <button class="ovClose" id="ovClose" type="button">Schließen</button>
+            </div>
+          </div>
+          <div class="ovBody">
+            <div class="ovKpi">
+              <div class="ovCard"><div class="ovKInner"><div class="ovLbl">Avisierte TE</div><div class="ovVal" id="ovKpiTotal">0</div><div class="ovSub">Pickup ignoriert</div></div></div>
+              <div class="ovCard"><div class="ovKInner"><div class="ovLbl">Entladen</div><div class="ovVal" id="ovKpiDone">0</div><div class="ovSub">Status „Entladen“ oder Entladeende ✓</div></div></div>
+              <div class="ovCard"><div class="ovKInner"><div class="ovLbl">Noch offen</div><div class="ovVal" id="ovKpiOpen">0</div><div class="ovSub">Ohne Entladeende</div></div></div>
+              <div class="ovCard"><div class="ovKInner"><div class="ovLbl">Am Tor</div><div class="ovVal" id="ovKpiGate">0</div><div class="ovSub">Entladebeginn ✓ / Entladeende ✗</div></div></div>
+            </div>
+            <div class="ovCard ovProg">
+              <div class="ovBar"><div class="ovBarIn" id="ovBarIn"></div></div>
+              <div class="ovProgText"><span id="ovProgText">Fortschritt: 0%</span><span></span></div>
+            </div>
+            <div class="ovCard ovSide">
+              <div class="ovHead"><div class="ovHTitle">Status-Zählung</div><div class="ovHCount" id="ovStatusTotal">—</div></div>
+              <div class="ovList" id="ovStatusList"></div>
+            </div>
+            <div class="ovCard ovMain1">
+              <div class="ovTableWrap">
+                <div class="ovHead"><div class="ovHTitle">Noch zu entladen</div><div class="ovHCount" id="ovOpenCount">0</div></div>
+                <div class="ovTableBody" id="ovOpenBody"></div>
+              </div>
+            </div>
+            <div class="ovCard ovMain2">
+              <div class="ovTableWrap">
+                <div class="ovHead"><div class="ovHTitle">Am Tor</div><div class="ovHCount" id="ovGateCount">0</div></div>
+                <div class="ovTableBody" id="ovGateBody"></div>
+              </div>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(wrap);
+
+        document.getElementById('ovClose').addEventListener('click', () => {
+          const el = document.getElementById(OVERLAY_ID);
+          if (el) el.style.display = 'none';
+          setOverlayOpen(false);
+          stopAutoScroll();
+        });
+      }
+    }
+
+    const badgeHtml = (status) => {
+      const s = nk(status);
+      if (s.includes('abgefahren')) return `<span class="ovBadge ovBRed">Abgefahren</span>`;
+      if (s.includes('angekommen')) return `<span class="ovBadge ovBGreen">Angekommen</span>`;
+      return `<span class="ovBadge ovBGray">${esc(status || '—')}</span>`;
+    };
+
+    function buildTable(rows, mode) {
+      const cols = mode === 'gate'
+        ? [
+            { key: 'wb', label: 'WB Nr', cls: 'ovWB' },
+            { key: 'from', label: 'Herkunft', cls: '' },
+            { key: 'fuel', label: 'Ausl…', cls: 'ovFuel' },
+            { key: 'status', label: 'Status', cls: '' }
+          ]
+        : [
+            { key: 'wb', label: 'WB Nr', cls: 'ovWB' },
+            { key: 'from', label: 'Herkunft', cls: '' },
+            { key: 'fuel', label: 'Ausl…', cls: 'ovFuel' },
+            { key: 'status', label: 'Status', cls: '' },
+            { key: 'carrier', label: 'Frachtf.', cls: '' }
+          ];
+
+      const colStyle = mode === 'gate'
+        ? '<colgroup><col style="width:20%"><col style="width:44%"><col style="width:16%"><col style="width:20%"></colgroup>'
+        : '<colgroup><col style="width:18%"><col style="width:36%"><col style="width:14%"><col style="width:20%"><col style="width:12%"></colgroup>';
+
+      return `
+        <table class="ovTable">
+          ${colStyle}
+          <thead><tr>${cols.map((c) => `<th>${esc(c.label)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${rows.map((r, i) => {
+              const z = i % 2 ? 'ovZ1' : 'ovZ0';
+              return `<tr class="${z}">${cols.map((c) => {
+                if (c.key === 'status') return `<td class="${c.cls}">${badgeHtml(r.status)}</td>`;
+                if (c.key === 'wb') return `<td class="${c.cls}">${esc(fmtWB(r.wb) || '—')}</td>`;
+                if (c.key === 'fuel') return `<td class="${c.cls}">${esc(fmtPct(r.fuel) || '—')}</td>`;
+                return `<td class="${c.cls}">${esc(n(r[c.key]) || '—')}</td>`;
+              }).join('')}</tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    let rendering = false;
+    function renderOverlay() {
+      if (rendering) return;
+      rendering = true;
+      try {
+        ensureUI();
+        ensureEntladungTab();
+
+        const stamp = document.getElementById('ovStamp');
+        if (stamp) stamp.textContent = fmtStamp();
+
+        const all = extractRows();
+        const eligible = all.filter((r) => !isPickup(r));
+        const total = eligible.length;
+        const done = eligible.filter(isUnloaded).length;
+        const gate = eligible.filter(isAtGate);
+        const open = eligible.filter((r) => !isUnloaded(r));
+        const openOnly = open.filter((r) => !isAtGate(r));
+
+        document.getElementById('ovKpiTotal').textContent = String(total);
+        document.getElementById('ovKpiDone').textContent = String(done);
+        document.getElementById('ovKpiOpen').textContent = String(open.length);
+        document.getElementById('ovKpiGate').textContent = String(gate.length);
+
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        document.getElementById('ovBarIn').style.width = `${pct}%`;
+        document.getElementById('ovProgText').textContent = `Fortschritt: ${pct}% (${done}/${total})`;
+
+        const sc = new Map();
+        for (const r of eligible) {
+          const key = n(r.status) || '—';
+          sc.set(key, (sc.get(key) || 0) + 1);
+        }
+        const statusEntries = Array.from(sc.entries()).sort((a, b) => b[1] - a[1]);
+        document.getElementById('ovStatusList').innerHTML = statusEntries.length
+          ? statusEntries.map(([k, v]) => `<div class="ovRow"><div class="ovRowN">${esc(k)}</div><div class="ovRowC">${v}</div></div>`).join('')
+          : '<div style="padding:8px 6px;color:rgba(234,242,255,.75);font-weight:900;">Keine Daten.</div>';
+        document.getElementById('ovStatusTotal').textContent = String(eligible.length);
+
+        document.getElementById('ovOpenBody').innerHTML = buildTable(openOnly, 'open');
+        document.getElementById('ovGateBody').innerHTML = buildTable(gate, 'gate');
+        document.getElementById('ovOpenCount').textContent = String(openOnly.length);
+        document.getElementById('ovGateCount').textContent = String(gate.length);
+      } finally {
+        rendering = false;
+      }
+    }
+
+
+    const AUTO_SCROLL = { enabled: true, step: 0.6, intervalMs: 25, pauseMs: 1200 };
+    let autoScrollTimer = null;
+    let autoScrollState = new Map();
+
+    function getAutoScrollHosts() {
+      const hosts = [];
+      const a = document.getElementById('ovStatusList');
+      const b = document.getElementById('ovOpenBody');
+      const c = document.getElementById('ovGateBody');
+      if (a) hosts.push(a);
+      if (b) hosts.push(b);
+      if (c) hosts.push(c);
+      return hosts;
+    }
+
+    function isScrollableHost(el) {
+      return !!el && (el.scrollHeight - el.clientHeight) > 6;
+    }
+
+    function tickAutoScroll() {
+      if (!AUTO_SCROLL.enabled) return;
+      if (!isOverlayVisible()) return;
+
+      const hosts = getAutoScrollHosts();
+      const now = Date.now();
+
+      for (const el of hosts) {
+        if (!isScrollableHost(el)) {
+          autoScrollState.delete(el);
+          continue;
+        }
+
+        let st = autoScrollState.get(el);
+        if (!st) {
+          st = { dir: 1, nextMoveAt: now + AUTO_SCROLL.pauseMs };
+          autoScrollState.set(el, st);
+        }
+
+        if (now < st.nextMoveAt) continue;
+
+        const maxScroll = el.scrollHeight - el.clientHeight;
+        let nextTop = el.scrollTop + st.dir * AUTO_SCROLL.step;
+
+        if (nextTop <= 0) {
+          nextTop = 0;
+          st.dir = 1;
+          st.nextMoveAt = now + AUTO_SCROLL.pauseMs;
+        } else if (nextTop >= maxScroll) {
+          nextTop = maxScroll;
+          st.dir = -1;
+          st.nextMoveAt = now + AUTO_SCROLL.pauseMs;
+        }
+
+        el.scrollTop = nextTop;
+      }
+    }
+
+    function startAutoScroll() {
+      stopAutoScroll();
+      autoScrollTimer = setInterval(tickAutoScroll, AUTO_SCROLL.intervalMs);
+    }
+
+    function stopAutoScroll() {
+      if (autoScrollTimer) clearInterval(autoScrollTimer);
+      autoScrollTimer = null;
+      autoScrollState = new Map();
+    }
+    function toggleOverlay() {
+      ensureUI();
+      ensureEntladungTab();
+      const el = document.getElementById(OVERLAY_ID);
+      if (!el) return;
+      const vis = getComputedStyle(el).display !== 'none';
+      el.style.display = vis ? 'none' : 'block';
+      setOverlayOpen(!vis);
+      if (!vis) {
+        renderOverlay();
+        startAutoScroll();
+      } else {
+        stopAutoScroll();
+      }
+    }
+
+    const renderDebounced = (() => {
+      const fn = () => { if (isOverlayVisible()) renderOverlay(); };
+      return debounce(fn, 250);
+    })();
+
+    function installObserver() {
+      const root = tableRoot();
+      if (!root) return false;
+      const mo = new MutationObserver(() => renderDebounced());
+      mo.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
+      return true;
+    }
+
+    ensureUI();
+
+    setTimeout(() => {
+      ensureEntladungTab();
+      if (getOverlayOpen()) {
+        const el = document.getElementById(OVERLAY_ID);
+        if (el) el.style.display = 'block';
+        renderOverlay();
+        startAutoScroll();
+      }
+    }, 800);
+
+    let tries = 0;
+    const obsTry = setInterval(() => {
+      tries++;
+      if (installObserver()) clearInterval(obsTry);
+      if (tries >= 40) clearInterval(obsTry);
+    }, 500);
+
+    setInterval(() => {
+      if (!isOverlayVisible()) return;
+      setOverlayOpen(true);
+      if (!ensureEntladungTab()) return;
+      clickRefreshButton();
+      setTimeout(() => { if (isOverlayVisible()) renderOverlay(); }, 1400);
+    }, 20000);
+
+    setInterval(() => { if (isOverlayVisible()) renderOverlay(); }, 4000);
+
+    return document.getElementById(BTN_OV_ID);
+  }
+
   function ensurePanel() {
     let panel = document.getElementById(PANEL_ID);
     if (panel) return panel;
@@ -1872,7 +2546,7 @@
 
     const out = [];
     for (const tr of bodyRows) {
-      const tds = Array.from(tr.querySelectorAll('td'));
+      const tds = getRowCells(tr);
       if (!tds.length) continue;
 
       const get = (k) => {
@@ -1890,6 +2564,12 @@
     const now = new Date();
     state.lastStamp = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
     state.rows = out;
+    const currentExtractSignature = buildBridgeSignature(state.model, out);
+    const nowMs = Date.now();
+    if (currentExtractSignature !== state.lastExtractSignature) {
+      state.lastExtractSignature = currentExtractSignature;
+      state.lastDataChangeAt = nowMs;
+    }
     if (!skipBridgeSync) {
       syncBridgeSnapshot(false, 'auto');
     }
@@ -1913,27 +2593,17 @@
   const AUTOCLICK_TARGETS = ['Entladung', 'Fernverkehr'];
   const AUTOCLICK_MAX_WAIT_MS = 30000;
   const AUTOCLICK_POLL_MS = 500;
-  const AUTOCLICK_DONE_KEY = 'rn_autoclick_done';
 
   function autoClickTargets() {
     if (!AUTOCLICK_ENABLED) return;
     if (!location.href.includes('/execution/transport_units')) return;
 
-    const sessionKey = AUTOCLICK_DONE_KEY + '_' + location.href.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 80);
-    try {
-      if (sessionStorage.getItem(sessionKey) === '1') return;
-    } catch {}
-
     const started = Date.now();
     const remaining = [...AUTOCLICK_TARGETS];
-    let clickedAny = false;
 
     const poll = setInterval(() => {
       if (!remaining.length || (Date.now() - started) > AUTOCLICK_MAX_WAIT_MS) {
         clearInterval(poll);
-        if (clickedAny) {
-          try { sessionStorage.setItem(sessionKey, '1'); } catch {}
-        }
         return;
       }
 
@@ -1960,19 +2630,157 @@
       }
 
       el.click();
-      clickedAny = true;
       remaining.shift();
     }, AUTOCLICK_POLL_MS);
   }
 
+  function isTransportUnitsPage() {
+    return location.href.includes('/execution/transport_units');
+  }
+
+  function registerUserInteractionTracking() {
+    const mark = () => { state.lastUserInteractionAt = Date.now(); };
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'pointerdown'].forEach((eventName) => {
+      window.addEventListener(eventName, mark, { passive: true });
+    });
+  }
+
+  function findRoadnetRefreshTrigger(root) {
+    const refreshRe = /(aktualis|refresh|neu laden|reload|synchroni|sync)/i;
+    const iconRe = /(refresh|reload|sync|pi-refresh|fa-refresh|icon-refresh)/i;
+    const scopes = [];
+    if (root) scopes.push(root);
+    if (root && root.closest('form')) scopes.push(root.closest('form'));
+    scopes.push(document);
+
+    const seen = new Set();
+    const candidates = [];
+    const selectors = [
+      'button',
+      'a',
+      '[role="button"]',
+      '[title*="Aktual"]',
+      '[title*="aktual"]',
+      '[title*="Refresh"]',
+      '[title*="refresh"]',
+      '[aria-label*="Aktual"]',
+      '[aria-label*="aktual"]',
+      '[aria-label*="Refresh"]',
+      '[aria-label*="refresh"]',
+      '.ui-icon-refresh',
+      '.pi-refresh',
+      '.fa-refresh',
+      '.fa-sync'
+    ];
+
+    for (const scope of scopes) {
+      for (const sel of selectors) {
+        const nodes = Array.from(scope.querySelectorAll(sel));
+        for (const node of nodes) {
+          const el = node.closest ? (node.closest('button,a,[role="button"],.ui-button,.ui-commandlink') || node) : node;
+          if (seen.has(el)) continue;
+          seen.add(el);
+          if (!isVisible(el) || el.closest(`#${PANEL_ID}`)) continue;
+
+          const text = norm(el.textContent || '');
+          const title = norm(el.getAttribute('title') || '');
+          const aria = norm(el.getAttribute('aria-label') || '');
+          const cls = String((el.className || '') + ' ' + (node.className || ''));
+          const blob = `${text} ${title} ${aria}`;
+          if (!refreshRe.test(blob) && !iconRe.test(cls)) continue;
+
+          let score = 0;
+          if (refreshRe.test(text)) score += 35;
+          if (refreshRe.test(title) || refreshRe.test(aria)) score += 40;
+          if (iconRe.test(cls)) score += 25;
+          if (root && root.closest('form') && root.closest('form').contains(el)) score += 25;
+          if (root && root.contains(el)) score += 50;
+          candidates.push({ el, score });
+        }
+      }
+    }
+
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0].el || null;
+  }
+
+  function triggerRoadnetSoftRefresh() {
+    if (!ROADNET_SOFT_REFRESH_ENABLED || !isTransportUnitsPage()) return false;
+    const now = Date.now();
+    if ((now - state.lastSoftRefreshAt) < ROADNET_SOFT_REFRESH_INTERVAL_MS) return false;
+
+    const root = findRoadnetDataTableRoot();
+    if (!root) return false;
+    const trigger = findRoadnetRefreshTrigger(root);
+    if (!trigger) return false;
+
+    state.lastSoftRefreshAt = now;
+    try {
+      trigger.click();
+      addBridgeLog('info', 'AUTO: Roadnet-Datenaktualisierung ausgelöst.');
+      setTimeout(() => autoClickTargets(), 1200);
+      setTimeout(() => extractData(), 1400);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function maybeHardReloadRoadnetPage() {
+    if (!ROADNET_HARD_REFRESH_ENABLED || !isTransportUnitsPage()) return;
+    const now = Date.now();
+    const hasAnyDataContext = (Array.isArray(state.rows) && state.rows.length > 0) || bridgeState.lastSentAt > 0;
+    const staleDue = ROADNET_STALE_RELOAD_ENABLED
+      && hasAnyDataContext
+      && (now - state.lastDataChangeAt) >= ROADNET_STALE_RELOAD_AFTER_MS;
+    const periodicDue = (now - state.lastHardRefreshAt) >= ROADNET_HARD_REFRESH_INTERVAL_MS
+      && (now - state.lastUserInteractionAt) >= ROADNET_HARD_REFRESH_IDLE_MS;
+
+    if (!staleDue && !periodicDue) return;
+
+    state.lastHardRefreshAt = now;
+    if (staleDue) {
+      addBridgeLog('warn', 'AUTO: Daten unverändert, Seite wird fuer frische Roadnet-Daten neu geladen.');
+    } else {
+      addBridgeLog('warn', 'AUTO: Seite wird neu geladen, um aktuelle Roadnet-Daten zu erfassen.');
+    }
+    location.reload();
+  }
+
+  function installRoadnetAutoRefresh() {
+    if (!isTransportUnitsPage()) return;
+    setInterval(() => {
+      triggerRoadnetSoftRefresh();
+      maybeHardReloadRoadnetPage();
+    }, 10000);
+  }
+
   /* ===================== BOOTSTRAP ===================== */
+  registerUserInteractionTracking();
   ensureOpenButton();
+  try {
+    ensureEntladungShortcutButton();
+  } catch (e) {
+    console.error('[RN-TU] UebEntl init failed', e);
+  }
   ensurePanel();
   if (BRIDGE_ENABLED) ensureBridgeDepotConfigured(false);
   installObserver();
   autoClickTargets();
+  installRoadnetAutoRefresh();
   if (BRIDGE_ENABLED) {
     setTimeout(() => extractData(), 1500);
     setInterval(() => extractData(), BRIDGE_POLL_INTERVAL_MS);
   }
 })();
+
+
+
+
+
+
+
+
+
+
