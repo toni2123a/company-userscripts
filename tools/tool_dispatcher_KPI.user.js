@@ -1,9 +1,7 @@
-/* ====== BLOCK 01/11 – Metadaten + Start ====== */
-
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.1.3
+// @version      2.1.4
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @description  Dispatcher KPI Monitor
@@ -13,9 +11,6 @@
 // @grant        GM_xmlhttpRequest
 // @connect      dispatcher2-de.geopost.com
 // @connect      *
-
-
-
 // ==/UserScript==
 
 (function(){
@@ -33,8 +28,6 @@ const padLeft = (s, len, ch='0') => { s=String(s||''); return s.length>=len ? s 
 
 function depotToHost(input){
   const v = String(input||'').trim();
-
-  // kompletter Host eingegeben?
   if(v.includes('.') && !/^\d+$/.test(v)) return v;
 
   const digits = v.replace(/\D/g,'');
@@ -47,8 +40,8 @@ function depotToHost(input){
     d7 = padLeft(digits, 7);
   } else {
     const depot3 = padLeft(digits, 3);
-    const d5 = `10${depot3}`;     // 10195
-    d7 = padLeft(d5, 7);         // 0010195
+    const d5 = `10${depot3}`;
+    d7 = padLeft(d5, 7);
   }
   return `scanserver-d${d7}.ssw.dpdit.de`;
 }
@@ -56,7 +49,6 @@ function depotToHost(input){
 function getDepotValue(){
   return localStorage.getItem(DEPOT_LS_KEY) || DEFAULT_DEPOT;
 }
-
 function getScanHost(){
   return depotToHost(getDepotValue());
 }
@@ -177,11 +169,12 @@ function loadingOn(msg='Daten werden geladen…'){
   if(m) m.textContent=msg;
   LOADING_OV.style.display='flex';
 }
-
 function loadingOff(){
   if(LOADING_COUNT>0) LOADING_COUNT--;
   if(LOADING_COUNT===0 && LOADING_OV) LOADING_OV.style.display='none';
 }
+
+function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
 function mountUI(){
   if(document.querySelector(PANEL_ID)) return;
@@ -234,7 +227,6 @@ function mountUI(){
       }
       localStorage.setItem(DEPOT_LS_KEY, val);
 
-      // Caches zurücksetzen, damit sofort neu gezogen wird
       WEIGHT_CACHE = null;
       AGG_CACHE = null;
       PD_CACHE = null;
@@ -632,7 +624,6 @@ function loadWeights(){
           const status = res?.status || 0;
           if(status < 200 || status >= 300){
             LOG('WEIGHT_URL status', status, url);
-            // nächster Versuch (z.B. https->http)
             tryNext();
             return;
           }
@@ -640,7 +631,6 @@ function loadWeights(){
           try{
             const map = parseWeightsFromHtml(res.responseText || '');
             if(map.size === 0){
-              // Seite erreichbar, aber keine Daten -> Hinweis
               toast(`Gewicht: ${host} erreichbar, aber keine Werte gefunden.`, false);
             }
             WEIGHT_CACHE = { ts: Date.now(), map };
@@ -650,14 +640,8 @@ function loadWeights(){
             tryNext();
           }
         },
-        onerror: (e) => {
-          LOG('WEIGHT_URL error', url, e);
-          tryNext();
-        },
-        ontimeout: () => {
-          LOG('WEIGHT_URL timeout', url);
-          tryNext();
-        }
+        onerror: (e) => { LOG('WEIGHT_URL error', url, e); tryNext(); },
+        ontimeout: () => { LOG('WEIGHT_URL timeout', url); tryNext(); }
       });
     };
 
@@ -764,7 +748,8 @@ function summarizePartner(P){
     abholstopps:0, geplAbholpakete:0,
     plzSet:new Set(),
     lieferquoteAvg:null,
-    gewichtSum:0
+    gewichtSum:0,
+    gewichtAvg:null
   };
 
   for(const [partner, T] of P.entries()){
@@ -792,6 +777,7 @@ function summarizePartner(P){
     const lqAvg=lqArr.length ? (lqArr.reduce((a,b)=>a+b,0)/lqArr.length) : null;
 
     const gewichtSum=toursArr.reduce((a,x)=>a+(Number.isFinite(x.gewichtKg)?x.gewichtKg:0),0);
+    const gewichtAvg=tourCount ? (gewichtSum/tourCount) : null;
 
     per.push({
       partner,
@@ -803,7 +789,8 @@ function summarizePartner(P){
       plzSet,
       plzCount: plzSet.size,
       lieferquoteAvg:lqAvg,
-      gewichtSum
+      gewichtSum,
+      gewichtAvg
     });
 
     totals.tours += tourCount;
@@ -827,12 +814,12 @@ function summarizePartner(P){
   totals.lieferquoteAvg = lqAll.length ? (lqAll.reduce((a,b)=>a+b,0)/lqAll.length) : null;
 
   totals.plzCount = totals.plzSet.size;
+  totals.gewichtAvg = totals.tours ? (totals.gewichtSum / totals.tours) : null;
+
   return {per, totals};
 }
 
 /* ====== BLOCK 08/11 – HTML Builder (UI) ====== */
-
-function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
 function buildPartnerTableHtmlUI(per, totals){
   const head=`
@@ -857,8 +844,8 @@ function buildPartnerTableHtmlUI(per, totals){
     <tr data-partner="${esc(p.partner)}" data-row="1">
       <td style="text-align:left;">${esc(p.partner)}</td>
       <td>${fmtInt(p.tourCount)}</td>
-      <td>${fmtDec1(p.avgStops)}</td>
-      <td>${fmtDurMin(p.avgDur)}</td>
+      <td>Ø ${fmtDec1(p.avgStops)}</td>
+      <td>Ø ${fmtDurMin(p.avgDur)}</td>
       <td>${fmtInt(p.prio)}</td>
       <td>${fmtInt(p.express)}</td>
       <td>${fmtInt(p.other)}</td>
@@ -866,8 +853,8 @@ function buildPartnerTableHtmlUI(per, totals){
       <td>${fmtInt(p.abholstopps)}</td>
       <td>${fmtInt(p.geplAbholpakete)}</td>
       <td>${fmtInt(p.plzCount)}</td>
-      <td>${fmtKg(p.gewichtSum)}</td>
-      <td>${fmtPct(p.lieferquoteAvg)}</td>
+      <td>Ø ${fmtKg(p.gewichtAvg)}</td>
+      <td>Ø ${fmtPct(p.lieferquoteAvg)}</td>
       <td class="${NS}act">
         <button class="${NS}iconbtn" title="Zeile kopieren" data-copy-partner="${esc(p.partner)}">⧉</button>
       </td>
@@ -886,7 +873,7 @@ function buildPartnerTableHtmlUI(per, totals){
     <td>${fmtInt(totals.abholstopps)}</td>
     <td>${fmtInt(totals.geplAbholpakete)}</td>
     <td>${fmtInt(totals.plzCount)}</td>
-    <td>${fmtKg(totals.gewichtSum)}</td>
+    <td>Ø ${fmtKg(totals.gewichtAvg)}</td>
     <td>Ø ${fmtPct(totals.lieferquoteAvg)}</td>
     <td class="${NS}act">—</td>
   </tr></tfoot>`;
@@ -901,20 +888,6 @@ function buildPartnerTableHtmlUI(per, totals){
 }
 
 /* ====== BLOCK 08.1/11 – COPY Builder (INLINE-STYLES, ohne Aktion/Buttons) ====== */
-
-function baseCopyCssTable(){
-  return {
-    wrap: 'font:13px/1.4 system-ui,Segoe UI,Arial,sans-serif;',
-    stand: 'margin:0 0 6px 0;color:#334155',
-    table: 'border-collapse:collapse;width:100%;font:13px/1.4 system-ui,Segoe UI,Arial,sans-serif;',
-    th: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:700;background:#ffe2e2;color:#8b0000;text-align:right;white-space:nowrap;',
-    thL: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:700;background:#ffe2e2;color:#8b0000;text-align:left;white-space:nowrap;',
-    td: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:500;text-align:right;white-space:nowrap;vertical-align:top;',
-    tdL: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:500;text-align:left;white-space:nowrap;vertical-align:top;',
-    tf: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:700;background:#e0f2ff;color:#003366;text-align:right;white-space:nowrap;',
-    tfL: 'padding:8px 10px;border:1px solid #e5e7eb;font-weight:700;background:#e0f2ff;color:#003366;text-align:left;white-space:nowrap;'
-  };
-}
 
 function buildPartnerTableHtmlCOPY(per, totals){
   const C=baseCopyCssTable();
@@ -939,8 +912,8 @@ function buildPartnerTableHtmlCOPY(per, totals){
     <tr>
       <td style="${C.tdL}">${esc(p.partner)}</td>
       <td style="${C.td}">${fmtInt(p.tourCount)}</td>
-      <td style="${C.td}">${fmtDec1(p.avgStops)}</td>
-      <td style="${C.td}">${fmtDurMin(p.avgDur)}</td>
+      <td style="${C.td}">Ø ${fmtDec1(p.avgStops)}</td>
+      <td style="${C.td}">Ø ${fmtDurMin(p.avgDur)}</td>
       <td style="${C.td}">${fmtInt(p.prio)}</td>
       <td style="${C.td}">${fmtInt(p.express)}</td>
       <td style="${C.td}">${fmtInt(p.other)}</td>
@@ -948,8 +921,8 @@ function buildPartnerTableHtmlCOPY(per, totals){
       <td style="${C.td}">${fmtInt(p.abholstopps)}</td>
       <td style="${C.td}">${fmtInt(p.geplAbholpakete)}</td>
       <td style="${C.td}">${fmtInt(p.plzCount)}</td>
-      <td style="${C.td}">${fmtKg(p.gewichtSum)}</td>
-      <td style="${C.td}">${fmtPct(p.lieferquoteAvg)}</td>
+      <td style="${C.td}">Ø ${fmtKg(p.gewichtAvg)}</td>
+      <td style="${C.td}">Ø ${fmtPct(p.lieferquoteAvg)}</td>
     </tr>`).join('');
 
   const foot = `
@@ -965,7 +938,7 @@ function buildPartnerTableHtmlCOPY(per, totals){
       <td style="${C.tf}">${fmtInt(totals.abholstopps)}</td>
       <td style="${C.tf}">${fmtInt(totals.geplAbholpakete)}</td>
       <td style="${C.tf}">${fmtInt(totals.plzCount)}</td>
-      <td style="${C.tf}">${fmtKg(totals.gewichtSum)}</td>
+      <td style="${C.tf}">Ø ${fmtKg(totals.gewichtAvg)}</td>
       <td style="${C.tf}">Ø ${fmtPct(totals.lieferquoteAvg)}</td>
     </tr></tfoot>`;
 
@@ -1108,22 +1081,7 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
     </div>`;
 }
 
-async function copyHtmlToClipboard(html){
-  try{
-    if(navigator.clipboard && window.ClipboardItem){
-      const item=new ClipboardItem({'text/html':new Blob([html],{type:'text/html'})});
-      await navigator.clipboard.write([item]);
-    }else{
-      const d=document.createElement('div'); d.style.position='fixed'; d.style.left='-99999px'; d.innerHTML=html; document.body.appendChild(d);
-      const r=document.createRange(); r.selectNodeContents(d);
-      const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      document.execCommand('copy'); sel.removeAllRanges(); d.remove();
-    }
-    return true;
-  }catch(e){ console.error(e); return false; }
-}
-
-/* ====== BLOCK 09/11 – Aggregates Master ====== */
+/* ====== BLOCK 09/11 – Aggregates Master (HÄNGER-SICHER + TIMEOUTS) ====== */
 
 let AGG_CACHE=null; // {ts, data}
 const AGG_TTL=20_000;
@@ -1131,39 +1089,74 @@ const AGG_TTL=20_000;
 let AGG_INFLIGHT = null;
 let MODAL_BUSY = false;
 
+function withTimeout(promise, ms, label){
+  let t=null;
+  const timeout = new Promise((_,rej)=>{
+    t=setTimeout(()=>rej(new Error(`Timeout: ${label} (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(()=>{ if(t) clearTimeout(t); });
+}
+
 async function getAggregates(){
   const now=Date.now();
   if(AGG_CACHE && (now-AGG_CACHE.ts)<AGG_TTL) return AGG_CACHE.data;
   if(AGG_INFLIGHT) return AGG_INFLIGHT;
 
   AGG_INFLIGHT = (async () => {
-    const ov=readOverviewAll();
-    if(!ov.ok || !ov.rows.length) return null;
+    let didLoadingOn=false;
+    try{
+      const ov=readOverviewAll();
+      if(!ov.ok || !ov.rows.length) return null;
 
-    loadingOn('Daten werden geladen…');
+      loadingOn('Daten werden geladen…');
+      didLoadingOn=true;
 
-    let pdItems=[];
-    try{ pdItems = await loadPickupDeliveryAllPages(); }catch(e){ console.error(e); }
+      let pdItems=[];
+      try{
+        pdItems = await withTimeout(loadPickupDeliveryAllPages(), 25000, 'pickup-delivery');
+      }catch(e){
+        console.error('[fvkpi] PD timeout/error', e);
+        toast('pickup-delivery: Timeout/Fehler (Console).', false);
+        pdItems=[];
+      }
 
-    let wMap=new Map();
-    try{ wMap = await loadWeights(); }catch(e){ console.error(e); }
+      let wMap=new Map();
+      try{
+        wMap = await withTimeout(loadWeights(), 25000, 'Gewicht (scanserver)');
+      }catch(e){
+        console.error('[fvkpi] WEIGHT timeout/error', e);
+        toast('Gewicht: Timeout/Fehler (Console).', false);
+        wMap=new Map();
+      }
 
-    const P = groupByPartnerTour(ov.rows);
-    if(pdItems && pdItems.length) applyPickupDeliveryToMap(P, pdItems);
-    if(wMap) applyWeightsToMap(P, wMap);
+      const P = groupByPartnerTour(ov.rows);
+      if(pdItems && pdItems.length) applyPickupDeliveryToMap(P, pdItems);
+      if(wMap) applyWeightsToMap(P, wMap);
 
-    const sum = summarizePartner(P);
-    const data = { P, per: sum.per, totals: sum.totals };
+      const sum = summarizePartner(P);
+      const data = { P, per: sum.per, totals: sum.totals };
 
-    AGG_CACHE={ts:Date.now(), data};
-    return data;
+      AGG_CACHE={ts:Date.now(), data};
+      return data;
+
+    }catch(e){
+      console.error('[fvkpi] getAggregates fatal', e);
+      toast('KPI: Fehler beim Laden (Console).', false);
+      return null;
+    } finally {
+      AGG_INFLIGHT = null;
+      if(didLoadingOn) loadingOff();
+    }
   })();
 
   try{
-    return await AGG_INFLIGHT;
-  } finally {
+    return await withTimeout(AGG_INFLIGHT, 35000, 'Aggregates gesamt');
+  }catch(e){
+    console.error('[fvkpi] Aggregates overall timeout', e);
+    toast('KPI: Laden hängt (Timeout).', false);
+    try{ loadingOff(); }catch{}
     AGG_INFLIGHT = null;
-    loadingOff();
+    return null;
   }
 }
 
@@ -1177,13 +1170,19 @@ async function render(force=false){
     if(!CONTENT) return;
     CONTENT.innerHTML=`<div class="${NS}empty"><span class="${NS}spinner" aria-hidden="true"></span> <span>Daten werden geladen…</span></div>`;
 
-    const agg=await getAggregates();
-    if(!agg){
-      CONTENT.innerHTML=`<div class="${NS}empty">Keine Daten gefunden (Fahrzeugübersicht sichtbar?).</div>`;
-      return;
+    try{
+      const agg=await getAggregates();
+      if(!agg){
+        CONTENT.innerHTML=`<div class="${NS}empty">Keine Daten / Timeout / Fehler. (F12 → Console)</div>`;
+        return;
+      }
+      CONTENT.innerHTML = buildPartnerTableHtmlUI(agg.per, agg.totals);
+      makeTableSortable(CONTENT);
+    }catch(e){
+      console.error('[fvkpi] render error', e);
+      CONTENT.innerHTML=`<div class="${NS}empty">Fehler beim Rendern. (F12 → Console)</div>`;
+      toast('Render-Fehler (Console).', false);
     }
-    CONTENT.innerHTML = buildPartnerTableHtmlUI(agg.per, agg.totals);
-    makeTableSortable(CONTENT);
   };
 
   if(force) await run();
@@ -1226,6 +1225,7 @@ async function copyPartnerRowOnly(partner){
     geplAbholpakete: p.geplAbholpakete,
     plzCount: p.plzCount,
     gewichtSum: p.gewichtSum,
+    gewichtAvg: (p.tourCount ? (p.gewichtSum / p.tourCount) : null),
     lieferquoteAvg: p.lieferquoteAvg
   }];
 
@@ -1241,6 +1241,7 @@ async function copyPartnerRowOnly(partner){
     geplAbholpakete: p.geplAbholpakete,
     plzCount: p.plzCount,
     gewichtSum: p.gewichtSum,
+    gewichtAvg: (p.tourCount ? (p.gewichtSum / p.tourCount) : null),
     lieferquoteAvg: p.lieferquoteAvg
   };
 
@@ -1276,7 +1277,7 @@ async function openPartnerModal(partner){
   try{
     const agg=await getAggregates();
     if(!agg){
-      modalSet(ov, `<div class="${NS}empty">Keine Daten.</div><div class="${NS}modal-actions"><button class="${NS}btn-sm" data-act="close">Schließen</button></div>`);
+      modalSet(ov, `<div class="${NS}empty">Keine Daten / Timeout.</div><div class="${NS}modal-actions"><button class="${NS}btn-sm" data-act="close">Schließen</button></div>`);
       return;
     }
 
@@ -1298,7 +1299,6 @@ async function openPartnerModal(partner){
     }
 
     toursArr.sort((a,b)=>String(a.tour).localeCompare(String(b.tour),'de',{numeric:true}));
-
     const sum = summarizeToursForModal(toursArr);
 
     const uiTableHead = `
