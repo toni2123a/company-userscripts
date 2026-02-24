@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.8
-// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch).
+// @version      6.11
+// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
+// @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
@@ -46,8 +47,6 @@
     return 'https://barcodeapi.org/api/128/' + encodeURIComponent(content);
   }
 
-  // wie dein Barcode-Script:
-  // %00 + PLZ(5) + Paketschein + SOCode + 276
   function buildFinalBarcodeFromRow(plz5Digits, paketNr, soCode) {
     return `%00${plz5Digits}${paketNr}${soCode}276`;
   }
@@ -332,7 +331,7 @@
   }
 
   // =========================
-  // WhatsApp Text (bleibt drin)
+  // WhatsApp Text
   // =========================
 
   function padRight(s, w) {
@@ -396,210 +395,798 @@
     return '```' + '\n' + lines.join('\n') + '\n' + '```';
   }
 
-// =========================
-// Sammelbild wie Screenshot (mit/ohne Barcode, Spaltenbreite automatisch)
-// =========================
+  // =========================
+  // Sammelbild (wie zuvor)
+  // =========================
 
-function computeAutoColumnWidths(ctx, rows) {
-  const MIN = { psn: 130, so: 40, zc: 80, plzort: 120, str: 150, name: 160, umv: 70 };
-  const MAX = { psn: 240, so: 70, zc: 160, plzort: 260, str: 360, name: 360, umv: 140 };
+  function computeAutoColumnWidths(ctx, rows) {
+    const MIN = { psn: 130, so: 40, zc: 80, plzort: 120, str: 150, name: 160, umv: 70 };
+    const MAX = { psn: 240, so: 70, zc: 160, plzort: 260, str: 360, name: 360, umv: 140 };
 
-  const vals = rows.map(r => ({
-    psn: r.psn || '',
-    so: r.so || '',
-    zc: r.zc || '',
-    plzort: (r.plz + (r.ort ? ' ' + r.ort : '')).trim(),
-    str: r.str || '',
-    name: r.name || '',
-    umv: r.umv || ''
-  }));
+    const vals = rows.map(r => ({
+      psn: r.psn || '',
+      so: r.so || '',
+      zc: r.zc || '',
+      plzort: (r.plz + (r.ort ? ' ' + r.ort : '')).trim(),
+      str: r.str || '',
+      name: r.name || '',
+      umv: r.umv || ''
+    }));
 
-  const keys = Object.keys(MIN);
-  const W = {};
-  for (const k of keys) {
-    let w = ctx.measureText(k.toUpperCase()).width + 18;
-    for (const v of vals) {
-      const text = String(v[k] || '');
-      w = Math.max(w, ctx.measureText(text).width + 18);
+    const keys = Object.keys(MIN);
+    const W = {};
+    for (const k of keys) {
+      let w = ctx.measureText(k.toUpperCase()).width + 18;
+      for (const v of vals) {
+        const text = String(v[k] || '');
+        w = Math.max(w, ctx.measureText(text).width + 18);
+      }
+      W[k] = Math.min(MAX[k], Math.max(MIN[k], Math.ceil(w)));
     }
-    W[k] = Math.min(MAX[k], Math.max(MIN[k], Math.ceil(w)));
-  }
-  return W;
-}
-
-async function buildScreenshotCanvas(rows, { withBarcode }) {
-
-  const scale = Math.min(2, Math.max(1, (window.devicePixelRatio || 1)));
-
-  const pad = 12;
-  const headerH = 34;  // NUR Spaltenkopf
-  const gap = 10;
-
-  const barcodeW = 360;
-  const barcodeH = 42;
-
-  const lineH = 14;
-  const rowPadY = 6;
-
-  const measure = document.createElement('canvas');
-  const mctx = measure.getContext('2d');
-  mctx.font = '12px Arial';
-
-  const col = computeAutoColumnWidths(mctx, rows);
-
-  const textAreaW =
-    col.psn + col.so + col.zc + col.plzort + col.str + col.name + col.umv + (6 * gap);
-
-  const extraW = withBarcode ? (16 + barcodeW) : 0;
-
-  // dynamische Zeilenhöhen
-  const rowHeights = [];
-  for (const r of rows) {
-    const plzort = (r.plz + (r.ort ? ' ' + r.ort : '')).trim();
-    const name = (r.name1 + (r.name2 ? ' ' + r.name2 : '')).trim();
-
-    const counts = [
-      wrapTextLines(mctx, r.psn, col.psn, 2).length,
-      wrapTextLines(mctx, r.so, col.so, 2).length,
-      wrapTextLines(mctx, r.zc, col.zc, 2).length,
-      wrapTextLines(mctx, plzort, col.plzort, 2).length,
-      wrapTextLines(mctx, r.str, col.str, 2).length,
-      wrapTextLines(mctx, name, col.name, 2).length,
-      wrapTextLines(mctx, r.umv, col.umv, 2).length
-    ];
-
-    const maxLines = Math.max(...counts, 1);
-    const textHeight = rowPadY * 2 + (maxLines * lineH);
-    const minHeight = withBarcode ? (rowPadY * 2 + barcodeH) : 0;
-
-    rowHeights.push(Math.max(textHeight, minHeight, 26));
+    return W;
   }
 
-  const totalRowsH = rowHeights.reduce((a, b) => a + b, 0);
+  async function buildScreenshotCanvas(rows, { withBarcode }) {
+    const scale = Math.min(2, Math.max(1, (window.devicePixelRatio || 1)));
 
-  const widthCss = pad * 2 + textAreaW + extraW;
-  const heightCss = pad * 2 + headerH + totalRowsH;
+    const pad = 12;
+    const headerH = 34;
+    const gap = 10;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(widthCss * scale);
-  canvas.height = Math.ceil(heightCss * scale);
+    const barcodeW = 360;
+    const barcodeH = 42;
 
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    const lineH = 14;
+    const rowPadY = 6;
 
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, widthCss, heightCss);
+    const measure = document.createElement('canvas');
+    const mctx = measure.getContext('2d');
+    mctx.font = '12px Arial';
 
-    // Zeitstempel klein oben rechts
+    const col = computeAutoColumnWidths(mctx, rows);
+
+    const textAreaW =
+      col.psn + col.so + col.zc + col.plzort + col.str + col.name + col.umv + (6 * gap);
+
+    const extraW = withBarcode ? (16 + barcodeW) : 0;
+
+    const rowHeights = [];
+    for (const r of rows) {
+      const plzort = (r.plz + (r.ort ? ' ' + r.ort : '')).trim();
+      const name = (r.name1 + (r.name2 ? ' ' + r.name2 : '')).trim();
+
+      const counts = [
+        wrapTextLines(mctx, r.psn, col.psn, 2).length,
+        wrapTextLines(mctx, r.so, col.so, 2).length,
+        wrapTextLines(mctx, r.zc, col.zc, 2).length,
+        wrapTextLines(mctx, plzort, col.plzort, 2).length,
+        wrapTextLines(mctx, r.str, col.str, 2).length,
+        wrapTextLines(mctx, name, col.name, 2).length,
+        wrapTextLines(mctx, r.umv, col.umv, 2).length
+      ];
+
+      const maxLines = Math.max(...counts, 1);
+      const textHeight = rowPadY * 2 + (maxLines * lineH);
+      const minHeight = withBarcode ? (rowPadY * 2 + barcodeH) : 0;
+
+      rowHeights.push(Math.max(textHeight, minHeight, 26));
+    }
+
+    const totalRowsH = rowHeights.reduce((a, b) => a + b, 0);
+
+    const widthCss = pad * 2 + textAreaW + extraW;
+    const heightCss = pad * 2 + headerH + totalRowsH;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(widthCss * scale);
+    canvas.height = Math.ceil(heightCss * scale);
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, widthCss, heightCss);
+
     ctx.fillStyle = '#666';
     ctx.font = '10px Arial';
     const ts = new Date().toLocaleString();
     const tw = ctx.measureText(ts).width;
     ctx.fillText(ts, widthCss - pad - tw, pad + 10);
-
-    // zurück auf normal (wird gleich sowieso gesetzt)
     ctx.fillStyle = '#000';
 
-  // Spaltenkopf
-  ctx.fillStyle = '#000';
-  ctx.font = 'bold 12px Arial';
-  let x = pad;
-  const yHead = pad + 16;
+    ctx.font = 'bold 12px Arial';
+    let x = pad;
+    const yHead = pad + 16;
+    const drawHead = (label, w) => { ctx.fillText(label, x, yHead); x += w + gap; };
 
-  const drawHead = (label, w) => { ctx.fillText(label, x, yHead); x += w + gap; };
+    drawHead('Paketschein', col.psn);
+    drawHead('SO', col.so);
+    drawHead('Zusatz', col.zc);
+    drawHead('PLZ Ort', col.plzort);
+    drawHead('Strasse', col.str);
+    drawHead('Name', col.name);
+    drawHead('Umv', col.umv);
 
-  drawHead('Paketschein', col.psn);
-  drawHead('SO', col.so);
-  drawHead('Zusatz', col.zc);
-  drawHead('PLZ Ort', col.plzort);
-  drawHead('Strasse', col.str);
-  drawHead('Name', col.name);
-  drawHead('Umv', col.umv);
+    const barcodeX = pad + textAreaW;
+    if (withBarcode) ctx.fillText('Barcode', barcodeX + 16, yHead);
 
-  const barcodeX = pad + textAreaW;
-  if (withBarcode) ctx.fillText('Barcode', barcodeX + 16, yHead);
-
-  // Linie unter Kopf
-  ctx.strokeStyle = '#ddd';
-  ctx.beginPath();
-  ctx.moveTo(pad, pad + headerH - 8);
-  ctx.lineTo(widthCss - pad, pad + headerH - 8);
-  ctx.stroke();
-
-  // Zeilen
-  ctx.font = '12px Arial';
-  let yCursor = pad + headerH;
-
-  for (let i = 0; i < rows.length; i++) {
-
-    const r = rows[i];
-    const rowH = rowHeights[i];
-    const y = yCursor;
-
-    if (i % 2 === 1) {
-      ctx.fillStyle = '#f7f7f7';
-      ctx.fillRect(pad, y, widthCss - pad * 2, rowH);
-      ctx.fillStyle = '#000';
-    }
-
-    const plzort = (r.plz + (r.ort ? ' ' + r.ort : '')).trim();
-    const name = (r.name1 + (r.name2 ? ' ' + r.name2 : '')).trim();
-
-    x = pad;
-    const baseY = y + rowPadY + 12;
-
-    const drawCell = (text, w) => {
-      const lines = wrapTextLines(ctx, String(text || ''), w, 2);
-      ctx.fillText(lines[0] || '', x, baseY);
-      if (lines[1]) ctx.fillText(lines[1], x, baseY + lineH);
-      x += w + gap;
-    };
-
-    drawCell(r.psn, col.psn);
-    drawCell(r.so, col.so);
-    drawCell(r.zc, col.zc);
-    drawCell(plzort, col.plzort);
-    drawCell(r.str, col.str);
-    drawCell(name, col.name);
-    drawCell(r.umv, col.umv);
-
-    if (withBarcode) {
-      const bx = barcodeX + 16;
-      const by = y + Math.floor((rowH - barcodeH) / 2);
-
-      const finalCode = buildFinalBarcodeFromRow(r.plz, r.psn, r.so);
-      const url = buildCode128Url(finalCode);
-
-      ctx.strokeStyle = '#ccc';
-      ctx.strokeRect(bx, by, barcodeW, barcodeH);
-
-      try {
-        const bmp = await fetchImageBitmap(url);
-        const iw = bmp.width || barcodeW;
-        const ih = bmp.height || barcodeH;
-        const s = Math.min(barcodeW / iw, barcodeH / ih);
-        const dw = iw * s;
-        const dh = ih * s;
-        const dx = bx + (barcodeW - dw) / 2;
-        const dy = by + (barcodeH - dh) / 2;
-        ctx.drawImage(bmp, dx, dy, dw, dh);
-      } catch {}
-    }
-
-    ctx.strokeStyle = '#eee';
+    ctx.strokeStyle = '#ddd';
     ctx.beginPath();
-    ctx.moveTo(pad, y + rowH);
-    ctx.lineTo(widthCss - pad, y + rowH);
+    ctx.moveTo(pad, pad + headerH - 8);
+    ctx.lineTo(widthCss - pad, pad + headerH - 8);
     ctx.stroke();
 
-    yCursor += rowH;
+    ctx.font = '12px Arial';
+    let yCursor = pad + headerH;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const rowH = rowHeights[i];
+      const y = yCursor;
+
+      if (i % 2 === 1) {
+        ctx.fillStyle = '#f7f7f7';
+        ctx.fillRect(pad, y, widthCss - pad * 2, rowH);
+        ctx.fillStyle = '#000';
+      }
+
+      const plzort = (r.plz + (r.ort ? ' ' + r.ort : '')).trim();
+      const name = (r.name1 + (r.name2 ? ' ' + r.name2 : '')).trim();
+
+      x = pad;
+      const baseY = y + rowPadY + 12;
+
+      const drawCell = (text, w) => {
+        const lines = wrapTextLines(ctx, String(text || ''), w, 2);
+        ctx.fillText(lines[0] || '', x, baseY);
+        if (lines[1]) ctx.fillText(lines[1], x, baseY + lineH);
+        x += w + gap;
+      };
+
+      drawCell(r.psn, col.psn);
+      drawCell(r.so, col.so);
+      drawCell(r.zc, col.zc);
+      drawCell(plzort, col.plzort);
+      drawCell(r.str, col.str);
+      drawCell(name, col.name);
+      drawCell(r.umv, col.umv);
+
+      if (withBarcode) {
+        const bx = barcodeX + 16;
+        const by = y + Math.floor((rowH - barcodeH) / 2);
+
+        const finalCode = buildFinalBarcodeFromRow(r.plz, r.psn, r.so);
+        const url = buildCode128Url(finalCode);
+
+        ctx.strokeStyle = '#ccc';
+        ctx.strokeRect(bx, by, barcodeW, barcodeH);
+
+        try {
+          const bmp = await fetchImageBitmap(url);
+          const iw = bmp.width || barcodeW;
+          const ih = bmp.height || barcodeH;
+          const s = Math.min(barcodeW / iw, barcodeH / ih);
+          const dw = iw * s;
+          const dh = ih * s;
+          const dx = bx + (barcodeW - dw) / 2;
+          const dy = by + (barcodeH - dh) / 2;
+          ctx.drawImage(bmp, dx, dy, dw, dh);
+        } catch {}
+      }
+
+      ctx.strokeStyle = '#eee';
+      ctx.beginPath();
+      ctx.moveTo(pad, y + rowH);
+      ctx.lineTo(widthCss - pad, y + rowH);
+      ctx.stroke();
+
+      yCursor += rowH;
+    }
+
+    return canvas;
   }
 
-  return canvas;
-}
+  // =========================
+  // Row Counter in Button Labels
+  // =========================
+
+  function getVisibleRowCountSafe() {
+    try {
+      const rows = extractVisibleRows_ANYWHERE();
+      return Array.isArray(rows) ? rows.length : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function formatCopyLabel(base, n) {
+    return `${n} ${base}`;
+  }
+
+  function startRowCountAutoUpdate(doc, containerEl) {
+    if (!containerEl) return;
+
+    const btnList = containerEl.querySelector('#tm-copy-list');
+    const btnImg  = containerEl.querySelector('#tm-copy-img');
+    const btnCode = containerEl.querySelector('#tm-copy-with-code');
+
+    if (!btnList && !btnImg && !btnCode) return;
+
+    if (btnList && !btnList.dataset.baseText) btnList.dataset.baseText = (btnList.textContent || 'Liste kopieren');
+    if (btnImg  && !btnImg.dataset.baseText)  btnImg.dataset.baseText  = (btnImg.textContent  || 'Kopie');
+    if (btnCode && !btnCode.dataset.baseText) btnCode.dataset.baseText = (btnCode.textContent || 'Kopie mit Code');
+
+    if (containerEl.dataset.rowCountTimer === '1') return;
+    containerEl.dataset.rowCountTimer = '1';
+
+    let last = null;
+
+    const tick = () => {
+      const n = getVisibleRowCountSafe();
+      if (n === last) return;
+      last = n;
+
+      if (btnList && !btnList.disabled) btnList.textContent = formatCopyLabel(btnList.dataset.baseText, n);
+      if (btnImg  && !btnImg.disabled)  btnImg.textContent  = formatCopyLabel(btnImg.dataset.baseText,  n);
+      if (btnCode && !btnCode.disabled) btnCode.textContent = formatCopyLabel(btnCode.dataset.baseText, n);
+    };
+
+    tick();
+    window.setInterval(tick, 700);
+
+    doc.addEventListener('visibilitychange', () => {
+      if (!doc.hidden) tick();
+    }, { passive: true });
+  }
 
   // =========================
-  // QR Canvas (unverändert)
+// =========================
+// Übersicht: Systempartner -> Anzahl (0er ausblenden, Summe sticky, Zeitraum + alle aktuellen Filter aus Seite übernehmen)
+// =========================
+
+function isVisibleInput(el) {
+  if (!el) return false;
+  if (el.type === 'hidden') return false;
+  if (el.disabled) return false;
+  const r = el.getBoundingClientRect();
+  if (!r || r.width <= 0 || r.height <= 0) return false;
+  const cs = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  return true;
+}
+
+// findet das "richtige" Dokument (auch wenn Frames) mit dem report-form
+function findReportDoc() {
+  const docs = collectAllDocs();
+  let best = null;
+  for (const d of docs) {
+    const sel = d.querySelector('select[name="systempartner"]');
+    const from = d.querySelector('input[name="stimestamp_from"]');
+    const till = d.querySelector('input[name="stimestamp_till"]');
+    if (sel && from && till) {
+      if (isVisibleInput(from) && isVisibleInput(till)) return d;
+      best = best || d;
+    }
+  }
+  return best || document;
+}
+
+function readTimeRangeFromDoc(doc) {
+  const re = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
+  const fromEl = doc.querySelector('input[name="stimestamp_from"], input[id*="stimestamp_from"], input[name*="timestamp_from"], input[id*="timestamp_from"]');
+  const tillEl = doc.querySelector('input[name="stimestamp_till"], input[id*="stimestamp_till"], input[name*="timestamp_till"], input[id*="timestamp_till"]');
+  const fromV = (fromEl?.value || '').trim();
+  const tillV = (tillEl?.value || '').trim();
+  if (re.test(fromV) && re.test(tillV)) return { from: fromV, till: tillV };
+
+  // fallback: URL params
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const from = (p.get('stimestamp_from') || '').trim();
+    const till = (p.get('stimestamp_till') || '').trim();
+    if (re.test(from) && re.test(till)) return { from, till };
+  } catch {}
+  return null;
+}
+
+// serialisiert ALLE aktuellen Filter aus dem Formular (inkl. Checkboxen/Selects)
+// und gibt baseUrl + params zurück
+function getBaseReportUrlAndParamsFromPage() {
+  const doc = findReportDoc();
+
+  // Ziel-URL: immer report_inbound_ofd.cgi
+  const baseUrl = window.location.origin + '/cgi-bin/report_inbound_ofd.cgi';
+
+  // bestes Formular finden: das, das systempartner enthält
+  let form = null;
+  const sel = doc.querySelector('select[name="systempartner"]');
+  if (sel) form = sel.closest('form');
+  if (!form) form = doc.querySelector('form') || null;
+
+  const params = new URLSearchParams();
+
+  if (form) {
+    const fd = new FormData(form);
+
+    // FormData -> URLSearchParams (inkl. mehrfach-Werte)
+    for (const [k, v] of fd.entries()) {
+      if (v === null || v === undefined) continue;
+      const s = String(v).trim();
+      // leere Werte (z.B. systempartner="") trotzdem zulassen? -> hier: ignorieren, außer systempartner/Zeitraum
+      if (s === '' && !/^systempartner$/i.test(k) && !/^stimestamp_(from|till)$/i.test(k)) continue;
+      params.append(k, s);
+    }
+  }
+
+  // sicherstellen, dass notwendige "Standard"-Parameter vorhanden sind
+  if (!params.has('doAction')) params.set('doAction', 'true');
+  if (!params.has('reportType')) params.set('reportType', 'simple');
+  if (!params.has('reportTypeSelect')) params.set('reportTypeSelect', params.get('reportType') || 'simple');
+  if (!params.has('orderby')) params.set('orderby', 'PSN');
+  if (!params.has('sortorder')) params.set('sortorder', 'ASC');
+
+  // Zeitraum aus sichtbaren Feldern hart übernehmen (falls FormData ihn nicht hatte)
+  const tr = readTimeRangeFromDoc(doc);
+  if (tr) {
+    params.set('stimestamp_from', tr.from);
+    params.set('stimestamp_till', tr.till);
+  }
+
+  return { doc, baseUrl, params };
+}
+
+async function fetchHtml(url) {
+  const resp = await fetch(url, { credentials: 'include' });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+  return await resp.text();
+}
+
+// robuster Count: findet PSN-Spalte und zählt Data-Rows
+function countRowsInReportHtml(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  const tables = Array.from(doc.querySelectorAll('table'));
+  if (!tables.length) return 0;
+
+  let best = null;
+  let bestScore = -1;
+  for (const t of tables) {
+    const s = scoreTable(t);
+    if (s > bestScore) { bestScore = s; best = t; }
+  }
+  const table = best || tables[0];
+
+  const headerRow = getHeaderRow(table);
+  if (!headerRow) return 0;
+
+  const allRows = Array.from(table.querySelectorAll('tr'));
+  const headerIndex = allRows.indexOf(headerRow);
+
+  const colMap = getColumnIndexMap(headerRow);
+  const psnIdx = resolveIdx(colMap, 'paketscheinnummer') ?? 0;
+
+  let cnt = 0;
+  for (let i = headerIndex + 1; i < allRows.length; i++) {
+    const tr = allRows[i];
+    const tds = Array.from(tr.querySelectorAll('td'));
+    if (!tds.length) continue;
+
+    const psn = (tds[psnIdx]?.textContent || '').trim();
+    if (!psn) continue;
+
+    // minimal check: beginnt typischerweise mit Ziffer
+    if (!/^\d/.test(psn)) continue;
+
+    cnt++;
+  }
+  return cnt;
+}
+
+function getSystempartnerOptions(doc) {
+  const sel = doc.querySelector('select[name="systempartner"]');
+  if (!sel) return [];
+  const opts = Array.from(sel.options || []);
+  return opts
+    .map(o => ({
+      value: (o.value || '').toString().trim(),
+      label: (o.textContent || '').toString().trim()
+    }))
+    .filter(o => o.label && !/^alle$/i.test(o.label));
+}
+
+function createOverviewOverlay(doc) {
+  const overlay = doc.createElement('div');
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    background: 'rgba(0,0,0,0.45)',
+    zIndex: '1000000',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingTop: '70px'
+  });
+
+  const box = doc.createElement('div');
+  Object.assign(box.style, {
+    background: '#fff',
+    borderRadius: '6px',
+    minWidth: '540px',
+    maxWidth: '92vw',
+    maxHeight: '80vh',
+    overflow: 'auto',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '12px',
+    position: 'relative'
+  });
+
+  const head = doc.createElement('div');
+  Object.assign(head.style, {
+    padding: '10px 12px',
+    borderBottom: '1px solid #e5e5e5',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    position: 'sticky',
+    top: '0',
+    background: '#fff',
+    zIndex: '2'
+  });
+
+  const title = doc.createElement('div');
+  title.textContent = 'Übersicht – Systempartner (Anzahl angezeigter Zeilen)';
+  title.style.fontWeight = 'bold';
+
+  const sub = doc.createElement('div');
+  sub.style.color = '#666';
+  sub.style.marginTop = '2px';
+
+  const left = doc.createElement('div');
+  left.appendChild(title);
+  left.appendChild(sub);
+
+  const btnClose = doc.createElement('button');
+  btnClose.type = 'button';
+  btnClose.textContent = 'Schließen';
+  btnClose.style.padding = '3px 8px';
+  btnClose.style.cursor = 'pointer';
+
+  head.appendChild(left);
+  head.appendChild(btnClose);
+
+  const body = doc.createElement('div');
+  body.style.padding = '10px 12px 44px 12px';
+
+  const table = doc.createElement('table');
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+
+  const thead = doc.createElement('thead');
+  const thr = doc.createElement('tr');
+
+  const th1 = doc.createElement('th');
+  th1.textContent = 'Systempartner';
+  th1.style.textAlign = 'left';
+  th1.style.borderBottom = '1px solid #ddd';
+  th1.style.padding = '6px 6px';
+
+  const th2 = doc.createElement('th');
+  th2.textContent = 'Anzahl';
+  th2.style.textAlign = 'right';
+  th2.style.borderBottom = '1px solid #ddd';
+  th2.style.padding = '6px 6px';
+  th2.style.width = '140px';
+
+  thr.appendChild(th1);
+  thr.appendChild(th2);
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = doc.createElement('tbody');
+  table.appendChild(tbody);
+
+  body.appendChild(table);
+
+  const sticky = doc.createElement('div');
+  Object.assign(sticky.style, {
+    position: 'sticky',
+    bottom: '0',
+    background: '#fff',
+    borderTop: '2px solid #ddd',
+    padding: '8px 12px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    fontWeight: 'bold',
+    zIndex: '2'
+  });
+
+  const sumLabel = doc.createElement('div');
+  sumLabel.textContent = 'Summe';
+
+  const sumCell = doc.createElement('div');
+  sumCell.textContent = '0';
+  sumCell.style.fontVariantNumeric = 'tabular-nums';
+
+  sticky.appendChild(sumLabel);
+  sticky.appendChild(sumCell);
+
+  box.appendChild(head);
+  box.appendChild(body);
+  box.appendChild(sticky);
+  overlay.appendChild(box);
+
+  const close = () => {
+    try { overlay.remove(); } catch {}
+    try { doc.removeEventListener('click', outsideClickCapture, true); } catch {}
+    try { doc.removeEventListener('keydown', escClose, true); } catch {}
+  };
+
+  const outsideClickCapture = (e) => {
+    if (!overlay.isConnected) return;
+    if (!box.contains(e.target)) close();
+  };
+
+  const escClose = (e) => {
+    if (e.key === 'Escape') close();
+  };
+
+  doc.addEventListener('click', outsideClickCapture, true);
+  doc.addEventListener('keydown', escClose, true);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  btnClose.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  });
+
+  return { overlay, sub, tbody, sumCell, close };
+}
+
+async function runOverview(doc) {
+  // IMPORTANT: ab hier komplett aus dem "report-doc" lesen
+  const { doc: rdoc, baseUrl, params: baseParams } = getBaseReportUrlAndParamsFromPage();
+  const options = getSystempartnerOptions(rdoc);
+
+  const ui = createOverviewOverlay(doc);
+  doc.body.appendChild(ui.overlay);
+
+  if (!options.length) {
+    ui.sub.textContent = '(keine Systempartner gefunden)';
+    return;
+  }
+
+  const from = (baseParams.get('stimestamp_from') || '').trim();
+  const till = (baseParams.get('stimestamp_till') || '').trim();
+  ui.sub.textContent = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+
+  ui.tbody.innerHTML = '';
+  for (const o of options) {
+    const tr = doc.createElement('tr');
+
+    const td1 = doc.createElement('td');
+    td1.textContent = o.label;
+    td1.style.padding = '6px 6px';
+    td1.style.borderBottom = '1px solid #f0f0f0';
+
+    const td2 = doc.createElement('td');
+    td2.textContent = '…';
+    td2.style.padding = '6px 6px';
+    td2.style.borderBottom = '1px solid #f0f0f0';
+    td2.style.textAlign = 'right';
+    td2.style.fontVariantNumeric = 'tabular-nums';
+
+    tr.appendChild(td1);
+    tr.appendChild(td2);
+    ui.tbody.appendChild(tr);
+  }
+
+  const results = [];
+  const CONCURRENCY = 4;
+  let idx = 0;
+  let done = 0;
+
+  let runningSum = 0;
+
+  function updateProgress() {
+    const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+    ui.sub.textContent = `${base}   ${done}/${options.length}`;
+    ui.sumCell.textContent = String(runningSum);
+  }
+
+  updateProgress();
+
+  async function worker() {
+    while (idx < options.length && ui.overlay.isConnected) {
+      const opt = options[idx++];
+
+      try {
+        const p = new URLSearchParams(baseParams.toString());
+        // systempartner MUSS gesetzt werden – einige Systeme erwarten auch leere value => dann label nutzen
+        const sp = opt.value || opt.label;
+        p.set('systempartner', sp);
+
+        const url = baseUrl + '?' + p.toString();
+        const html = await fetchHtml(url);
+        const c = countRowsInReportHtml(html);
+
+        const count = Number.isFinite(c) ? c : 0;
+        results.push({ label: opt.label, count });
+        runningSum += count;
+      } catch (e) {
+        results.push({ label: opt.label, count: 0, err: (e?.message || String(e)) });
+      } finally {
+        done++;
+        updateProgress();
+      }
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < Math.min(CONCURRENCY, options.length); i++) workers.push(worker());
+  await Promise.all(workers);
+
+  if (!ui.overlay.isConnected) return;
+
+  const nonZero = results.filter(r => (r.count || 0) > 0);
+  nonZero.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
+
+  ui.tbody.innerHTML = '';
+
+  if (!nonZero.length) {
+    const tr = doc.createElement('tr');
+    const td = doc.createElement('td');
+    td.colSpan = 2;
+    td.textContent = 'Keine Treffer (alle 0).';
+    td.style.padding = '8px 6px';
+    td.style.color = '#666';
+    tr.appendChild(td);
+    ui.tbody.appendChild(tr);
+    ui.sumCell.textContent = '0';
+  } else {
+    let sum = 0;
+    for (const it of nonZero) {
+      const tr = doc.createElement('tr');
+
+      const td1 = doc.createElement('td');
+      td1.textContent = it.label;
+      td1.style.padding = '6px 6px';
+      td1.style.borderBottom = '1px solid #f0f0f0';
+
+      const td2 = doc.createElement('td');
+      td2.textContent = String(it.count);
+      td2.style.padding = '6px 6px';
+      td2.style.borderBottom = '1px solid #f0f0f0';
+      td2.style.textAlign = 'right';
+      td2.style.fontVariantNumeric = 'tabular-nums';
+
+      tr.appendChild(td1);
+      tr.appendChild(td2);
+      ui.tbody.appendChild(tr);
+
+      sum += it.count;
+    }
+    ui.sumCell.textContent = String(sum);
+  }
+
+  const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+  ui.sub.textContent = `${base}   fertig`;
+}
+  // =========================
+  // Buttons unter Mehrfachauswahl
+  // =========================
+
+  function addCopyButtons(doc, containerEl) {
+    if (!containerEl) return;
+
+    if (false && !containerEl.querySelector('#tm-copy-list')) {
+      const btn = doc.createElement('button');
+      btn.id = 'tm-copy-list';
+      btn.type = 'button';
+      btn.textContent = 'Liste kopieren';
+
+      btn.addEventListener('click', async () => {
+        const old = btn.dataset.baseText || btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Kopiere...';
+        try {
+          const rows = extractVisibleRows_ANYWHERE();
+          const text = buildWhatsAppText(rows);
+          const ok = await copyTextToClipboard(text);
+          if (!ok) throw new Error('Clipboard nicht verfügbar.');
+          btn.textContent = 'Kopiert ✓';
+          setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1200);
+        } catch (e) {
+          console.error(e);
+          btn.textContent = old;
+          btn.disabled = false;
+          alert('Konnte Liste nicht kopieren:\n' + (e?.message || e));
+        }
+      });
+
+      containerEl.appendChild(btn);
+    }
+
+    if (!containerEl.querySelector('#tm-copy-img')) {
+      const b = doc.createElement('button');
+      b.id = 'tm-copy-img';
+      b.type = 'button';
+      b.textContent = 'Kopie';
+      b.title = 'Kopiert ein Sammelbild wie Screenshot (ohne Barcode)';
+
+      b.addEventListener('click', async () => {
+        const old = b.dataset.baseText || b.textContent;
+        b.disabled = true;
+        b.textContent = 'Erzeuge Bild...';
+        try {
+          const rows = extractVisibleRows_ANYWHERE();
+          const canvas = await buildScreenshotCanvas(rows, { withBarcode: false });
+          b.textContent = 'Kopiere...';
+          const ok = await copyCanvas(canvas);
+          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+          b.textContent = 'Kopiert ✓';
+          setTimeout(() => { b.textContent = old; b.disabled = false; }, 1400);
+        } catch (e) {
+          console.error(e);
+          b.textContent = old;
+          b.disabled = false;
+          alert('Kopie fehlgeschlagen:\n' + (e?.message || e));
+        }
+      });
+
+      containerEl.appendChild(b);
+    }
+
+    if (false && !containerEl.querySelector('#tm-copy-with-code')) {
+      const btn2 = doc.createElement('button');
+      btn2.id = 'tm-copy-with-code';
+      btn2.type = 'button';
+      btn2.textContent = 'Kopie mit Code';
+      btn2.title = 'Kopiert ein Sammelbild wie Screenshot inkl. Barcode je Zeile';
+
+      btn2.addEventListener('click', async () => {
+        const old = btn2.dataset.baseText || btn2.textContent;
+        btn2.disabled = true;
+        btn2.textContent = 'Erzeuge Bild...';
+        try {
+          const rows = extractVisibleRows_ANYWHERE();
+          const bad = rows.find(r => !r.plz || !r.psn || !r.so);
+          if (bad) throw new Error('Mindestens eine Zeile hat keine PLZ(5)/Paketschein/SOCode – Barcode kann nicht gebaut werden.');
+
+          const canvas = await buildScreenshotCanvas(rows, { withBarcode: true });
+          btn2.textContent = 'Kopiere...';
+          const ok = await copyCanvas(canvas);
+          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+
+          btn2.textContent = 'Kopiert ✓';
+          setTimeout(() => { btn2.textContent = old; btn2.disabled = false; }, 1400);
+        } catch (e) {
+          console.error(e);
+          btn2.textContent = old;
+          btn2.disabled = false;
+          alert('Kopie mit Code fehlgeschlagen:\n' + (e?.message || e));
+        }
+      });
+
+      containerEl.appendChild(btn2);
+    }
+
+    startRowCountAutoUpdate(doc, containerEl);
+  }
+
+  // =========================
+  // QR Canvas + Popups (wie zuvor; unverändert)
   // =========================
 
   async function buildSingleCanvas(tour, imgUrl) {
@@ -728,113 +1315,6 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
     if (line.trim()) ctx.fillText(line.trim(), x, y);
     return y;
   }
-
-  // =========================
-  // Buttons unter Mehrfachauswahl
-  // =========================
-
-  function addCopyButtons(doc, containerEl) {
-    if (!containerEl) return;
-
-    // 1) WhatsApp-Text
-    if (!containerEl.querySelector('#tm-copy-list')) {
-      const btn = doc.createElement('button');
-      btn.id = 'tm-copy-list';
-      btn.type = 'button';
-      btn.textContent = 'Liste kopieren';
-
-      btn.addEventListener('click', async () => {
-        const old = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Kopiere...';
-        try {
-          const rows = extractVisibleRows_ANYWHERE();
-          const text = buildWhatsAppText(rows);
-          const ok = await copyTextToClipboard(text);
-          if (!ok) throw new Error('Clipboard nicht verfügbar.');
-          btn.textContent = 'Kopiert ✓';
-          setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1200);
-        } catch (e) {
-          console.error(e);
-          btn.textContent = old;
-          btn.disabled = false;
-          alert('Konnte Liste nicht kopieren:\n' + (e?.message || e));
-        }
-      });
-
-      containerEl.appendChild(btn);
-    }
-
-    // 2) Kopie (Sammelbild OHNE Barcode)
-    if (!containerEl.querySelector('#tm-copy-img')) {
-      const b = doc.createElement('button');
-      b.id = 'tm-copy-img';
-      b.type = 'button';
-      b.textContent = 'Kopie';
-      b.title = 'Kopiert ein Sammelbild wie Screenshot (ohne Barcode)';
-
-      b.addEventListener('click', async () => {
-        const old = b.textContent;
-        b.disabled = true;
-        b.textContent = 'Erzeuge Bild...';
-        try {
-          const rows = extractVisibleRows_ANYWHERE();
-          const canvas = await buildScreenshotCanvas(rows, { withBarcode: false });
-          b.textContent = 'Kopiere...';
-          const ok = await copyCanvas(canvas);
-          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
-          b.textContent = 'Kopiert ✓';
-          setTimeout(() => { b.textContent = old; b.disabled = false; }, 1400);
-        } catch (e) {
-          console.error(e);
-          b.textContent = old;
-          b.disabled = false;
-          alert('Kopie fehlgeschlagen:\n' + (e?.message || e));
-        }
-      });
-
-      containerEl.appendChild(b);
-    }
-
-    // 3) Kopie mit Code (Sammelbild MIT Barcode)
-    if (!containerEl.querySelector('#tm-copy-with-code')) {
-      const btn2 = doc.createElement('button');
-      btn2.id = 'tm-copy-with-code';
-      btn2.type = 'button';
-      btn2.textContent = 'Kopie mit Code';
-      btn2.title = 'Kopiert ein Sammelbild wie Screenshot inkl. Barcode je Zeile';
-
-      btn2.addEventListener('click', async () => {
-        const old = btn2.textContent;
-        btn2.disabled = true;
-        btn2.textContent = 'Erzeuge Bild...';
-        try {
-          const rows = extractVisibleRows_ANYWHERE();
-          const bad = rows.find(r => !r.plz || !r.psn || !r.so);
-          if (bad) throw new Error('Mindestens eine Zeile hat keine PLZ(5)/Paketschein/SOCode – Barcode kann nicht gebaut werden.');
-
-          const canvas = await buildScreenshotCanvas(rows, { withBarcode: true });
-          btn2.textContent = 'Kopiere...';
-          const ok = await copyCanvas(canvas);
-          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
-
-          btn2.textContent = 'Kopiert ✓';
-          setTimeout(() => { btn2.textContent = old; btn2.disabled = false; }, 1400);
-        } catch (e) {
-          console.error(e);
-          btn2.textContent = old;
-          btn2.disabled = false;
-          alert('Kopie mit Code fehlgeschlagen:\n' + (e?.message || e));
-        }
-      });
-
-      containerEl.appendChild(btn2);
-    }
-  }
-
-  // =========================
-  // QR Popups (unverändert)
-  // =========================
 
   async function showQrPopup(doc, tour) {
     try {
@@ -1086,13 +1566,14 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
 
     const css = `
 #tm-sp-panel{position:fixed;top:70px;right:10px;width:360px;max-height:80vh;overflow:auto;background:#f5f5f5;border:1px solid #ccc;padding:6px 8px;font-family:Arial,sans-serif;font-size:12px;z-index:9999;box-sizing:border-box;}
-#tm-sp-panel h3{margin:0 0 4px 0;font-size:13px;}
+#tm-sp-panel h3{margin:0 0 4px 0;font-size:13px;padding-top:22px;}
 #tm-sp-panel button{padding:2px 6px;font-size:11px;margin:2px 2px;cursor:pointer;}
 #tm-sp-info{margin:4px 0;}
 .tm-tour-bubble{display:inline-block;padding:3px 8px;margin:2px 4px 2px 0;border-radius:12px;background:#7d7d7d;color:#fff;cursor:pointer;white-space:nowrap;border:1px solid transparent;}
 .tm-tour-bubble:hover{filter:brightness(1.1);}
 .tm-tour-bubble.tm-selected{background:#4a4a4a;border-color:#000;}
 #tm-collapse-btn{position:absolute;top:0;right:0;width:28px;height:28px;padding:0;margin:0;line-height:28px;text-align:center;font-weight:bold;}
+#tm-overview-btn{position:absolute;top:0;left:0;height:28px;padding:0 8px;margin:0;line-height:28px;text-align:center;font-weight:bold;}
 #tm-sp-panel.tm-collapsed{width:28px;height:28px;padding:0;overflow:hidden;background:transparent;border:none;}
 #tm-sp-panel.tm-collapsed *{display:none !important;}
 #tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;}
@@ -1112,6 +1593,13 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
     btnCollapse.title = 'Panel ein-/ausklappen';
     panel.appendChild(btnCollapse);
 
+    const btnOverview = doc.createElement('button');
+    btnOverview.id = 'tm-overview-btn';
+    btnOverview.type = 'button';
+    btnOverview.textContent = 'Übersicht';
+    btnOverview.title = 'Systempartner-Übersicht (Hintergrundabfrage)';
+    panel.appendChild(btnOverview);
+
     function applyCollapsedState(isCollapsed) {
       panel.classList.toggle('tm-collapsed', !!isCollapsed);
       try { window.localStorage.setItem(COLLAPSE_KEY, isCollapsed ? '1' : '0'); } catch {}
@@ -1125,6 +1613,16 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
       e.preventDefault();
       e.stopPropagation();
       applyCollapsedState(!panel.classList.contains('tm-collapsed'));
+    });
+
+    btnOverview.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await runOverview(doc);
+      } catch (err) {
+        alert('Übersicht fehlgeschlagen:\n' + (err?.message || String(err)));
+      }
     });
 
     const title = doc.createElement('h3');
@@ -1170,7 +1668,6 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
     multiDiv.appendChild(btnNone);
     multiDiv.appendChild(multiShowBtn);
 
-    // Buttons immer darunter
     multiDiv.appendChild(doc.createElement('br'));
     const copyRow = doc.createElement('div');
     copyRow.id = 'tm-copy-row';
@@ -1324,9 +1821,15 @@ async function buildScreenshotCanvas(rows, { withBarcode }) {
 
       for (const doc of docs) {
         if (!doc || !doc.body) continue;
-        if (/Eingangsmengenabgleich/.test(doc.body.textContent || '')) {
+
+        if (/Eingangsmengenabgleich/i.test(doc.body.textContent || '')) {
           const sel = doc.querySelector('select[name="systempartner"]');
           if (sel) initInDocument(doc);
+        }
+
+        if (/report_inbound_ofd\.cgi/i.test(window.location.pathname)) {
+          const sel2 = doc.querySelector('select[name="systempartner"]');
+          if (sel2) initInDocument(doc);
         }
       }
     } catch (e) {
