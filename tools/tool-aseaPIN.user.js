@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.11
-// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme).
+// @version      6.21
+// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
@@ -127,7 +127,6 @@
       while (ctx.measureText(t + '…').width > maxWidth && t.length > 1) t = t.slice(0, -1);
       if (t !== lines[maxLines - 1]) lines[maxLines - 1] = t + '…';
     }
-
     return lines.slice(0, maxLines);
   }
 
@@ -396,7 +395,7 @@
   }
 
   // =========================
-  // Sammelbild (wie zuvor)
+  // Sammelbild (Screenshot-Canvas)
   // =========================
 
   function computeAutoColumnWidths(ctx, rows) {
@@ -426,7 +425,7 @@
     return W;
   }
 
-  async function buildScreenshotCanvas(rows, { withBarcode }) {
+  async function buildScreenshotCanvas(rows, { withBarcode } = { withBarcode: false }) {
     const scale = Math.min(2, Math.max(1, (window.devicePixelRatio || 1)));
 
     const pad = 12;
@@ -640,432 +639,331 @@
   }
 
   // =========================
-// =========================
-// Übersicht: Systempartner -> Anzahl (0er ausblenden, Summe sticky, Zeitraum + alle aktuellen Filter aus Seite übernehmen)
-// =========================
+  // Übersicht: Systempartner -> Anzahl
+  // =========================
 
-function isVisibleInput(el) {
-  if (!el) return false;
-  if (el.type === 'hidden') return false;
-  if (el.disabled) return false;
-  const r = el.getBoundingClientRect();
-  if (!r || r.width <= 0 || r.height <= 0) return false;
-  const cs = (el.ownerDocument.defaultView || window).getComputedStyle(el);
-  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
-  return true;
-}
-
-// findet das "richtige" Dokument (auch wenn Frames) mit dem report-form
-function findReportDoc() {
-  const docs = collectAllDocs();
-  let best = null;
-  for (const d of docs) {
-    const sel = d.querySelector('select[name="systempartner"]');
-    const from = d.querySelector('input[name="stimestamp_from"]');
-    const till = d.querySelector('input[name="stimestamp_till"]');
-    if (sel && from && till) {
-      if (isVisibleInput(from) && isVisibleInput(till)) return d;
-      best = best || d;
-    }
-  }
-  return best || document;
-}
-
-function readTimeRangeFromDoc(doc) {
-  const re = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
-  const fromEl = doc.querySelector('input[name="stimestamp_from"], input[id*="stimestamp_from"], input[name*="timestamp_from"], input[id*="timestamp_from"]');
-  const tillEl = doc.querySelector('input[name="stimestamp_till"], input[id*="stimestamp_till"], input[name*="timestamp_till"], input[id*="timestamp_till"]');
-  const fromV = (fromEl?.value || '').trim();
-  const tillV = (tillEl?.value || '').trim();
-  if (re.test(fromV) && re.test(tillV)) return { from: fromV, till: tillV };
-
-  // fallback: URL params
-  try {
-    const p = new URLSearchParams(window.location.search);
-    const from = (p.get('stimestamp_from') || '').trim();
-    const till = (p.get('stimestamp_till') || '').trim();
-    if (re.test(from) && re.test(till)) return { from, till };
-  } catch {}
-  return null;
-}
-
-// serialisiert ALLE aktuellen Filter aus dem Formular (inkl. Checkboxen/Selects)
-// und gibt baseUrl + params zurück
-function getBaseReportUrlAndParamsFromPage() {
-  const doc = findReportDoc();
-
-  // Ziel-URL: immer report_inbound_ofd.cgi
-  const baseUrl = window.location.origin + '/cgi-bin/report_inbound_ofd.cgi';
-
-  // bestes Formular finden: das, das systempartner enthält
-  let form = null;
-  const sel = doc.querySelector('select[name="systempartner"]');
-  if (sel) form = sel.closest('form');
-  if (!form) form = doc.querySelector('form') || null;
-
-  const params = new URLSearchParams();
-
-  if (form) {
-    const fd = new FormData(form);
-
-    // FormData -> URLSearchParams (inkl. mehrfach-Werte)
-    for (const [k, v] of fd.entries()) {
-      if (v === null || v === undefined) continue;
-      const s = String(v).trim();
-      // leere Werte (z.B. systempartner="") trotzdem zulassen? -> hier: ignorieren, außer systempartner/Zeitraum
-      if (s === '' && !/^systempartner$/i.test(k) && !/^stimestamp_(from|till)$/i.test(k)) continue;
-      params.append(k, s);
-    }
+  function isVisibleInput(el) {
+    if (!el) return false;
+    if (el.type === 'hidden') return false;
+    if (el.disabled) return false;
+    const r = el.getBoundingClientRect();
+    if (!r || r.width <= 0 || r.height <= 0) return false;
+    const cs = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    return true;
   }
 
-  // sicherstellen, dass notwendige "Standard"-Parameter vorhanden sind
-  if (!params.has('doAction')) params.set('doAction', 'true');
-  if (!params.has('reportType')) params.set('reportType', 'simple');
-  if (!params.has('reportTypeSelect')) params.set('reportTypeSelect', params.get('reportType') || 'simple');
-  if (!params.has('orderby')) params.set('orderby', 'PSN');
-  if (!params.has('sortorder')) params.set('sortorder', 'ASC');
-
-  // Zeitraum aus sichtbaren Feldern hart übernehmen (falls FormData ihn nicht hatte)
-  const tr = readTimeRangeFromDoc(doc);
-  if (tr) {
-    params.set('stimestamp_from', tr.from);
-    params.set('stimestamp_till', tr.till);
-  }
-
-  return { doc, baseUrl, params };
-}
-
-async function fetchHtml(url) {
-  const resp = await fetch(url, { credentials: 'include' });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
-  return await resp.text();
-}
-
-// robuster Count: findet PSN-Spalte und zählt Data-Rows
-function countRowsInReportHtml(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-
-  const tables = Array.from(doc.querySelectorAll('table'));
-  if (!tables.length) return 0;
-
-  let best = null;
-  let bestScore = -1;
-  for (const t of tables) {
-    const s = scoreTable(t);
-    if (s > bestScore) { bestScore = s; best = t; }
-  }
-  const table = best || tables[0];
-
-  const headerRow = getHeaderRow(table);
-  if (!headerRow) return 0;
-
-  const allRows = Array.from(table.querySelectorAll('tr'));
-  const headerIndex = allRows.indexOf(headerRow);
-
-  const colMap = getColumnIndexMap(headerRow);
-  const psnIdx = resolveIdx(colMap, 'paketscheinnummer') ?? 0;
-
-  let cnt = 0;
-  for (let i = headerIndex + 1; i < allRows.length; i++) {
-    const tr = allRows[i];
-    const tds = Array.from(tr.querySelectorAll('td'));
-    if (!tds.length) continue;
-
-    const psn = (tds[psnIdx]?.textContent || '').trim();
-    if (!psn) continue;
-
-    // minimal check: beginnt typischerweise mit Ziffer
-    if (!/^\d/.test(psn)) continue;
-
-    cnt++;
-  }
-  return cnt;
-}
-
-function getSystempartnerOptions(doc) {
-  const sel = doc.querySelector('select[name="systempartner"]');
-  if (!sel) return [];
-  const opts = Array.from(sel.options || []);
-  return opts
-    .map(o => ({
-      value: (o.value || '').toString().trim(),
-      label: (o.textContent || '').toString().trim()
-    }))
-    .filter(o => o.label && !/^alle$/i.test(o.label));
-}
-
-function createOverviewOverlay(doc) {
-  const overlay = doc.createElement('div');
-  Object.assign(overlay.style, {
-    position: 'fixed',
-    inset: '0',
-    background: 'rgba(0,0,0,0.45)',
-    zIndex: '1000000',
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    paddingTop: '70px'
-  });
-
-  const box = doc.createElement('div');
-  Object.assign(box.style, {
-    background: '#fff',
-    borderRadius: '6px',
-    minWidth: '540px',
-    maxWidth: '92vw',
-    maxHeight: '80vh',
-    overflow: 'auto',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
-    fontFamily: 'Arial, sans-serif',
-    fontSize: '12px',
-    position: 'relative'
-  });
-
-  const head = doc.createElement('div');
-  Object.assign(head.style, {
-    padding: '10px 12px',
-    borderBottom: '1px solid #e5e5e5',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '10px',
-    position: 'sticky',
-    top: '0',
-    background: '#fff',
-    zIndex: '2'
-  });
-
-  const title = doc.createElement('div');
-  title.textContent = 'Übersicht – Systempartner (Anzahl angezeigter Zeilen)';
-  title.style.fontWeight = 'bold';
-
-  const sub = doc.createElement('div');
-  sub.style.color = '#666';
-  sub.style.marginTop = '2px';
-
-  const left = doc.createElement('div');
-  left.appendChild(title);
-  left.appendChild(sub);
-
-  const btnClose = doc.createElement('button');
-  btnClose.type = 'button';
-  btnClose.textContent = 'Schließen';
-  btnClose.style.padding = '3px 8px';
-  btnClose.style.cursor = 'pointer';
-
-  head.appendChild(left);
-  head.appendChild(btnClose);
-
-  const body = doc.createElement('div');
-  body.style.padding = '10px 12px 44px 12px';
-
-  const table = doc.createElement('table');
-  table.style.width = '100%';
-  table.style.borderCollapse = 'collapse';
-
-  const thead = doc.createElement('thead');
-  const thr = doc.createElement('tr');
-
-  const th1 = doc.createElement('th');
-  th1.textContent = 'Systempartner';
-  th1.style.textAlign = 'left';
-  th1.style.borderBottom = '1px solid #ddd';
-  th1.style.padding = '6px 6px';
-
-  const th2 = doc.createElement('th');
-  th2.textContent = 'Anzahl';
-  th2.style.textAlign = 'right';
-  th2.style.borderBottom = '1px solid #ddd';
-  th2.style.padding = '6px 6px';
-  th2.style.width = '140px';
-
-  thr.appendChild(th1);
-  thr.appendChild(th2);
-  thead.appendChild(thr);
-  table.appendChild(thead);
-
-  const tbody = doc.createElement('tbody');
-  table.appendChild(tbody);
-
-  body.appendChild(table);
-
-  const sticky = doc.createElement('div');
-  Object.assign(sticky.style, {
-    position: 'sticky',
-    bottom: '0',
-    background: '#fff',
-    borderTop: '2px solid #ddd',
-    padding: '8px 12px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    fontWeight: 'bold',
-    zIndex: '2'
-  });
-
-  const sumLabel = doc.createElement('div');
-  sumLabel.textContent = 'Summe';
-
-  const sumCell = doc.createElement('div');
-  sumCell.textContent = '0';
-  sumCell.style.fontVariantNumeric = 'tabular-nums';
-
-  sticky.appendChild(sumLabel);
-  sticky.appendChild(sumCell);
-
-  box.appendChild(head);
-  box.appendChild(body);
-  box.appendChild(sticky);
-  overlay.appendChild(box);
-
-  const close = () => {
-    try { overlay.remove(); } catch {}
-    try { doc.removeEventListener('click', outsideClickCapture, true); } catch {}
-    try { doc.removeEventListener('keydown', escClose, true); } catch {}
-  };
-
-  const outsideClickCapture = (e) => {
-    if (!overlay.isConnected) return;
-    if (!box.contains(e.target)) close();
-  };
-
-  const escClose = (e) => {
-    if (e.key === 'Escape') close();
-  };
-
-  doc.addEventListener('click', outsideClickCapture, true);
-  doc.addEventListener('keydown', escClose, true);
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close();
-  });
-
-  box.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
-
-  btnClose.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    close();
-  });
-
-  return { overlay, sub, tbody, sumCell, close };
-}
-
-async function runOverview(doc) {
-  // IMPORTANT: ab hier komplett aus dem "report-doc" lesen
-  const { doc: rdoc, baseUrl, params: baseParams } = getBaseReportUrlAndParamsFromPage();
-  const options = getSystempartnerOptions(rdoc);
-
-  const ui = createOverviewOverlay(doc);
-  doc.body.appendChild(ui.overlay);
-
-  if (!options.length) {
-    ui.sub.textContent = '(keine Systempartner gefunden)';
-    return;
-  }
-
-  const from = (baseParams.get('stimestamp_from') || '').trim();
-  const till = (baseParams.get('stimestamp_till') || '').trim();
-  ui.sub.textContent = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
-
-  ui.tbody.innerHTML = '';
-  for (const o of options) {
-    const tr = doc.createElement('tr');
-
-    const td1 = doc.createElement('td');
-    td1.textContent = o.label;
-    td1.style.padding = '6px 6px';
-    td1.style.borderBottom = '1px solid #f0f0f0';
-
-    const td2 = doc.createElement('td');
-    td2.textContent = '…';
-    td2.style.padding = '6px 6px';
-    td2.style.borderBottom = '1px solid #f0f0f0';
-    td2.style.textAlign = 'right';
-    td2.style.fontVariantNumeric = 'tabular-nums';
-
-    tr.appendChild(td1);
-    tr.appendChild(td2);
-    ui.tbody.appendChild(tr);
-  }
-
-  const results = [];
-  const CONCURRENCY = 4;
-  let idx = 0;
-  let done = 0;
-
-  let runningSum = 0;
-
-  function updateProgress() {
-    const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
-    ui.sub.textContent = `${base}   ${done}/${options.length}`;
-    ui.sumCell.textContent = String(runningSum);
-  }
-
-  updateProgress();
-
-  async function worker() {
-    while (idx < options.length && ui.overlay.isConnected) {
-      const opt = options[idx++];
-
-      try {
-        const p = new URLSearchParams(baseParams.toString());
-        // systempartner MUSS gesetzt werden – einige Systeme erwarten auch leere value => dann label nutzen
-        const sp = opt.value || opt.label;
-        p.set('systempartner', sp);
-
-        const url = baseUrl + '?' + p.toString();
-        const html = await fetchHtml(url);
-        const c = countRowsInReportHtml(html);
-
-        const count = Number.isFinite(c) ? c : 0;
-        results.push({ label: opt.label, count });
-        runningSum += count;
-      } catch (e) {
-        results.push({ label: opt.label, count: 0, err: (e?.message || String(e)) });
-      } finally {
-        done++;
-        updateProgress();
+  function findReportDoc() {
+    const docs = collectAllDocs();
+    let best = null;
+    for (const d of docs) {
+      const sel = d.querySelector('select[name="systempartner"]');
+      const from = d.querySelector('input[name="stimestamp_from"]');
+      const till = d.querySelector('input[name="stimestamp_till"]');
+      if (sel && from && till) {
+        if (isVisibleInput(from) && isVisibleInput(till)) return d;
+        best = best || d;
       }
     }
+    return best || document;
   }
 
-  const workers = [];
-  for (let i = 0; i < Math.min(CONCURRENCY, options.length); i++) workers.push(worker());
-  await Promise.all(workers);
+  function readTimeRangeFromDoc(doc) {
+    const re = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
+    const fromEl = doc.querySelector('input[name="stimestamp_from"], input[id*="stimestamp_from"], input[name*="timestamp_from"], input[id*="timestamp_from"]');
+    const tillEl = doc.querySelector('input[name="stimestamp_till"], input[id*="stimestamp_till"], input[name*="timestamp_till"], input[id*="timestamp_till"]');
+    const fromV = (fromEl?.value || '').trim();
+    const tillV = (tillEl?.value || '').trim();
+    if (re.test(fromV) && re.test(tillV)) return { from: fromV, till: tillV };
 
-  if (!ui.overlay.isConnected) return;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const from = (p.get('stimestamp_from') || '').trim();
+      const till = (p.get('stimestamp_till') || '').trim();
+      if (re.test(from) && re.test(till)) return { from, till };
+    } catch {}
+    return null;
+  }
 
-  const nonZero = results.filter(r => (r.count || 0) > 0);
-  nonZero.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
+  function getBaseReportUrlAndParamsFromPage() {
+    const doc = findReportDoc();
+    const baseUrl = window.location.origin + '/cgi-bin/report_inbound_ofd.cgi';
 
-  ui.tbody.innerHTML = '';
+    let form = null;
+    const sel = doc.querySelector('select[name="systempartner"]');
+    if (sel) form = sel.closest('form');
+    if (!form) form = doc.querySelector('form') || null;
 
-  if (!nonZero.length) {
-    const tr = doc.createElement('tr');
-    const td = doc.createElement('td');
-    td.colSpan = 2;
-    td.textContent = 'Keine Treffer (alle 0).';
-    td.style.padding = '8px 6px';
-    td.style.color = '#666';
-    tr.appendChild(td);
-    ui.tbody.appendChild(tr);
-    ui.sumCell.textContent = '0';
-  } else {
-    let sum = 0;
-    for (const it of nonZero) {
+    const params = new URLSearchParams();
+
+    if (form) {
+      const fd = new FormData(form);
+      for (const [k, v] of fd.entries()) {
+        if (v === null || v === undefined) continue;
+        const s = String(v).trim();
+        if (s === '' && !/^systempartner$/i.test(k) && !/^stimestamp_(from|till)$/i.test(k)) continue;
+        params.append(k, s);
+      }
+    }
+
+    if (!params.has('doAction')) params.set('doAction', 'true');
+    if (!params.has('reportType')) params.set('reportType', 'simple');
+    if (!params.has('reportTypeSelect')) params.set('reportTypeSelect', params.get('reportType') || 'simple');
+    if (!params.has('orderby')) params.set('orderby', 'PSN');
+    if (!params.has('sortorder')) params.set('sortorder', 'ASC');
+
+    const tr = readTimeRangeFromDoc(doc);
+    if (tr) {
+      params.set('stimestamp_from', tr.from);
+      params.set('stimestamp_till', tr.till);
+    }
+
+    return { doc, baseUrl, params };
+  }
+
+  async function fetchHtml(url) {
+    const resp = await fetch(url, { credentials: 'include' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+    return await resp.text();
+  }
+
+  function countRowsInReportHtml(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    const tables = Array.from(doc.querySelectorAll('table'));
+    if (!tables.length) return 0;
+
+    let best = null;
+    let bestScore = -1;
+    for (const t of tables) {
+      const s = scoreTable(t);
+      if (s > bestScore) { bestScore = s; best = t; }
+    }
+    const table = best || tables[0];
+
+    const headerRow = getHeaderRow(table);
+    if (!headerRow) return 0;
+
+    const allRows = Array.from(table.querySelectorAll('tr'));
+    const headerIndex = allRows.indexOf(headerRow);
+
+    const colMap = getColumnIndexMap(headerRow);
+    const psnIdx = resolveIdx(colMap, 'paketscheinnummer') ?? 0;
+
+    let cnt = 0;
+    for (let i = headerIndex + 1; i < allRows.length; i++) {
+      const tr = allRows[i];
+      const tds = Array.from(tr.querySelectorAll('td'));
+      if (!tds.length) continue;
+
+      const psn = (tds[psnIdx]?.textContent || '').trim();
+      if (!psn) continue;
+      if (!/^\d/.test(psn)) continue;
+
+      cnt++;
+    }
+    return cnt;
+  }
+
+  function getSystempartnerOptions(doc) {
+    const sel = doc.querySelector('select[name="systempartner"]');
+    if (!sel) return [];
+    const opts = Array.from(sel.options || []);
+    return opts
+      .map(o => ({
+        value: (o.value || '').toString().trim(),
+        label: (o.textContent || '').toString().trim()
+      }))
+      .filter(o => o.label && !/^alle$/i.test(o.label));
+  }
+
+  function createOverviewOverlay(doc) {
+    const overlay = doc.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      background: 'rgba(0,0,0,0.45)',
+      zIndex: '1000000',
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+      paddingTop: '70px'
+    });
+
+    const box = doc.createElement('div');
+    Object.assign(box.style, {
+      background: '#fff',
+      borderRadius: '6px',
+      minWidth: '540px',
+      maxWidth: '92vw',
+      maxHeight: '80vh',
+      overflow: 'auto',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '12px',
+      position: 'relative'
+    });
+
+    const head = doc.createElement('div');
+    Object.assign(head.style, {
+      padding: '10px 12px',
+      borderBottom: '1px solid #e5e5e5',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '10px',
+      position: 'sticky',
+      top: '0',
+      background: '#fff',
+      zIndex: '2'
+    });
+
+    const title = doc.createElement('div');
+    title.textContent = 'Übersicht – Systempartner (Anzahl angezeigter Zeilen)';
+    title.style.fontWeight = 'bold';
+
+    const sub = doc.createElement('div');
+    sub.style.color = '#666';
+    sub.style.marginTop = '2px';
+
+    const left = doc.createElement('div');
+    left.appendChild(title);
+    left.appendChild(sub);
+
+    const btnClose = doc.createElement('button');
+    btnClose.type = 'button';
+    btnClose.textContent = 'Schließen';
+    btnClose.style.padding = '3px 8px';
+    btnClose.style.cursor = 'pointer';
+
+    head.appendChild(left);
+    head.appendChild(btnClose);
+
+    const body = doc.createElement('div');
+    body.style.padding = '10px 12px 44px 12px';
+
+    const table = doc.createElement('table');
+    table.style.width = '100%';
+    table.style.borderCollapse = 'collapse';
+
+    const thead = doc.createElement('thead');
+    const thr = doc.createElement('tr');
+
+    const th1 = doc.createElement('th');
+    th1.textContent = 'Systempartner';
+    th1.style.textAlign = 'left';
+    th1.style.borderBottom = '1px solid #ddd';
+    th1.style.padding = '6px 6px';
+
+    const th2 = doc.createElement('th');
+    th2.textContent = 'Anzahl';
+    th2.style.textAlign = 'right';
+    th2.style.borderBottom = '1px solid #ddd';
+    th2.style.padding = '6px 6px';
+    th2.style.width = '140px';
+
+    thr.appendChild(th1);
+    thr.appendChild(th2);
+    thead.appendChild(thr);
+    table.appendChild(thead);
+
+    const tbody = doc.createElement('tbody');
+    table.appendChild(tbody);
+
+    body.appendChild(table);
+
+    const sticky = doc.createElement('div');
+    Object.assign(sticky.style, {
+      position: 'sticky',
+      bottom: '0',
+      background: '#fff',
+      borderTop: '2px solid #ddd',
+      padding: '8px 12px',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      fontWeight: 'bold',
+      zIndex: '2'
+    });
+
+    const sumLabel = doc.createElement('div');
+    sumLabel.textContent = 'Summe';
+
+    const sumCell = doc.createElement('div');
+    sumCell.textContent = '0';
+    sumCell.style.fontVariantNumeric = 'tabular-nums';
+
+    sticky.appendChild(sumLabel);
+    sticky.appendChild(sumCell);
+
+    box.appendChild(head);
+    box.appendChild(body);
+    box.appendChild(sticky);
+    overlay.appendChild(box);
+
+    const close = () => {
+      try { overlay.remove(); } catch {}
+      try { doc.removeEventListener('click', outsideClickCapture, true); } catch {}
+      try { doc.removeEventListener('keydown', escClose, true); } catch {}
+    };
+
+    const outsideClickCapture = (e) => {
+      if (!overlay.isConnected) return;
+      if (!box.contains(e.target)) close();
+    };
+
+    const escClose = (e) => {
+      if (e.key === 'Escape') close();
+    };
+
+    doc.addEventListener('click', outsideClickCapture, true);
+    doc.addEventListener('keydown', escClose, true);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    btnClose.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    });
+
+    return { overlay, sub, tbody, sumCell, close };
+  }
+
+  async function runOverview(doc) {
+    const { doc: rdoc, baseUrl, params: baseParams } = getBaseReportUrlAndParamsFromPage();
+    const options = getSystempartnerOptions(rdoc);
+
+    const ui = createOverviewOverlay(doc);
+    doc.body.appendChild(ui.overlay);
+
+    if (!options.length) {
+      ui.sub.textContent = '(keine Systempartner gefunden)';
+      return;
+    }
+
+    const from = (baseParams.get('stimestamp_from') || '').trim();
+    const till = (baseParams.get('stimestamp_till') || '').trim();
+    ui.sub.textContent = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+
+    ui.tbody.innerHTML = '';
+    for (const o of options) {
       const tr = doc.createElement('tr');
 
       const td1 = doc.createElement('td');
-      td1.textContent = it.label;
+      td1.textContent = o.label;
       td1.style.padding = '6px 6px';
       td1.style.borderBottom = '1px solid #f0f0f0';
 
       const td2 = doc.createElement('td');
-      td2.textContent = String(it.count);
+      td2.textContent = '…';
       td2.style.padding = '6px 6px';
       td2.style.borderBottom = '1px solid #f0f0f0';
       td2.style.textAlign = 'right';
@@ -1074,15 +972,99 @@ async function runOverview(doc) {
       tr.appendChild(td1);
       tr.appendChild(td2);
       ui.tbody.appendChild(tr);
-
-      sum += it.count;
     }
-    ui.sumCell.textContent = String(sum);
+
+    const results = [];
+    const CONCURRENCY = 4;
+    let idx = 0;
+    let done = 0;
+
+    let runningSum = 0;
+
+    function updateProgress() {
+      const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+      ui.sub.textContent = `${base}   ${done}/${options.length}`;
+      ui.sumCell.textContent = String(runningSum);
+    }
+
+    updateProgress();
+
+    async function worker() {
+      while (idx < options.length && ui.overlay.isConnected) {
+        const opt = options[idx++];
+
+        try {
+          const p = new URLSearchParams(baseParams.toString());
+          const sp = opt.value || opt.label;
+          p.set('systempartner', sp);
+
+          const url = baseUrl + '?' + p.toString();
+          const html = await fetchHtml(url);
+          const c = countRowsInReportHtml(html);
+
+          const count = Number.isFinite(c) ? c : 0;
+          results.push({ label: opt.label, count });
+          runningSum += count;
+        } catch (e) {
+          results.push({ label: opt.label, count: 0, err: (e?.message || String(e)) });
+        } finally {
+          done++;
+          updateProgress();
+        }
+      }
+    }
+
+    const workers = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, options.length); i++) workers.push(worker());
+    await Promise.all(workers);
+
+    if (!ui.overlay.isConnected) return;
+
+    const nonZero = results.filter(r => (r.count || 0) > 0);
+    nonZero.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
+
+    ui.tbody.innerHTML = '';
+
+    if (!nonZero.length) {
+      const tr = doc.createElement('tr');
+      const td = doc.createElement('td');
+      td.colSpan = 2;
+      td.textContent = 'Keine Treffer (alle 0).';
+      td.style.padding = '8px 6px';
+      td.style.color = '#666';
+      tr.appendChild(td);
+      ui.tbody.appendChild(tr);
+      ui.sumCell.textContent = '0';
+    } else {
+      let sum = 0;
+      for (const it of nonZero) {
+        const tr = doc.createElement('tr');
+
+        const td1 = doc.createElement('td');
+        td1.textContent = it.label;
+        td1.style.padding = '6px 6px';
+        td1.style.borderBottom = '1px solid #f0f0f0';
+
+        const td2 = doc.createElement('td');
+        td2.textContent = String(it.count);
+        td2.style.padding = '6px 6px';
+        td2.style.borderBottom = '1px solid #f0f0f0';
+        td2.style.textAlign = 'right';
+        td2.style.fontVariantNumeric = 'tabular-nums';
+
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        ui.tbody.appendChild(tr);
+
+        sum += it.count;
+      }
+      ui.sumCell.textContent = String(sum);
+    }
+
+    const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+    ui.sub.textContent = `${base}   fertig`;
   }
 
-  const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
-  ui.sub.textContent = `${base}   fertig`;
-}
   // =========================
   // Buttons unter Mehrfachauswahl
   // =========================
@@ -1090,6 +1072,7 @@ async function runOverview(doc) {
   function addCopyButtons(doc, containerEl) {
     if (!containerEl) return;
 
+    // Liste kopieren (ist bei dir in 6.x aktuell deaktiviert -> bleibt wie bei dir: false)
     if (false && !containerEl.querySelector('#tm-copy-list')) {
       const btn = doc.createElement('button');
       btn.id = 'tm-copy-list';
@@ -1118,12 +1101,13 @@ async function runOverview(doc) {
       containerEl.appendChild(btn);
     }
 
+    // Kopie (Sammelbild) -> SOLL unter Mehrfachauswahl stehen (Screenshot)
     if (!containerEl.querySelector('#tm-copy-img')) {
       const b = doc.createElement('button');
       b.id = 'tm-copy-img';
       b.type = 'button';
       b.textContent = 'Kopie';
-      b.title = 'Kopiert ein Sammelbild wie Screenshot (ohne Barcode)';
+      b.title = 'Kopiert ein Sammelbild wie Screenshot';
 
       b.addEventListener('click', async () => {
         const old = b.dataset.baseText || b.textContent;
@@ -1148,6 +1132,7 @@ async function runOverview(doc) {
       containerEl.appendChild(b);
     }
 
+    // Kopie mit Code (bei dir deaktiviert -> bleibt wie bei dir: false)
     if (false && !containerEl.querySelector('#tm-copy-with-code')) {
       const btn2 = doc.createElement('button');
       btn2.id = 'tm-copy-with-code';
@@ -1186,7 +1171,7 @@ async function runOverview(doc) {
   }
 
   // =========================
-  // QR Canvas + Popups (wie zuvor; unverändert)
+  // QR Canvas + Popups
   // =========================
 
   async function buildSingleCanvas(tour, imgUrl) {
@@ -1540,10 +1525,10 @@ async function runOverview(doc) {
   }
 
   // =========================
-  // Config / UI Panel
+  // Config / Einstellungen (aus 5.7 zurück in 6.x)
   // =========================
 
-  function normalizeName(name) { return name.trim().toLowerCase(); }
+  function normalizeName(name) { return String(name || '').trim().toLowerCase(); }
 
   function loadConfig() {
     try {
@@ -1561,6 +1546,15 @@ async function runOverview(doc) {
     return [];
   }
 
+  function saveConfig(list) {
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); }
+    catch (e) { console.error('Konfig speichern fehlgeschlagen:', e); }
+  }
+
+  // =========================
+  // Panel UI (Übersicht + ⚙ Einstellungen + X)
+  // =========================
+
   function initInDocument(doc) {
     if (!doc.body || doc.getElementById('tm-sp-panel')) return;
 
@@ -1574,6 +1568,14 @@ async function runOverview(doc) {
 .tm-tour-bubble.tm-selected{background:#4a4a4a;border-color:#000;}
 #tm-collapse-btn{position:absolute;top:0;right:0;width:28px;height:28px;padding:0;margin:0;line-height:28px;text-align:center;font-weight:bold;}
 #tm-overview-btn{position:absolute;top:0;left:0;height:28px;padding:0 8px;margin:0;line-height:28px;text-align:center;font-weight:bold;}
+#tm-settings-btn{position:absolute;top:0;left:86px;width:28px;height:28px;padding:0;margin:0;line-height:28px;text-align:center;font-weight:bold;}
+#tm-settings-panel{margin-top:6px;border-top:1px solid #ccc;padding-top:6px;display:none;background:#fff;border:1px solid #ddd;}
+#tm-settings-panel .cap{font-weight:bold;margin:0 0 6px 0;}
+#tm-settings-panel table{border-collapse:collapse;width:100%;}
+#tm-settings-panel th,#tm-settings-panel td{border:1px solid #ddd;padding:2px 3px;font-size:11px;vertical-align:top;}
+#tm-settings-panel th{background:#eee;}
+#tm-settings-panel input[type="text"],#tm-excel-import{width:100%;box-sizing:border-box;font-size:11px;}
+#tm-excel-import{height:80px;resize:vertical;}
 #tm-sp-panel.tm-collapsed{width:28px;height:28px;padding:0;overflow:hidden;background:transparent;border:none;}
 #tm-sp-panel.tm-collapsed *{display:none !important;}
 #tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;}
@@ -1599,6 +1601,13 @@ async function runOverview(doc) {
     btnOverview.textContent = 'Übersicht';
     btnOverview.title = 'Systempartner-Übersicht (Hintergrundabfrage)';
     panel.appendChild(btnOverview);
+
+    const btnSettings = doc.createElement('button');
+    btnSettings.id = 'tm-settings-btn';
+    btnSettings.type = 'button';
+    btnSettings.textContent = '⚙';
+    btnSettings.title = 'Einstellungen (Systempartner / Touren)';
+    panel.appendChild(btnSettings);
 
     function applyCollapsedState(isCollapsed) {
       panel.classList.toggle('tm-collapsed', !!isCollapsed);
@@ -1638,6 +1647,7 @@ async function runOverview(doc) {
     bubblesContainer.id = 'tm-sp-bubbles';
     panel.appendChild(bubblesContainer);
 
+    // Mehrfachauswahl + Buttons
     const multiDiv = doc.createElement('div');
     multiDiv.style.margin = '4px 0';
 
@@ -1668,15 +1678,21 @@ async function runOverview(doc) {
     multiDiv.appendChild(btnNone);
     multiDiv.appendChild(multiShowBtn);
 
+    // >>> wie dein Screenshot: Kopie unter der Zeile
     multiDiv.appendChild(doc.createElement('br'));
     const copyRow = doc.createElement('div');
     copyRow.id = 'tm-copy-row';
     copyRow.style.marginTop = '4px';
     multiDiv.appendChild(copyRow);
-
     addCopyButtons(doc, copyRow);
 
     panel.appendChild(multiDiv);
+
+    // Einstellungen Panel (aus 5.7)
+    const settingsPanel = doc.createElement('div');
+    settingsPanel.id = 'tm-settings-panel';
+    panel.appendChild(settingsPanel);
+
     doc.body.appendChild(panel);
 
     const selectedTours = new Set();
@@ -1780,6 +1796,249 @@ async function runOverview(doc) {
         bubblesContainer.appendChild(bub);
       });
     }
+
+    function renderSettingsPanel() {
+      const cfg = loadConfig();
+      settingsPanel.innerHTML = '';
+
+      const cap = doc.createElement('div');
+      cap.className = 'cap';
+      cap.textContent = 'Systempartner / Touren – Einstellungen';
+      settingsPanel.appendChild(cap);
+
+      const table = doc.createElement('table');
+
+      const thead = doc.createElement('thead');
+      const trh = doc.createElement('tr');
+      ['Systempartner', 'Tournummern', 'Aktion'].forEach(txt => {
+        const th = doc.createElement('th');
+        th.textContent = txt;
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = doc.createElement('tbody');
+
+      cfg.forEach((item, index) => {
+        const tr = doc.createElement('tr');
+
+        const tdName = doc.createElement('td');
+        const inpName = doc.createElement('input');
+        inpName.type = 'text';
+        inpName.value = item.name;
+        inpName.disabled = true;
+        tdName.appendChild(inpName);
+
+        const tdTours = doc.createElement('td');
+        const inpTours = doc.createElement('input');
+        inpTours.type = 'text';
+        inpTours.value = item.tours.join(', ');
+        inpTours.disabled = true;
+        tdTours.appendChild(inpTours);
+
+        const tdAct = doc.createElement('td');
+        const btnEdit = doc.createElement('button');
+        btnEdit.textContent = 'Bearbeiten';
+        const btnDel = doc.createElement('button');
+        btnDel.textContent = 'Löschen';
+
+        tdAct.appendChild(btnEdit);
+        tdAct.appendChild(doc.createTextNode(' '));
+        tdAct.appendChild(btnDel);
+
+        let editing = false;
+
+        btnEdit.addEventListener('click', () => {
+          if (!editing) {
+            editing = true;
+            inpName.disabled = false;
+            inpTours.disabled = false;
+            btnEdit.textContent = 'Speichern';
+          } else {
+            const name = inpName.value.trim();
+            const toursArr = inpTours.value
+              .split(/[,\s]+/)
+              .map(t => t.trim())
+              .filter(Boolean);
+
+            if (!name || !toursArr.length) {
+              alert('Bitte Name und mindestens eine Tournummer angeben.');
+              return;
+            }
+
+            cfg[index] = { name, tours: toursArr };
+            saveConfig(cfg);
+
+            editing = false;
+            inpName.disabled = true;
+            inpTours.disabled = true;
+            btnEdit.textContent = 'Bearbeiten';
+
+            updateBubbles();
+          }
+        });
+
+        btnDel.addEventListener('click', () => {
+          if (!confirm('Diesen Systempartner löschen?')) return;
+          cfg.splice(index, 1);
+          saveConfig(cfg);
+          renderSettingsPanel();
+          updateBubbles();
+        });
+
+        tr.appendChild(tdName);
+        tr.appendChild(tdTours);
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      });
+
+      // Neue Zeile
+      const trNew = doc.createElement('tr');
+
+      const tdNewName = doc.createElement('td');
+      const inpNewName = doc.createElement('input');
+      inpNewName.type = 'text';
+      inpNewName.placeholder = 'Systempartner-Name';
+      tdNewName.appendChild(inpNewName);
+
+      const tdNewTours = doc.createElement('td');
+      const inpNewTours = doc.createElement('input');
+      inpNewTours.type = 'text';
+      inpNewTours.placeholder = 'Touren, z.B. 627, 623, 638';
+      tdNewTours.appendChild(inpNewTours);
+
+      const tdNewAct = doc.createElement('td');
+      const btnNewSave = doc.createElement('button');
+      btnNewSave.textContent = 'Speichern';
+      btnNewSave.disabled = true;
+      tdNewAct.appendChild(btnNewSave);
+
+      function checkNewRow() {
+        const hasName = inpNewName.value.trim().length > 0;
+        const toursArr = inpNewTours.value
+          .split(/[,\s]+/)
+          .map(t => t.trim())
+          .filter(Boolean);
+        btnNewSave.disabled = !(hasName && toursArr.length > 0);
+      }
+
+      inpNewName.addEventListener('input', checkNewRow);
+      inpNewTours.addEventListener('input', checkNewRow);
+
+      btnNewSave.addEventListener('click', () => {
+        const name = inpNewName.value.trim();
+        const toursArr = inpNewTours.value
+          .split(/[,\s]+/)
+          .map(t => t.trim())
+          .filter(Boolean);
+
+        if (!name || !toursArr.length) {
+          alert('Bitte Name und mindestens eine Tournummer angeben.');
+          return;
+        }
+
+        const cfgNow = loadConfig();
+        cfgNow.push({ name, tours: toursArr });
+        saveConfig(cfgNow);
+
+        renderSettingsPanel();
+        updateBubbles();
+      });
+
+      trNew.appendChild(tdNewName);
+      trNew.appendChild(tdNewTours);
+      trNew.appendChild(tdNewAct);
+      tbody.appendChild(trNew);
+
+      table.appendChild(tbody);
+      settingsPanel.appendChild(table);
+
+      // Excel Import (2 Spalten: Systempartner, Tour)
+      const importTitle = doc.createElement('div');
+      importTitle.textContent = 'Import aus Excel-Liste (2 Spalten: Systempartner, Tour):';
+      importTitle.style.marginTop = '8px';
+      importTitle.style.fontWeight = 'bold';
+      settingsPanel.appendChild(importTitle);
+
+      const importHint = doc.createElement('div');
+      importHint.textContent = 'In Excel Bereich A:B markieren, kopieren und hier einfügen. Überschrift wird ignoriert.';
+      importHint.style.fontSize = '10px';
+      importHint.style.marginBottom = '2px';
+      settingsPanel.appendChild(importHint);
+
+      const ta = doc.createElement('textarea');
+      ta.id = 'tm-excel-import';
+      settingsPanel.appendChild(ta);
+
+      const importBtn = doc.createElement('button');
+      importBtn.textContent = 'Importieren';
+      importBtn.style.marginTop = '4px';
+      settingsPanel.appendChild(importBtn);
+
+      importBtn.addEventListener('click', () => {
+        const text = ta.value;
+        if (!text.trim()) {
+          alert('Bitte erst aus Excel einfügen (Strg+V).');
+          return;
+        }
+
+        const lines = text.split(/\r?\n/);
+        let cfgNow = loadConfig();
+        let addedCount = 0;
+
+        lines.forEach(line => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+
+          const parts = line.split(/\t|;/);
+          if (parts.length < 2) return;
+
+          const name = parts[0].trim();
+          let tour = parts[1].trim();
+
+          if (!name || !tour || name.toLowerCase().startsWith('systempartner')) return;
+
+          tour = tour.replace(/[^\dA-Za-z]/g, '');
+          if (!tour) return;
+
+          const norm = normalizeName(name);
+          let entry = cfgNow.find(p => normalizeName(p.name) === norm);
+          if (!entry) {
+            entry = { name: name, tours: [] };
+            cfgNow.push(entry);
+          }
+
+          if (!entry.tours.includes(tour)) {
+            entry.tours.push(tour);
+            addedCount++;
+          }
+        });
+
+        if (!addedCount) {
+          alert('Es konnten keine neuen Touren importiert werden (evtl. alles schon vorhanden?).');
+          return;
+        }
+
+        saveConfig(cfgNow);
+        alert('Import abgeschlossen. Neue Touren: ' + addedCount);
+        ta.value = '';
+        renderSettingsPanel();
+        updateBubbles();
+      });
+    }
+
+    // Settings (⚙) toggle
+    btnSettings.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (settingsPanel.style.display === 'none' || !settingsPanel.style.display) {
+        renderSettingsPanel();
+        settingsPanel.style.display = 'block';
+      } else {
+        settingsPanel.style.display = 'none';
+      }
+    });
 
     multiCheckbox.addEventListener('change', () => {
       const on = !!multiCheckbox.checked;
