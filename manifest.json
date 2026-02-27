@@ -56,7 +56,7 @@
     {
       "id": "tool-aseapin",
       "name": "ASEA PIN Freigabe",
-      "version": "6.11",
+      "version": "6.21",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js",
       "match": [
         "/^https?:\\/\\/scanserver-d001\\d{4}\\.ssw\\.dpdit\\.de\\/cgi-bin\\/scanmonitor\\.cgi.*$/",
@@ -65,7 +65,7 @@
       "grants": [
         "none"
       ],
-      "description": "Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme)."
+      "description": "Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import)."
     },
     {
       "id": "tool-depotportal-label",
