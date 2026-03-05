@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.3
+// @version      5.4.4
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -1234,8 +1234,16 @@ function registerWithLoader(){
   G.fvpr_close = closePanel;
 }
 
-// Nur registrieren (und ggf. Button entfernen). KEIN bootStandalone() mehr!
-registerWithLoader();
+// Loader vorhanden → nur registrieren; sonst Standalone-Boot
+const G_BOOT = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
+  registerWithLoader();
+} else if (Array.isArray(G_BOOT.__tmQueue) || (G_BOOT.TM && G_BOOT.TM.register)) {
+  registerWithLoader();          // Loader kommt noch → in Queue einreihen
+} else {
+  // Kein Loader erkannt → standalone starten
+  bootStandalone();
+}
 
 
 
