@@ -151,6 +151,20 @@
       "description": "✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM)."
     },
     {
+      "id": "tool.dispatcher.partner.diagnose",
+      "name": "DPD Dispatcher – Partner-Report Mailer",
+      "version": "5.4.3",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.partner.diagnose.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_xmlhttpRequest",
+        "unsafeWindow"
+      ],
+      "description": "✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM)."
+    },
+    {
       "id": "tool-dispatcher2am2",
       "name": "DPD Dispatcher – Prio/Express12 Monitoring",
       "version": "7.2.0",
