@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.4
+// @version      5.4.5
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -495,7 +495,7 @@ function makeTableSortable(root){
 }
 
 function mountUI(forLoader=false){
-  if (document.getElementById(NS+'wrap') && document.getElementById(NS+'panel')) return;
+  if (document.getElementById(NS+'panel')) return;
 
   // — PANEL immer erstellen (für Loader geschlossen starten)
   PANEL=document.createElement('div');
@@ -585,25 +585,6 @@ function mountUI(forLoader=false){
 }
 
 /* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog ====== */
-function removeStandaloneButton(){
-  const wrap = document.getElementById(NS+'wrap');
-  if (wrap) wrap.remove();
-}
-
-function modal(html){ const ov=document.createElement('div'); ov.className=NS+'modal'; ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`; document.body.appendChild(ov); return ov; }
-function softenColor(rgb, alpha=0.18){ if(!rgb) return ''; const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i); if(!m) return ''; const [_,r,g,b]=m; return `rgba(${r},${g},${b},${alpha})`; }
-function etaBg(v){ if(v==null) return ''; if(v>=100) return 'rgba(22,163,74,0.18)'; if(v>=94) return 'rgba(202,138,4,0.18)'; return 'rgba(185,28,28,0.18)'; }
-
-/* (… ALLES aus deinem Original ab hier unverändert …)
-   — openPreview, openConfirm, openPartnerDialog, Mail/Clipboard/Gateway,
-   — HTML-Builder (partnerHtml, summaryHtml, mailPartnerHtml, mailSummaryHtml),
-   — getAggregates, sendSinglePartnerConfirm, sendTotalOnlyConfirm, sendPartnerAndTotalConfirm
-   — render()
-   (Ich lasse die Funktionskörper unverändert, nur der Platz ist hier knapp.)
-   ↓ Die Funktionen stehen vollständig in deinem ursprünglichen Codeblock – ich kürze nur diese Erklärung.
-*/
-
-/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog (komplett) ====== */
 function removeStandaloneButton(){
   const wrap = document.getElementById(NS+'wrap');
   if (wrap) wrap.remove();
@@ -1186,14 +1167,14 @@ function openPanel(){
   try { ensureStyles(); } catch {}
   try { if (!document.querySelector(PANEL_ID)) mountUI(true); } catch {}
   const p = document.querySelector(PANEL_ID);
-  if (p) p.style.display = '';
+  if (p) p.style.removeProperty('display');
   try { fillCfg(); } catch {}
   try { render(true); } catch {}
 }
 
 function closePanel(){
   const p = document.querySelector(PANEL_ID);
-  if (p) p.style.display = 'none';
+  if (p) p.style.setProperty('display', 'none', 'important');
 }
 
 async function bootStandalone(){
@@ -1219,6 +1200,11 @@ function registerWithLoader(){
       const el = document.querySelector(PANEL_ID);
       if (el && getComputedStyle(el).display !== 'none') closePanel();
       else openPanel();
+    },
+    close: () => closePanel(),
+    isOpen: () => {
+      const el = document.querySelector(PANEL_ID);
+      return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none';
     }
   };
   const G = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
