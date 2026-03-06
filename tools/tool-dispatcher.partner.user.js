@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.5.1
+// @version      5.5.2
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -74,7 +74,7 @@ function toast(msg, ok=true){ const el=document.createElement('div'); el.style.c
 
 /* ====== TEIL 2/12 – IndexedDB ====== */
 
-const IDB_NAME='fvpr_db', IDB_VER=2;
+const IDB_NAME='fvpr_db', IDB_VER=3;
 
 function idbOpen(){
   return new Promise((res,rej)=>{
