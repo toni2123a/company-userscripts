@@ -84,7 +84,7 @@
     {
       "id": "tools-dispatcher-abholer",
       "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
-      "version": "5.0.0",
+      "version": "5.0.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
