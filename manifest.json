@@ -153,7 +153,7 @@
     {
       "id": "tool.dispatcher.partner.diagnose",
       "name": "DPD Dispatcher – Partner-Report Mailer",
-      "version": "5.4.5 Diagnose",
+      "version": "5.5.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool.dispatcher.partner.diagnose.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
