@@ -1,15 +1,14 @@
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.1.5
+// @version      2.1.8
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
-// @description  Dispatcher KPI Monitor (Systempartner/Touren) inkl. zuverlässigem Kopieren (HTML + Text) + Depot/Scanserver flexibel
+// @description  Dispatcher KPI Monitor
 // @match        https://dispatcher2-de.geopost.com/*
-// @run-at       document-start
+// @run-at       document-idle
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
-// @grant        GM_setClipboard
 // @connect      dispatcher2-de.geopost.com
 // @connect      *
 // ==/UserScript==
@@ -84,80 +83,7 @@ function toast(msg, ok=true){
   el.style.cssText='position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:10px;font:600 13px system-ui;color:#fff;z-index:2147483647;'+(ok?'background:#16a34a':'background:#b91c1c');
   el.textContent=msg;
   document.body.appendChild(el);
-  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 1600);
-}
-
-/* ===== Copy helpers (zuverlässig) ===== */
-function htmlToPlainText(html){
-  try{
-    const doc = new DOMParser().parseFromString(String(html||''), 'text/html');
-    const table = doc.querySelector('table');
-    if(table){
-      const rows = Array.from(table.querySelectorAll('tr')).map(tr=>{
-        const cells = Array.from(tr.querySelectorAll('th,td'))
-          .map(td => (td.textContent||'').replace(/\s+/g,' ').trim());
-        return cells.join('\t');
-      });
-      return rows.join('\n').trim();
-    }
-    return (doc.body?.textContent||'').replace(/\s+\n/g,'\n').trim();
-  }catch{
-    return String(html||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
-  }
-}
-
-async function copyHtmlToClipboard(html){
-  const htmlStr = String(html||'');
-  const plain = htmlToPlainText(htmlStr);
-
-  // 1) Clipboard API (HTML+Text)
-  try{
-    if(navigator.clipboard && window.ClipboardItem){
-      const item = new ClipboardItem({
-        'text/html': new Blob([htmlStr], { type: 'text/html' }),
-        'text/plain': new Blob([plain], { type: 'text/plain' })
-      });
-      await navigator.clipboard.write([item]);
-      return true;
-    }
-  }catch(e){
-    LOG('clipboard api failed', e);
-  }
-
-  // 2) Tampermonkey fallback
-  try{
-    if(typeof GM_setClipboard === 'function'){
-      GM_setClipboard(htmlStr, 'html');
-      GM_setClipboard(plain, 'text');
-      return true;
-    }
-  }catch(e){
-    LOG('GM_setClipboard failed', e);
-  }
-
-  // 3) execCommand fallback
-  try{
-    const box = document.createElement('div');
-    box.style.position='fixed';
-    box.style.left='-99999px';
-    box.style.top='0';
-    box.innerHTML = htmlStr;
-    document.body.appendChild(box);
-
-    const sel = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(box);
-    sel.removeAllRanges();
-    sel.addRange(range);
-
-    const ok = document.execCommand('copy');
-    sel.removeAllRanges();
-    box.remove();
-    return !!ok;
-  }catch(e){
-    LOG('execCommand copy failed', e);
-    return false;
-  }
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 1400);
 }
 
 /* ====== BLOCK 02/11 – Styles + UI Grundgerüst ====== */
@@ -213,12 +139,13 @@ function ensureStyles(){
 .${NS}modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
 .${NS}sort-ind{margin-left:6px;opacity:.7}
 .${NS}wrap{max-height:70vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
+
+/* Spinner / Loading */
 .${NS}spinner{width:18px;height:18px;border-radius:999px;border:3px solid rgba(0,0,0,.15);border-top-color:rgba(0,0,0,.65);animation:${NS}spin .9s linear infinite;display:inline-block}
 @keyframes ${NS}spin{to{transform:rotate(360deg)}}
 .${NS}loading-ov{position:fixed;inset:0;background:rgba(255,255,255,.65);z-index:2147483647;display:none;align-items:center;justify-content:center}
 .${NS}loading-box{background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;padding:14px 16px;display:flex;gap:10px;align-items:center;font:700 13px system-ui;color:#111827}
 `;
-// baseCopyCssTable() definition depends on inline css objects below; defined later.
   document.head.appendChild(s);
 }
 
@@ -248,20 +175,6 @@ function loadingOff(){
 }
 
 function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-
-function baseCopyCssTable(){
-  return {
-    wrap: 'font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:12px;line-height:1.35;color:#111827;',
-    stand:'margin:0 0 6px 0;color:#334155;font-weight:700;',
-    table:'border-collapse:collapse;width:100%;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:12px;line-height:1.35;',
-    th:  'border:1px solid #e5e7eb;padding:6px 8px;background:#ffe2e2;color:#8b0000;text-align:right;font-weight:800;white-space:nowrap;',
-    thL: 'border:1px solid #e5e7eb;padding:6px 8px;background:#ffe2e2;color:#8b0000;text-align:left;font-weight:800;white-space:nowrap;',
-    td:  'border:1px solid #e5e7eb;padding:6px 8px;text-align:right;white-space:nowrap;',
-    tdL: 'border:1px solid #e5e7eb;padding:6px 8px;text-align:left;white-space:nowrap;',
-    tf:  'border:1px solid #e5e7eb;padding:6px 8px;background:#e0f2ff;color:#003366;text-align:right;font-weight:800;white-space:nowrap;',
-    tfL: 'border:1px solid #e5e7eb;padding:6px 8px;background:#e0f2ff;color:#003366;text-align:left;font-weight:800;white-space:nowrap;',
-  };
-}
 
 function mountUI(){
   if(document.querySelector(PANEL_ID)) return;
@@ -326,8 +239,18 @@ function mountUI(){
       return;
     }
 
-    if(b.dataset.act==='refresh') render(true);
-    if(b.dataset.act==='copy-all') copyMainTable();
+    if(b.dataset.act==='refresh'){
+      toast('Aktualisiere…');
+      try{ await render(true); toast('Aktualisierung abgeschlossen'); }
+      catch(err){ console.error('[fvkpi] refresh', err); toast('Fehler: '+err.message, false); }
+      return;
+    }
+    if(b.dataset.act==='copy-all'){
+      toast('Kopiere…');
+      try{ await copyMainTable(); }
+      catch(err){ console.error('[fvkpi] copy-all', err); toast('Fehler: '+err.message, false); }
+      return;
+    }
     if(b.dataset.act==='close') closePanel();
   },{passive:false});
 
@@ -335,19 +258,21 @@ function mountUI(){
     const cpy=e.target.closest('button[data-copy-partner]');
     if(cpy){
       e.preventDefault();
-      copyPartnerRowOnly(cpy.dataset.copyPartner);
+      try{ await copyPartnerRowOnly(cpy.dataset.copyPartner); }
+      catch(err){ console.error('[fvkpi] copy-partner', err); toast('Fehler: '+err.message, false); }
       return;
     }
     const row=e.target.closest('tr[data-partner]');
     if(row && !e.target.closest('button')){
       e.preventDefault();
-      openPartnerModal(row.getAttribute('data-partner'));
+      try{ await openPartnerModal(row.getAttribute('data-partner')); }
+      catch(err){ console.error('[fvkpi] open-modal', err); toast('Fehler: '+err.message, false); }
       return;
     }
   },{passive:false});
 }
 
-/* ====== Sortier-Helper + Modal ====== */
+/* ====== BLOCK 03/11 – Sortier-Helper + Modal ====== */
 
 function makeTableSortable(root){
   const table = (root?.tagName === 'TABLE') ? root : root.querySelector('table');
@@ -418,7 +343,7 @@ function modalSet(ov, html){
   if(box) box.innerHTML = html;
 }
 
-/* ====== Fahrzeugübersicht: Grid/Tabelle lesen (Spalten nach Name) ====== */
+/* ====== BLOCK 04/11 – Fahrzeugübersicht: Grid/Tabelle lesen (Spalten nach Name) ====== */
 
 let CACHED_COLS_OV=null;
 
@@ -524,7 +449,7 @@ function readOverviewAll(){
   return {ok:false, rows:[]};
 }
 
-/* ====== pickup-delivery: Token Capture (fetch+XHR) + Daten laden ====== */
+/* ====== BLOCK 05/11 – pickup-delivery: Token Capture (fetch+XHR) + Daten laden ====== */
 
 let AUTH_BEARER = '';
 let PD_CACHE = null; // {ts, items[]}
@@ -653,7 +578,7 @@ function parcelsCount(it){
   return (typeof pick==='number' && Number.isFinite(pick)) ? pick : 0;
 }
 
-/* ====== Gewicht: scanserver report_weight.cgi (Depot flexibel + https/http Fallback) ====== */
+/* ====== BLOCK 06/11 – Gewicht: scanserver report_weight.cgi (Depot flexibel + https/http Fallback) ====== */
 
 let WEIGHT_CACHE = null; // {ts, map: Map(tour->kg)}
 const WEIGHT_TTL = 6*60*60*1000; // 6h
@@ -736,7 +661,7 @@ function loadWeights(){
   });
 }
 
-/* ====== Aggregation (Partner + Tour) ====== */
+/* ====== BLOCK 07/11 – Aggregation (Partner + Tour) ====== */
 
 function groupByPartnerTour(overviewRows){
   const P=new Map();
@@ -906,7 +831,7 @@ function summarizePartner(P){
   return {per, totals};
 }
 
-/* ====== HTML Builder (UI + COPY) ====== */
+/* ====== BLOCK 08/11 – HTML Builder (UI) ====== */
 
 function buildPartnerTableHtmlUI(per, totals){
   const head=`
@@ -974,6 +899,24 @@ function buildPartnerTableHtmlUI(per, totals){
   </div>`;
 }
 
+/* ====== BLOCK 08.1/11 – COPY Builder (INLINE-STYLES, ohne Aktion/Buttons) ====== */
+
+function baseCopyCssTable(){
+  const border = 'border:1px solid #e5e7eb;';
+  const pad    = 'padding:8px;';
+  return {
+    wrap:  'font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;color:#111;',
+    stand: 'margin:0 0 8px 0;color:#334155;',
+    table: 'width:100%;min-width:700px;border-collapse:collapse;font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;',
+    th:    `${pad}${border}background:#ffe2e2;color:#8b0000;font-weight:700;text-align:right;white-space:nowrap;`,
+    thL:   `${pad}${border}background:#ffe2e2;color:#8b0000;font-weight:700;text-align:left;white-space:nowrap;`,
+    td:    `${pad}${border}text-align:right;white-space:nowrap;`,
+    tdL:   `${pad}${border}text-align:left;white-space:nowrap;`,
+    tf:    `${pad}${border}background:#e0f2ff;color:#003366;font-weight:700;text-align:right;white-space:nowrap;`,
+    tfL:   `${pad}${border}background:#e0f2ff;color:#003366;font-weight:700;text-align:left;white-space:nowrap;`
+  };
+}
+
 function buildPartnerTableHtmlCOPY(per, totals){
   const C=baseCopyCssTable();
   const head = `
@@ -1022,7 +965,7 @@ function buildPartnerTableHtmlCOPY(per, totals){
       <td style="${C.tf}">${fmtInt(totals.gesamtpakete)}</td>
       <td style="${C.tf}">${fmtInt(totals.abholstopps)}</td>
       <td style="${C.tf}">${fmtInt(totals.geplAbholpakete)}</td>
-      <td style="${C.tfL}">${fmtInt(totals.plzCount)}</td>
+      <td style="${C.tf}">${fmtInt(totals.plzCount)}</td>
       <td style="${C.tf}">Ø ${fmtKg(totals.gewichtAvg)}</td>
       <td style="${C.tf}">Ø ${fmtPct(totals.lieferquoteAvg)}</td>
     </tr></tfoot>`;
@@ -1035,6 +978,8 @@ function buildPartnerTableHtmlCOPY(per, totals){
       </table>
     </div>`;
 }
+
+/* ====== Modal Daten + COPY Builder ===== */
 
 function summarizeToursForModal(toursArr){
   const tourCount = toursArr.length;
@@ -1164,7 +1109,23 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
     </div>`;
 }
 
-/* ====== Aggregates Master (HÄNGER-SICHER + TIMEOUTS) ====== */
+/* ====== Clipboard Helper ====== */
+async function copyHtmlToClipboard(html){
+  try{
+    if(navigator.clipboard && window.ClipboardItem){
+      const item=new ClipboardItem({'text/html':new Blob([html],{type:'text/html'})});
+      await navigator.clipboard.write([item]);
+    } else {
+      const d=document.createElement('div'); d.style.position='fixed'; d.style.left='-99999px'; d.innerHTML=html; document.body.appendChild(d);
+      const r=document.createRange(); r.selectNodeContents(d);
+      const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      document.execCommand('copy'); sel.removeAllRanges(); d.remove();
+    }
+    return true;
+  }catch(e){ console.error('[fvkpi] copyHtmlToClipboard', e); return false; }
+}
+
+/* ====== BLOCK 09/11 – Aggregates Master (HÄNGER-SICHER + TIMEOUTS) ====== */
 
 let AGG_CACHE=null; // {ts, data}
 const AGG_TTL=20_000;
@@ -1243,7 +1204,7 @@ async function getAggregates(){
   }
 }
 
-/* ====== Render + Copy + Drilldown ====== */
+/* ====== BLOCK 10/11 – Render + Copy + Drilldown ====== */
 
 async function render(force=false){
   if(Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS && !force) return;
@@ -1470,14 +1431,9 @@ async function openPartnerModal(partner){
       if(b){
         if(b.dataset.act==='close'){ ov.remove(); return; }
         if(b.dataset.act==='copy-table'){
-          try{
-            const html = buildToursTableHtmlCOPY(toursArr, sum, null);
-            const ok=await copyHtmlToClipboard(html);
-            toast(ok?'Tabelle kopiert':'Kopieren fehlgeschlagen', ok);
-          }catch(err){
-            console.error('[fvkpi] copy-table', err);
-            toast('Kopieren: Fehler (Console)', false);
-          }
+          const html = buildToursTableHtmlCOPY(toursArr, sum, null);
+          const ok=await copyHtmlToClipboard(html);
+          toast(ok?'Tabelle kopiert':'Kopieren fehlgeschlagen', ok);
           return;
         }
       }
@@ -1504,7 +1460,7 @@ async function openPartnerModal(partner){
   }
 }
 
-/* ====== Boot + Loader-Button oben ====== */
+/* ====== BLOCK 11/11 – Boot + Loader-Button oben ====== */
 
 function openPanel(){
   ensureStyles();
