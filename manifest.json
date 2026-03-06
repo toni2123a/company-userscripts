@@ -125,17 +125,16 @@
     {
       "id": "tool_dispatcher_kpi",
       "name": "DPD Dispatcher – KPI Monitor (Depot flexibel)",
-      "version": "2.1.5",
+      "version": "2.1.8",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
       "grants": [
         "unsafeWindow",
-        "GM_xmlhttpRequest",
-        "GM_setClipboard"
+        "GM_xmlhttpRequest"
       ],
-      "description": "Dispatcher KPI Monitor (Systempartner/Touren) inkl. zuverlässigem Kopieren (HTML + Text) + Depot/Scanserver flexibel"
+      "description": "Dispatcher KPI Monitor"
     },
     {
       "id": "tool-dispatcher.partner",
