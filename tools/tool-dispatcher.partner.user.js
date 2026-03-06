@@ -1,1237 +1,753 @@
-/* ====== TEIL 1/12 – Metadaten + Start IIFE (LOADER-fähig) ====== */
-
 // ==UserScript==
-// @name         DPD Dispatcher – Partner-Report Mailer
+// @name         Dispatcher – Neu-/Rekla-Kunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      5.4.5
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
+// @version      5.0.1
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tools-Dispatcher-Abholer.user.js
+// @description  Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
-// @grant        GM_xmlhttpRequest
-// @grant        unsafeWindow
-// @connect      10.14.7.169
+// @grant        none
 // ==/UserScript==
 
-(function(){
-'use strict';
-if (window.__FVPR_RUNNING) return; window.__FVPR_RUNNING = true;
-// ganz oben bei den Konstanten
-const ENABLE_STANDALONE = false; // <- kein eigener Button
 
-const USE_LOADER = !!(window.TM && typeof window.TM.register === 'function'); // <— NEU
-const NS='fvpr-', PANEL_ID='#fvpr-panel', OFFSET_PX=-240;
-const REFRESH_MS=60_000, RENDER_DEBOUNCE=300, SCAN_MAX_STEPS=40, SCAN_STAG_LIMIT=2;
-const GATEWAY_DEFAULT='http://10.14.7.169/mail.php', GATEWAY_API_KEY='fvpr-SECRET-123';
+(function () {
+  'use strict';
 
-const DEBUG = localStorage.getItem('fvpr-debug')==='1';
-const LOG=(...a)=>{ if(DEBUG) console.log('[fvpr]',...a); };
 
-const norm=s=>String(s||'').replace(/\s+/g,' ').trim();
-const parsePct=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=parseFloat(t); return Number.isFinite(v)?v:null; };
-const parseIntDe=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=Math.round(parseFloat(t)); return Number.isFinite(v)?v:null; };
-const fmtPct=v=>Number.isFinite(v)?String(v.toFixed(1)).replace('.',','):'—';
-const fmtInt=v=>v==null?'—':String(Math.round(v||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 
-const todayStr=()=>new Date().toLocaleDateString('de-DE');
-const pad2=n=>String(n).padStart(2,'0');
-const timeHM=()=>{ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
-const dateStamp=()=>{ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
-
-const sum = (vs,proj)=>vs.reduce((a,v)=>a+(proj(v)||0),0);
-const avg = (vs,proj)=>{ const arr=vs.map(proj).filter(x=>x!=null); return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0; };
-const tourKey = t => String(t || '').replace(/[^\dA-Za-z]/g,'').trim();
-
-const groupByPartner=rows=>{ const m=new Map(); for(const r of rows){ if(!m.has(r.partner)) m.set(r.partner,[]); m.get(r.partner).push(r); } return m; };
-
-const qsaMain=sel=>Array.from(document.querySelectorAll(sel)).filter(el=>!el.closest(PANEL_ID));
-function toast(msg, ok=true){ const el=document.createElement('div'); el.style.cssText='position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:10px;font:600 13px system-ui;color:#fff;z-index:2147483647;'+(ok?'background:#16a34a':'background:#b91c1c'); el.textContent=msg; document.body.appendChild(el); setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 1400); }
-
-/* ====== TEIL 2/12 – IndexedDB ====== */
-
-const IDB_NAME='fvpr_db', IDB_VER=2;
-
-function idbOpen(){
-  return new Promise((res,rej)=>{
-    const req = indexedDB.open(IDB_NAME, IDB_VER);
-
-    req.onupgradeneeded = ()=>{
-      const db=req.result;
-
-      if(!db.objectStoreNames.contains('partners'))
-        db.createObjectStore('partners',{keyPath:'name'});
-
-      if(!db.objectStoreNames.contains('tourMap'))
-        db.createObjectStore('tourMap',{keyPath:'tour'}); // {tour, partner, updatedAt}
-
-      if(!db.objectStoreNames.contains('settings')){
-        const s=db.createObjectStore('settings',{keyPath:'id'});
-        s.put({
-          id:'global',
-          subjectPrefix:'Aktueller Tour.Report',
-          distTo:'',
-          distCc:'',
-          signature:'',
-          httpGateway:'',
-          apiKey:''
-        });
-      }
-    };
-
-    req.onsuccess=()=>res(req.result);
-    req.onerror=()=>rej(req.error);
-  });
-}
-
-async function idbGet(store,key){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readonly').objectStore(store).get(key);
-    r.onsuccess=()=>res(r.result||null);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbPut(store,val){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readwrite').objectStore(store).put(val);
-    r.onsuccess=()=>res(true);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbDel(store,key){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readwrite').objectStore(store).delete(key);
-    r.onsuccess=()=>res(true);
-    r.onerror=()=>rej(r.error);
-  });
-}
-async function idbAll(store){
-  const db=await idbOpen();
-  return new Promise((res,rej)=>{
-    const r=db.transaction(store,'readonly').objectStore(store).getAll();
-    r.onsuccess=()=>res(r.result||[]);
-    r.onerror=()=>rej(r.error);
-  });
-}
-
-async function idbPutMany(store, arr){
-  if(!arr || !arr.length) return;
-  const db = await idbOpen();
-  await new Promise((res,rej)=>{
-    const tx = db.transaction(store,'readwrite');
-    const st = tx.objectStore(store);
-    for(const v of arr) st.put(v);
-    tx.oncomplete = ()=>res(true);
-    tx.onerror = ()=>rej(tx.error);
-  });
-}
-
-async function cacheTourPartner(rows){
-  try{
-    const now = Date.now();
-    const m = new Map(); // tourKey -> partner
-    for(const r of (rows||[])){
-      const t = tourKey(r.tour);
-      const p = norm(r.partner);
-      if(t && p) m.set(t,p);
-    }
-    if(!m.size) return;
-
-    const recs = [];
-    for(const [tour, partner] of m.entries()){
-      recs.push({ tour, partner, updatedAt: now });
-    }
-    await idbPutMany('tourMap', recs);
-  }catch(e){
-    console.warn('[fvpr] cacheTourPartner', e);
-  }
-}
-
-
-async function ensureSettingsRecord(){
-  const def={id:'global', subjectPrefix:'Aktueller Tour.Report', distTo:'', distCc:'', signature:'', httpGateway:GATEWAY_DEFAULT, apiKey:GATEWAY_API_KEY};
-  const cur=await idbGet('settings','global');
-  if(!cur){ await idbPut('settings',def); return def; }
-  for(const k of Object.keys(def)) if(!(k in cur)) cur[k]=def[k];
-  await idbPut('settings',cur);
-  return cur;
-}
-
-async function exportDb(){
-  try{
-    const settings = await idbGet('settings','global').catch(()=>null)||{};
-    const partners = await idbAll('partners').catch(()=>[])||[];
-    const data = {
-      version:'3.3.5',
-      exportedAt:new Date().toISOString(),
-      settings:{ subjectPrefix: typeof settings.subjectPrefix==='string'?settings.subjectPrefix:'Aktueller Tour.Report' },
-      partners: partners.map(p=>({ name:String(p.name||''), to:String(p.to||''), cc:String(p.cc||''), alias:String(p.alias||'') }))
-    };
-    const json=JSON.stringify(data,null,2);
-    const blob=new Blob([json],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download=`fvpr_export_${dateStamp()}.json`; document.body.appendChild(a); a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },200);
-    toast('Export erstellt');
-  }catch(e){ console.error('[fvpr] Export',e); alert('Export fehlgeschlagen (Konsole ansehen).'); }
-}
-
-/* ====== TEIL 3/12 – Grid/Tabelle Erkennung ====== */
-
-let GRID_VP=null, CACHED_COLS=null;
-
-function getGridViewport(){
-  if (GRID_VP && document.body.contains(GRID_VP)) return GRID_VP;
-  const grid = qsaMain('[role="grid"], [data-testid*="grid"], .Datagrid__Root-sc-')[0] || document.querySelector('[role="grid"]');
-  if(!grid) return null;
-  GRID_VP = grid.closest('[class*="Datagrid"]') || grid;
-  return GRID_VP;
-}
-function getAnyTable(){
-  const tables = qsaMain('table');
-  for (const t of tables){
-    const ths = Array.from(t.querySelectorAll('thead th')).map(th=>norm(th.textContent).toLowerCase());
-    if (ths.length && ths.some(x=>x.includes('systempartner'))) return t;
-  }
-  return null;
-}
-const includesAll=(s,arr)=>arr.every(w=>new RegExp(w,'i').test(s||''));
-
-/* ====== TEIL 4/12 – Datagrid: Spalten finden ====== */
-
-function findColumnsDatagrid(){
-  const ths=qsaMain('thead th,[role="columnheader"]');
-  if(!ths.length) return null;
-  if (CACHED_COLS && CACHED_COLS._hdrCount===ths.length) return CACHED_COLS;
-
-  const normTxt = el => (el?.textContent||'').replace(/\s+/g,' ').trim().toLowerCase();
-  const titleOf = el => (el?.querySelector('input[title], [title]')?.getAttribute('title')||'').trim().toLowerCase();
-  const H = Array.from({length: ths.length}, (_,i)=>({ i, text: normTxt(ths[i]), title: titleOf(ths[i]) }));
-
-  const byEither = fn => { for(const h of H){ if(fn(h.text)||fn(h.title)) return h.i; } return -1; };
-
-  function pickTourIndex(){
-    const cand = H.map(h=>h.i).filter(i=>/\btour\b/.test(H[i].text) || /\btour\b/.test(H[i].title));
-    if (!cand.length) return -1;
-    const withNr = cand.filter(i => /\b(tour|tour\-?)\s*(nr|nummer)\b/.test(H[i].text) || /\bnr\b/.test(H[i].text) || /\bnummer\b/.test(H[i].text));
-    if (withNr.length) return withNr[0];
-
-    const rows = qsaMain('tbody tr,[role="row"]');
-    const score = i => {
-      let nNum=0, nTime=0, nSeen=0;
-      for (const tr of rows.slice(0, 40)){
-        const tds=tr.querySelectorAll('td,[role="gridcell"]');
-        if (!tds || !tds[i]) continue;
-        const v = (tds[i].textContent||'').trim();
-        if (!v) continue;
-        nSeen++;
-        if (/^\d{1,2}:\d{2}$/.test(v)) nTime++;
-        else if (/^\d{2,6}$/.test(v.replace(/\s+/g,''))) nNum++;
-      }
-      return nNum*2 - nTime*3 + nSeen*0.1;
-    };
-    let best=cand[0], bestScore=-1e9;
-    for (const i of cand){ const s=score(i); if (s>bestScore){ best=i; bestScore=s; } }
-    return best;
-  }
-
-  const sys = byEither(s=>/\bsystempartner\b/.test(s));
-  const tour = pickTourIndex();
-  const driver = byEither(s=>/(zustellername|fahrername|fahrer|driver)/.test(s));
-  const eta = byEither(s=>/(^eta\b|eta\s*%)/.test(s));
-  const status = byEither(s=>/\bstatus\b/.test(s));
-  const stopsTotal = byEither(s=>includesAll(s, [/zustell?stopps?/, /gesamt/]));
-  const stopsOpen  = byEither(s=>includesAll(s, [/offen/, /zustell?stopps?/]));
-  const pkgsTotal  = byEither(s=>includesAll(s, [/pakete|geplante/, /(gesamt|zustell)/]));
-  const obstacles  = byEither(s=>/\bzustellhindernisse\b/.test(s)||/\bhinderniss?e?\b/.test(s));
-  const pickupOpen = (()=>{ const i1=byEither(s=>includesAll(s, [/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/])); if (i1>=0) return i1; return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s)); })();
-
-  const cols={sys,tour,driver,eta,status,stopsTotal,stopsOpen,pkgsTotal,obstacles,pickupOpen,_hdrCount:ths.length};
-  if (cols.sys<0) return null;
-  CACHED_COLS=cols;
-  return cols;
-}
-
-/* ====== TEIL 5/12 – Datagrid lesen (inkl. Status-Farben) ====== */
-
-async function readAllRowsDatagrid(maxSteps=SCAN_MAX_STEPS){
-  const vp=getGridViewport();
-  if(!vp) return {ok:false,rows:[]};
-  if (vp.scrollHeight<=vp.clientHeight) return readRowsDatagrid();
-
-  const seen=new Set(), acc=[];
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-  vp.scrollTop=0; let steps=0,last=-1,stag=0;
-
-  while(steps++<maxSteps){
-    const {ok,rows}=readRowsDatagrid();
-    if(ok){
-      for(const r of rows){
-        const key=`${r.partner}||${r.tour}||${r.driver}`;
-        if(!seen.has(key)){ seen.add(key); acc.push(r); }
-      }
-    }
-    const atEnd = Math.ceil(vp.scrollTop + vp.clientHeight) >= vp.scrollHeight;
-    if(acc.length===last) stag++; else { stag=0; last=acc.length; }
-    if(atEnd||stag>=SCAN_STAG_LIMIT) break;
-    vp.scrollTop = Math.min(vp.scrollTop + Math.max(200, vp.clientHeight*0.9), vp.scrollHeight);
-    await sleep(40);
-  }
-  return {ok:acc.length>0, rows:acc};
-}
-
-function readRowsDatagrid(){
-  const C=findColumnsDatagrid();
-  if(!C) return {ok:false,rows:[]};
-
-  const trs=qsaMain('tbody tr,[role="row"]').filter(tr=>{
-    const cells=tr.querySelectorAll('td,[role="gridcell"]');
-    const needed=Math.max(...Object.values(C).filter(v=>typeof v==='number'&&v>=0));
-    return cells && cells.length>needed;
-  });
-
-  const out=[];
-  for(const tr of trs){
-    const tds=Array.from(tr.querySelectorAll('td,[role="gridcell"]'));
-    const partner=norm(tds[C.sys]?.textContent||'');
-    if(!partner) continue;
-
-    let statusText='', statusBg='', statusFg='';
-    if (C.status>=0) {
-      const cell=tds[C.status];
-      const badge = cell?.querySelector('[title]') || cell?.querySelector('*') || cell;
-      statusText = norm( cell?.getAttribute('title') || badge?.getAttribute('title') || cell?.textContent );
-      try{
-        const cs = window.getComputedStyle(badge);
-        statusBg = cs.backgroundColor || '';
-        statusFg = cs.color || '';
-      }catch{}
-    }
-
-    out.push({
-      partner,
-      tour:    C.tour>=0?norm(tds[C.tour]?.textContent):'',
-      driver:  C.driver>=0?norm((tds[C.driver]?.querySelector('div[title]')?.getAttribute('title'))||tds[C.driver]?.textContent):'',
-      status:  statusText || '',
-      statusBg, statusFg,
-      eta:     C.eta>=0?parsePct(tds[C.eta]?.textContent):null,
-      stops:   C.stopsTotal>=0?parseIntDe(tds[C.stopsTotal]?.textContent):null,
-      open:    C.stopsOpen>=0?parseIntDe(tds[C.stopsOpen]?.textContent):null,
-      pkgs:    C.pkgsTotal>=0?parseIntDe(tds[C.pkgsTotal]?.textContent):null,
-      obstacles:C.obstacles>=0?parseIntDe(tds[C.obstacles]?.textContent):null,
-      pOpen:   C.pickupOpen>=0?parseIntDe(tds[C.pickupOpen]?.textContent):null,
-    });
-  }
-  return {ok:true,rows:out};
-}
-
-/* ====== TEIL 6/12 – Plain-Table Reader (inkl. Status-Farben) ====== */
-
-function readRowsPlainTable(){
-  const table = getAnyTable();
-  if(!table) return {ok:false,rows:[]};
-
-  const head = Array.from(table.querySelectorAll('thead th')).map(th=>norm(th.textContent).toLowerCase());
-  const idx = (labelOpts)=>{ for(const l of labelOpts){ const i=head.findIndex(t=>t.includes(l)); if(i>=0) return i; } return -1; };
-
-  function pickTourIdx(){
-    let i = idx(['tour nr','tour-nr','tournr','tournummer']);
-    if (i>=0) return i;
-    const cand = head.map((t,ix)=>({t,ix})).filter(x=>x.t.includes('tour')).map(x=>x.ix);
-    if (!cand.length) return -1;
-    const rows = Array.from(table.querySelectorAll('tbody tr')).slice(0,40);
-    const score = ci=>{
-      let nNum=0,nTime=0,nSeen=0;
-      for(const tr of rows){
-        const tds = tr.querySelectorAll('td');
-        if(!tds[ci]) continue;
-        const v = (tds[ci].textContent||'').trim();
-        if(!v) continue;
-        nSeen++;
-        if (/^\d{1,2}:\d{2}$/.test(v)) nTime++;
-        else if (/^\d{2,6}$/.test(v.replace(/\s+/g,''))) nNum++;
-      }
-      return nNum*2 - nTime*3 + nSeen*0.1;
-    };
-    let best=cand[0], bestScore=-1e9;
-    for (const ci of cand){ const s=score(ci); if (s>bestScore){ best=ci; bestScore=s; } }
-    return best;
-  }
-
-  const C = {
-    sys: idx(['systempartner']),
-    tour: pickTourIdx(),
-    driver: idx(['zustellername','fahrername','fahrer','driver']),
-    status: idx(['status']),
-    eta: idx(['eta']),
-    stopsTotal: idx(['stopps gesamt','zustellstopps gesamt','stopp gesamt']),
-    stopsOpen: idx(['offene stopps','offene zustellstopps']),
-    pkgsTotal: idx(['pakete gesamt','geplante zustellpakete']),
-    obstacles: idx(['zustellhindernisse','hindernis']),
-    pickupOpen: (()=>{ const i1=idx(['offene abholstops','offene abholstopps','abholungen offen','open pickups','pickup open']); if(i1>=0) return i1; return idx(['abholstops','abholstopps','abholung']); })()
-  };
-  if (C.sys<0) return {ok:false,rows:[]};
-
-  const trs = Array.from(table.querySelectorAll('tbody tr'));
-  const out=[];
-  for(const tr of trs){
-    const tds = Array.from(tr.querySelectorAll('td'));
-    const partner = norm(tds[C.sys]?.textContent||'');
-    if(!partner) continue;
-
-    let statusBg='', statusFg='';
-    if (C.status>=0){
-      const cell=tds[C.status];
-      const badge = cell?.querySelector('[title]') || cell?.querySelector('*') || cell;
-      try{
-        const cs=getComputedStyle(badge);
-        statusBg=cs.backgroundColor||'';
-        statusFg=cs.color||'';
-      }catch{}
-    }
-
-    out.push({
-      partner,
-      tour:    C.tour>=0?norm(tds[C.tour]?.textContent):'',
-      driver:  C.driver>=0?norm(tds[C.driver]?.textContent):'',
-      status:  C.status>=0?norm(tds[C.status]?.textContent):'',
-      statusBg, statusFg,
-      eta:     C.eta>=0?parsePct(tds[C.eta]?.textContent):null,
-      stops:   C.stopsTotal>=0?parseIntDe(tds[C.stopsTotal]?.textContent):null,
-      open:    C.stopsOpen>=0?parseIntDe(tds[C.stopsOpen]?.textContent):null,
-      pkgs:    C.pkgsTotal>=0?parseIntDe(tds[C.pkgsTotal]?.textContent):null,
-      obstacles:C.obstacles>=0?parseIntDe(tds[C.obstacles]?.textContent):null,
-      pOpen:   C.pickupOpen>=0?parseIntDe(tds[C.pickupOpen]?.textContent):null,
-    });
-  }
-  return {ok:out.length>0, rows:out};
-}
-
-async function readAllRows(){
-  const tryA = await readAllRowsDatagrid();
-  if (tryA.ok && tryA.rows.length) return tryA;
-  const tryB = readRowsPlainTable();
-  if (tryB.ok && tryB.rows.length) return tryB;
-  return {ok:false, rows:[]};
-}
-
-/* ====== TEIL 7/12 – Styles ====== */
-
-function ensureStyles(){
-  if(document.getElementById(NS+'style')) return;
-  const s=document.createElement('style');
-  s.id=NS+'style';
-  s.textContent= `
-.${NS}wrap{position:fixed;top:8px;left:calc(50% + ${OFFSET_PX}px);display:flex;gap:8px;z-index:2147483647}
-.${NS}btn{border:1px solid rgba(0,0,0,.12);background:#fff;padding:8px 14px;border-radius:999px;font:600 13px system-ui;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.${NS}panel{
-  position:fixed;
-  top:48px;                /* vertikal bleibt wie gehabt */
-  left:50%;                /* horizontale Mitte */
-  transform:translateX(-50%);
-  width:min(1150px,96vw);
-  max-height:76vh;
-  overflow:auto;
-  background:#fff;
-  border:1px solid rgba(0,0,0,.12);
-  box-shadow:0 12px 28px rgba(0,0,0,.18);
-  border-radius:12px;
-  z-index:2147483646;
-}
-
-
-.${NS}hdr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
-.${NS}pill{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
-.${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer;margin-left:6px}
-.${NS}tbl{width:100%;border-collapse:collapse}
-.${NS}tbl thead th{position:sticky;top:0;z-index:1;padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);font:700 12px system-ui;text-align:right;white-space:nowrap;background:#ffe2e2;color:#8b0000;cursor:pointer;user-select:none}
-.${NS}tbl thead th:first-child,.${NS}tbl tbody td:first-child{text-align:left}
-.${NS}tbl tbody tr{cursor:pointer}
-.${NS}tbl tbody tr:hover{background:#f8fafc}
-.${NS}tbl tbody td{padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);font:500 12px system-ui;text-align:right;white-space:nowrap}
-.${NS}tbl tbody td.${NS}act{text-align:center}
-.${NS}tbl tfoot td{padding:8px 10px;border-top:1px solid rgba(0,0,0,.12);font:700 12px system-ui;background:#e0f2ff;color:#003366;text-align:right;white-space:nowrap}
-.${NS}empty{padding:12px;text-align:center;opacity:.7}
-.${NS}cfg{padding:10px;border-top:1px solid rgba(0,0,0,.06);background:#fafafa}
-.${NS}cfg input{width:100%;padding:6px;border:1px solid #e5e7eb;border-radius:8px}
-.${NS}row{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin:6px 0}
-.${NS}modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:2147483647}
-.${NS}modal-box{background:#fff;min-width:min(560px,96vw);max-width:96vw;border-radius:12px;box-shadow:0 20px 40px rgba(0,0,0,.25);padding:14px}
-.${NS}modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
-.${NS}iconbtn{padding:4px 8px;border:1px solid rgba(0,0,0,.15);border-radius:999px;background:#fff;cursor:pointer}
-.${NS}mini{font-size:12px;opacity:.8}
-.${NS}note{opacity:.75;font-size:12px}
-.${NS}sort-ind{margin-left:6px;opacity:.7}
-`;
-  document.head.appendChild(s);
-}
-
-/* ====== TEIL 8/12 – UI (Panel/Buttons/Import-Export) + Sortier-Helper ====== */
-let PANEL, CONTENT, CFGBOX;
-
-// Unterdrückung von Auto-Render nach Nutzersortierung (ms)
-let LAST_USER_SORT_TS = 0;
-const SUPPRESS_RENDER_MS = 4000;
-
-function makeTableSortable(root){
-  const table = (root instanceof HTMLElement) ? root.querySelector('table') : root;
-  if(!table) return;
-  const thead = table.querySelector('thead');
-  const tbody = table.querySelector('tbody');
-  if(!thead || !tbody) return;
-
-  Array.from(tbody.querySelectorAll('tr')).forEach(tr=>{ tr.setAttribute('data-row','1'); });
-
-  const ths = Array.from(thead.querySelectorAll('th'));
-
-  const parseVal=(txt)=>{ const t = String(txt||'').trim(); const clean = t.replace(/\./g,'').replace(',', '.').replace(/[^\d.\-]/g,'').trim(); if(clean!=='' && !isNaN(clean)) return parseFloat(clean); return t.toLowerCase(); };
-
-  const updateIndicators=(col,dir)=>{ ths.forEach((th,i)=>{ th.querySelector(`span.${NS}sort-ind`)?.remove(); th.dataset.sortDir = '0'; if(i===col){ const sp=document.createElement('span'); sp.className=`${NS}sort-ind`; sp.textContent = dir>0 ? '▲' : '▼'; th.appendChild(sp); th.dataset.sortDir = String(dir); } }); };
-
-  ths.forEach((th, colIndex)=>{ th.style.cursor='pointer'; th.addEventListener('click', ()=>{ LAST_USER_SORT_TS = Date.now(); const asc = (Number(th.dataset.sortDir||'0') !== 1); const dir = asc ? 1 : -1; const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]')); rows.sort((a,b)=>{ const aText = a.children[colIndex]?.textContent ?? ''; const bText = b.children[colIndex]?.textContent ?? ''; const aVal = parseVal(aText); const bVal = parseVal(bText); if(typeof aVal==='number' && typeof bVal==='number'){ return (aVal - bVal)*dir; } return aText.localeCompare(bText,'de',{numeric:true})*dir; }); rows.forEach(r=>tbody.appendChild(r)); updateIndicators(colIndex, dir); LAST_USER_SORT_TS = Date.now(); },{passive:true}); });
-}
-
-function mountUI(forLoader=false){
-  if (document.getElementById(NS+'panel')) return;
-
-  // — PANEL immer erstellen (für Loader geschlossen starten)
-  PANEL=document.createElement('div');
-  PANEL.className=NS+'panel';
-  PANEL.style.display = forLoader ? 'none' : '';
-  PANEL.id=PANEL_ID.slice(1);
-  PANEL.innerHTML= `
-    <div class="${NS}hdr">
-      <div>Auswertung – Systempartner (Fahrzeugübersicht) <span class="${NS}mini">[Stand: ${todayStr()} ${timeHM()}]</span></div>
-      <div class="${NS}pill">
-        <button class="${NS}btn-sm" data-act="refresh">Aktualisieren</button>
-        <span class="${NS}btn-sm" style="opacity:.0;cursor:default"></span>
-        <button class="${NS}btn-sm" data-act="send-partner-and-total">✉ Pro Partner und gesamt an uns</button>
-        <button class="${NS}btn-sm" data-act="send-total-only">✉ Gesamt</button>
-        <button class="${NS}btn-sm" data-act="settings">Einstellungen</button>
-      </div>
-    </div>
-    <div id="${NS}content"></div>
-    <div class="${NS}cfg" style="display:none" id="${NS}cfgbox">
-      <h4 style="margin:0 0 6px 0;font:700 14px system-ui">Globale Einstellungen</h4>
-      <div class="${NS}row"><label>Betreff-Prefix</label><input id="${NS}cfg-subj" type="text"></div>
-      <button class="${NS}btn-sm" data-act="cfg-save">Speichern</button>
-      <button class="${NS}btn-sm" data-act="cfg-hide">Schließen</button>
-      <button class="${NS}btn-sm" data-act="export">Export</button>
-      <button class="${NS}btn-sm" data-act="import">Import</button>
-    </div>
-    <div class="${NS}note">Pro Partner wird nur versendet, wenn im Partner-Eintrag eine gültige Adresse hinterlegt ist. Die Gesamt-Mail geht an den Eintrag mit Name = "gesamt".</div>
-    <input type="file" id="${NS}impfile" accept="application/json" style="display:none">
-  `;
-  document.body.appendChild(PANEL);
-  CONTENT=PANEL.querySelector('#'+NS+'content');
-  CFGBOX=PANEL.querySelector('#'+NS+'cfgbox');
-
-  // — Standalone-Fallback: eigenen Button nur erstellen, wenn KEIN Loader aktiv
-  if (!forLoader && ENABLE_STANDALONE){
-    if (!document.getElementById(NS+'wrap')){
-      const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'wrap';
-      const btn=document.createElement('button'); btn.className=NS+'btn'; btn.textContent='Partner-Report';
-      wrap.append(btn); document.body.appendChild(wrap);
-      btn.addEventListener('click',()=>{ const will=PANEL.style.display==='none'; PANEL.style.display=will?'':'none'; if(will) fillCfg(); },{passive:true});
-    }
-  }
-
-  // Actions
-  PANEL.addEventListener('click', async e=>{
-    const b=e.target.closest('button[data-act]'); if(!b) return;
-    if(b.dataset.act==='refresh') render(true);
-    if(b.dataset.act==='send-partner-and-total') await sendPartnerAndTotalConfirm();
-    if(b.dataset.act==='send-total-only') await sendTotalOnlyConfirm();
-    if(b.dataset.act==='settings'){ CFGBOX.style.display=CFGBOX.style.display==='none'?'':''; if(CFGBOX.style.display!=='none') await fillCfg(); }
-    if(b.dataset.act==='cfg-hide') CFGBOX.style.display='none';
-    if(b.dataset.act==='cfg-save') await saveCfgFromUI();
-    if(b.dataset.act==='export') await exportDb();
-    if(b.dataset.act==='import') document.getElementById(NS+'impfile').click();
-  },{passive:false});
-
-  PANEL.querySelector('#'+NS+'impfile').addEventListener('change', async (ev)=>{
-    const f=ev.target.files?.[0]; if(!f) return;
-    try{
-      const data=JSON.parse(await f.text());
-      if(data.settings) await idbPut('settings',{id:'global',...data.settings});
-      if(Array.isArray(data.partners)){
-        const db=await idbOpen();
-        const tx=db.transaction('partners','readwrite');
-        const st=tx.objectStore('partners');
-        const keys=await new Promise(r=>{ const k=st.getAllKeys(); k.onsuccess=()=>r(k.result||[]); });
-        await Promise.all(keys.map(k=>new Promise(r=>{ const d=st.delete(k); d.onsuccess=r; })));
-        for(const p of data.partners) st.put(p);
-        await new Promise(r=>{ tx.oncomplete=r; });
-      }
-      alert('Import erfolgreich.');
-      await fillCfg();
-      render(true);
-    }catch(e){ console.error(e); alert('Import fehlgeschlagen (ungültiges JSON).'); }
-  },{passive:true});
-
-  // Delegation: ✉ / 👁 / ⧉ in Zeilen + Gesamtleiste
-  PANEL.addEventListener('click', e=>{
-    const sendBtn=e.target.closest('button[data-sp]'); if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
-    const eyeBtn=e.target.closest('button[data-eye]'); if(eyeBtn){ e.preventDefault(); openPreview(eyeBtn.dataset.eye); return; }
-    const copyBtn=e.target.closest('button[data-copy]'); if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
-    const totalEye=e.target.closest('button[data-total-eye]'); if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
-    const totalCopy=e.target.closest('button[data-total-copy]'); if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
-    const totalBtn=e.target.closest('button[data-total-send]'); if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
-    const row=e.target.closest('tr[data-partner]'); if(row && !e.target.closest('button')){ e.preventDefault(); openPreview(row.getAttribute('data-partner')); }
-  },{passive:false});
-}
-
-/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog ====== */
-function removeStandaloneButton(){
-  const wrap = document.getElementById(NS+'wrap');
-  if (wrap) wrap.remove();
-}
-function modal(html){
-  const ov=document.createElement('div');
-  ov.className=NS+'modal';
-  ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`;
-  document.body.appendChild(ov);
-  return ov;
-}
-function softenColor(rgb, alpha=0.18){
-  if(!rgb) return '';
-  const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i);
-  if(!m) return '';
-  const [_,r,g,b]=m;
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-function etaBg(v){
-  if(v==null) return '';
-  if(v>=100) return 'rgba(22,163,74,0.18)';
-  if(v>=94)  return 'rgba(202,138,4,0.18)';
-  return 'rgba(185,28,28,0.18)';
-}
-
-/* ====== Mail/Clipboard/Helpers ====== */
-function splitEmails(raw){ return (raw||'').split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean); }
-function isEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
-function normalizeEmailList(raw){
-  const arr=splitEmails(raw); const valid=[],invalid=[]; const seen=new Set();
-  for(const a of arr){ const low=a.toLowerCase(); if(seen.has(low)) continue; seen.add(low); (isEmail(a)?valid:invalid).push(a); }
-  return {valid,invalid};
-}
-async function copyHtmlToClipboard(html){
-  try{
-    if(navigator.clipboard&&window.ClipboardItem){
-      const item=new ClipboardItem({'text/html':new Blob([html],{type:'text/html'})});
-      await navigator.clipboard.write([item]);
-    } else {
-      const d=document.createElement('div'); d.style.position='fixed'; d.style.left='-99999px'; d.innerHTML=html; document.body.appendChild(d);
-      const r=document.createRange(); r.selectNodeContents(d);
-      const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      document.execCommand('copy'); sel.removeAllRanges(); d.remove();
-    }
-    return true;
-  }catch(e){ console.error(e); return false; }
-}
-function openMailto(subject,to='',cc=''){
-  const href=`mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}${cc?`&cc=${encodeURIComponent(cc)}`:''}`;
-  window.open(href,'_blank');
-}
-async function deliverMail({subject, html, to, cc}){
-  const toL=normalizeEmailList(to), ccL=normalizeEmailList(cc);
-  if(toL.valid.length===0){ toast('Keine gültige Empfängeradresse (An). Bitte prüfen.', false); return; }
-  if(toL.invalid.length||ccL.invalid.length){ toast(`Ungültige Adressen ignoriert: ${[...toL.invalid,...ccL.invalid].join(', ')}`, false); }
-
-  const g=await ensureSettingsRecord();
-  const url=(g.httpGateway||GATEWAY_DEFAULT).trim();
-  const key=(g.apiKey||GATEWAY_API_KEY||'').trim();
-
-  if(typeof GM_xmlhttpRequest==='function' && /^https?:\/\//i.test(url)){
-    try{
-      const res=await new Promise((resolve,reject)=>{
-        GM_xmlhttpRequest({
-          method:'POST', url, headers:{'Content-Type':'application/json','X-Api-Key':key},
-          data:JSON.stringify({subject,html,to:toL.valid.join(','),cc:ccL.valid.join(',')}),
-          onload:r=>resolve(r), onerror:e=>reject(e), ontimeout:()=>reject(new Error('timeout')), timeout:10000
-        });
-      });
-      let j=null; try{ j=JSON.parse(res.responseText||''); }catch{}
-      if(!(res.status>=200&&res.status<300) || !j || j.ok!==true) throw new Error(`Gateway-Fehler ${res.status}: ${res.responseText}`);
-      toast('Mail über Gateway gesendet'); return;
-    }catch(e){ console.error('[fvpr] GM gateway error',e); toast('Gateway nicht erreichbar – Fallback Outlook',false); }
-  }
-  if(/^https:\/\//i.test(url)){
-    try{
-      const r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/json','X-Api-Key':key},
-        body:JSON.stringify({subject,html,to:toL.valid.join(','),cc:ccL.valid.join(',')}), mode:'cors', keepalive:true});
-      const t=await r.text(); let j=null; try{ j=JSON.parse(t);}catch{}
-      if(!r.ok||!j||j.ok!==true) throw new Error(`HTTP ${r.status}: ${t}`);
-      toast('Mail über Gateway gesendet'); return;
-    }catch(e){ console.error('[fvpr] fetch gateway error',e); toast('Gateway nicht erreichbar – Fallback Outlook',false); }
-  }
-  await copyHtmlToClipboard(html);
-  openMailto(subject,toL.valid.join(','),ccL.valid.join(','));
-  alert('Entwurf geöffnet. HTML ist in der Zwischenablage – Strg+V drücken.');
-}
-
-/* ====== HTML-Builder ====== */
-function partnerHtml(partner,list,signature){
-  const rows=list.map(r=>{
-    const etaStyle = `background:${etaBg(r.eta)};`;
-    return `
-      <tr data-row="1">
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${r.tour||'—'}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">${r.driver||'—'}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.stops)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pkgs)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.open)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.obstacles)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;${etaStyle}">${fmtPct(r.eta)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
-      </tr>`;
-  }).join('');
-  const totals={
-    tours:list.length,
-    etaAvg:avg(list,r=>r.eta),
-    stops:sum(list,r=>r.stops),
-    pkgs:sum(list,r=>r.pkgs),
-    open:sum(list,r=>r.open),
-    obstacles:sum(list,r=>r.obstacles),
-    pOpen:sum(list,r=>r.pOpen)
-  };
-  const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-  return `
-  <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-      <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Tour</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Fahrername</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">offen</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">offene Abholstops</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
-          <td style="padding:8px;border:1px solid #e5e7eb;"></td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
-        </tr>
-      </tfoot>
-    </table>
-    ${signatureHtml}
-  </div>`;
-}
-function summaryHtml(per,totals,signature){
-  const head=`
-    <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Systempartner</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Touren</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA % (Ø)</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps gesamt</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Stopps</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete gesamt</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Aktion</th>
-    </tr></thead>`;
-  const body=per.map(p=>{
-    const etaStyle=`background:${etaBg(p.etaAvg)};`;
-    return `
-      <tr data-partner="${p.partner.replace(/"/g,'&quot;')}" data-row="1">
-        <td style="text-align:left">${p.partner}</td>
-        <td>${fmtInt(p.tours)}</td>
-        <td style="${etaStyle}">${fmtPct(p.etaAvg)}</td>
-        <td>${fmtInt(p.stops)}</td>
-        <td>${fmtInt(p.open)}</td>
-        <td>${fmtInt(p.pkgs)}</td>
-        <td>${fmtInt(p.obstacles)}</td>
-        <td>${fmtInt(p.pOpen)}</td>
-        <td class="${NS}act">
-          <button class="${NS}iconbtn" title="Mail an Partner (Bestätigung)" data-sp="${p.partner}">✉︎</button>
-          <button class="${NS}iconbtn" title="Vorschau öffnen" data-eye="${p.partner}">👁</button>
-          <button class="${NS}iconbtn" title="Partner-HTML in Zwischenablage" data-copy="${p.partner}">⧉</button>
-        </td>
-      </tr>`;
-  }).join('');
-  const foot=`
-    <tfoot><tr>
-      <td>Gesamt (alle)</td>
-      <td>${fmtInt(totals.tours)}</td>
-      <td>${fmtPct(totals.etaAvg)}</td>
-      <td>${fmtInt(totals.stops)}</td>
-      <td>${fmtInt(totals.open)}</td>
-      <td>${fmtInt(totals.pkgs)}</td>
-      <td>${fmtInt(totals.obstacles)}</td>
-      <td>${fmtInt(totals.pOpen)}</td>
-      <td class="${NS}act">
-        <button class="${NS}iconbtn" title="Gesamtübersicht an „gesamt“ (Bestätigung)" data-total-send="1">✉︎</button>
-        <button class="${NS}iconbtn" title="Gesamt-Vorschau öffnen" data-total-eye="1">👁</button>
-        <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
-      </td>
-    </tr></tfoot>`;
-  const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-  return `
-  <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-      ${head}<tbody>${body}</tbody>${foot}
-    </table>
-    ${signatureHtml}
-  </div>`;
-}
-function mailPartnerHtml(partner,list,signature){
-  const rows=list.map(r=>{
-    const etaStyle = `background:${etaBg(r.eta)};`;
-    return `
-      <tr>
-        <td style="padding:8px;border:1px solid #e5e7eb;">${r.tour||'—'}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${r.driver||'—'}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.stops)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pkgs)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.open)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.obstacles)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;${etaStyle}">${fmtPct(r.eta)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
-      </tr>`;
-  }).join('');
-  const totals={
-    tours:list.length,
-    etaAvg:avg(list,r=>r.eta),
-    stops:sum(list,r=>r.stops),
-    pkgs:sum(list,r=>r.pkgs),
-    open:sum(list,r=>r.open),
-    obstacles:sum(list,r=>r.obstacles),
-    pOpen:sum(list,r=>r.pOpen)
-  };
-  const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-  return `
-  <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
-    <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <div style="max-width:100%; overflow-x:auto;">
-      <table cellpadding="0" cellspacing="0" style="width:100%; min-width:560px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
-        <thead>
-          <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-            <th align="center"style="padding:8px;border:1px solid #e5e7eb;">Tour</th>
-            <th align="left"  style="padding:8px;border:1px solid #e5e7eb;">Fahrername</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Stopps</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Pakete</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offen</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">ETA</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offene Abholstops</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
-            <td style="padding:8px;border:1px solid #e5e7eb;"></td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    ${signatureHtml}
-  </div>`;
-}
-function mailSummaryHtml(per,totals,signature){
-  const body=per.map(p=>{
-    const etaStyle=`background:${etaBg(p.etaAvg)};`;
-    return `
-      <tr>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${p.partner}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.tours)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;${etaStyle}">${fmtPct(p.etaAvg)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.stops)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.open)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.pkgs)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.obstacles)}</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(p.pOpen)}</td>
-      </tr>`;
-  }).join('');
-  const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
-  return `
-  <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
-    <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <div style="max-width:100%; overflow-x:auto;">
-      <table cellpadding="0" cellspacing="0" style="width:100%; min-width:640px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
-        <thead>
-          <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-            <th align="left"  style="padding:8px;border:1px solid #e5e7eb;">Systempartner</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Touren</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">ETA % (Ø)</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Stopps gesamt</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Offene Stopps</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Pakete gesamt</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
-          </tr>
-        </thead>
-        <tbody>${body}</tbody>
-        <tfoot>
-          <tr style="background:#e0f2ff;color:#00366;font-weight:700;">
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(totals.etaAvg)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    ${signatureHtml}
-  </div>`;
-}
-
-/* ---------- Aggregation + Flows ---------- */
-async function getAggregates(){
-  const {ok,rows}=await readAllRows();
-  if(!ok||rows.length===0) return null;
-    cacheTourPartner(rows);
-  const groups=groupByPartner(rows);
-  const per=[];
-  for(const [partner,list] of groups){
-    per.push({
-      partner, list,
-      tours:list.length,
-      etaAvg:avg(list,r=>r.eta),
-      stops:sum(list,r=>r.stops),
-      open:sum(list,r=>r.open),
-      pkgs:sum(list,r=>r.pkgs),
-      obstacles:sum(list,r=>r.obstacles),
-      pOpen:sum(list,r=>r.pOpen)
-    });
-  }
-  per.sort((a,b)=>a.partner.localeCompare(b.partner,'de'));
-  const totals={
-    tours:per.reduce((a,p)=>a+(p.tours||0),0),
-    etaAvg:avg(rows,r=>r.eta),
-    stops:per.reduce((a,p)=>a+(p.stops||0),0),
-    open:per.reduce((a,p)=>a+(p.open||0),0),
-    pkgs:per.reduce((a,p)=>a+(p.pkgs||0),0),
-    obstacles:per.reduce((a,p)=>a+(p.obstacles||0),0),
-    pOpen:per.reduce((a,p)=>a+(p.pOpen||0),0)
-  };
-  return {per, totals};
-}
-async function copyPartnerHtml(partner){
-  const agg=await getAggregates(); if(!agg) return;
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner); if(!p) return;
-  const html=partnerHtml(partner, p.list, g.signature||'');
-  const ok=await copyHtmlToClipboard(html);
-  toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
-}
-async function openTotalPreview(){
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt</h3>
-    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${html}</div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  const innerTable = ov.querySelector('table');
-  if(innerTable) makeTableSortable(innerTable.parentElement);
-  ov.addEventListener('click', e=>{ if(e.target.closest('button[data-act="close"]')) ov.remove(); },{passive:false});
-}
-async function copyTotalHtml(){
-  const agg=await getAggregates(); if(!agg) return;
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ok=await copyHtmlToClipboard(html);
-  toast(ok?'Gesamt in Zwischenablage':'Kopieren fehlgeschlagen', ok);
-}
-async function fillCfg(){
-  const g=await ensureSettingsRecord();
-  const el=PANEL.querySelector('#'+NS+'cfg-subj');
-  if(el) el.value=g.subjectPrefix||'Aktueller Tour.Report';
-}
-async function saveCfgFromUI(){
-  try{
-    const cur=await ensureSettingsRecord();
-    await idbPut('settings',{
-      id:'global',
-      subjectPrefix:(PANEL.querySelector('#'+NS+'cfg-subj')?.value||'').trim(),
-      signature:cur.signature||'',
-      httpGateway:cur.httpGateway||GATEWAY_DEFAULT,
-      apiKey:cur.apiKey||GATEWAY_API_KEY
-    });
-    toast('Einstellungen gespeichert');
-  }catch(e){
-    console.error(e); toast('Fehler beim Speichern',false);
-  }
-}
-async function openPreview(partner){
-  const agg=await getAggregates();
-  if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner);
-  if(!p){ alert('Partner nicht gefunden.'); return; }
-  const content=partnerHtml(partner, p.list, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
-    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  const innerTable = ov.querySelector('table');
-  if(innerTable) makeTableSortable(innerTable.parentElement);
-  ov.addEventListener('click', e=>{
-    const btn=e.target.closest('button[data-act]'); if(!btn) return;
-    if(btn.dataset.act==='close') ov.remove();
-    if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
-  },{passive:false});
-}
-function openConfirm({title, subject, to, cc, saveKey, onOk}){
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${title||'Bestätigen'}</h3>
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
-      <label>Betreff</label><input id="${NS}cf-subj" type="text" value="${subject||''}">
-      <label>An</label><input id="${NS}cf-to" type="text" value="${to||''}">
-      <label>CC</label><input id="${NS}cf-cc" type="text" value="${cc||''}">
-    </div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
-      <button class="${NS}btn-sm" data-act="ok">OK</button>
-      <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
-    </div>
-  `);
-  ov.addEventListener('click', async e=>{
-    const b=e.target.closest('button[data-act]'); if(!b) return;
-    const subj=ov.querySelector('#'+NS+'cf-subj').value.trim();
-    const toV =ov.querySelector('#'+NS+'cf-to').value.trim();
-    const ccV =ov.querySelector('#'+NS+'cf-cc').value.trim();
-    if(b.dataset.act==='cancel'){ ov.remove(); return; }
-    if(b.dataset.act==='save'){
-      const key = saveKey || 'gesamt';
-      const cur = await idbGet('partners', key) || {name:key, alias:''};
-      await idbPut('partners', { name:key, to:toV, cc:ccV, alias:cur.alias||'' });
-      toast('Adressen gespeichert');
-      return;
-    }
-    if(b.dataset.act==='ok'){ onOk({subject:subj, to:toV, cc:ccV}); ov.remove(); }
-  },{passive:false});
-}
-async function openPartnerDialog(partner){
-  const key=(partner==='gesamt')?'gesamt':partner;
-  const cur=await idbGet('partners',key)||{name:key,to:'',cc:'',alias:''};
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Einstellungen – ${partner}</h3>
-    <div class="${NS}row"><label>Alias (optional)</label><input id="${NS}pd-alias" type="text" value="${cur.alias||''}"></div>
-    <div class="${NS}row"><label>An</label><input id="${NS}pd-to" type="text" value="${cur.to||''}" placeholder="a@b.de, c@d.de"></div>
-    <div class="${NS}row"><label>CC</label><input id="${NS}pd-cc" type="text" value="${cur.cc||''}" placeholder="optional"></div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="save">Speichern</button>
-      <button class="${NS}btn-sm" data-act="clear">Löschen</button>
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  ov.addEventListener('click', async e=>{
-    const btn=e.target.closest('button[data-act]'); if(!btn) return;
-    if(btn.dataset.act==='close'){ ov.remove(); return; }
-    if(btn.dataset.act==='clear'){ await idbDel('partners',key); ov.remove(); return; }
-    if(btn.dataset.act==='save'){
-      const to=ov.querySelector('#'+NS+'pd-to').value.trim();
-      const cc=ov.querySelector('#'+NS+'pd-cc').value.trim();
-      const alias=ov.querySelector('#'+NS+'pd-alias').value.trim();
-      await idbPut('partners',{name:key,to,cc,alias});
-      alert('Gespeichert.'); ov.remove();
-    }
-  },{passive:false});
-}
-
-/* ====== Versand-Flows ====== */
-async function sendSinglePartnerConfirm(partner){
-  if(partner==='gesamt'){ await sendTotalOnlyConfirm(); return; }
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner); if(!p){ alert('Partner nicht gefunden.'); return; }
-  const rec=await idbGet('partners', partner)||{};
-  const alias=rec.alias||partner;
-  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${alias} – ${todayStr()}`;
-  const html=mailPartnerHtml(partner, p.list, g.signature||'');
-  openConfirm({
-    title:`Senden an ${alias}?`,
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:partner,
-    onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
-  });
-}
-async function sendTotalOnlyConfirm(){
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const rec=await idbGet('partners','gesamt')||{};
-  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-  const html=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
-  openConfirm({
-    title:'Gesamtübersicht senden?',
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:'gesamt',
-    onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
-  });
-}
-async function sendPartnerAndTotalConfirm(){
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const ready=[];
-  for(const p of agg.per){
-    const ov=await idbGet('partners', p.partner);
-    if(ov && normalizeEmailList(ov.to||'').valid.length>0) ready.push(p.partner);
-  }
-  const rec=await idbGet('partners','gesamt')||{};
-  const subjectTotal=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Sammelversand bestätigen</h3>
-    <div style="font:13px;margin-bottom:10px">Es werden <b>${ready.length}</b> Partner-Mails gesendet (nur mit gültiger Adresse) und <b>1</b> Gesamt-Mail an „gesamt“.</div>
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
-      <label>Gesamt – Betreff</label><input id="${NS}sammel-subj" type="text" value="${subjectTotal}">
-      <label>Gesamt – An</label><input id="${NS}sammel-to" type="text" value="${rec.to||''}">
-      <label>Gesamt – CC</label><input id="${NS}sammel-cc" type="text" value="${rec.cc||''}">
-    </div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
-      <button class="${NS}btn-sm" data-act="ok">Senden</button>
-      <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
-    </div>
-  `);
-  ov.addEventListener('click', async e=>{
-    const b=e.target.closest('button[data-act]'); if(!b) return;
-    const subj=ov.querySelector('#'+NS+'sammel-subj').value.trim();
-    const to  =ov.querySelector('#'+NS+'sammel-to').value.trim();
-    const cc  =ov.querySelector('#'+NS+'sammel-cc').value.trim();
-    if(b.dataset.act==='cancel'){ ov.remove(); return; }
-    if(b.dataset.act==='save'){
-      const cur=await idbGet('partners','gesamt')||{name:'gesamt',alias:''};
-      await idbPut('partners',{name:'gesamt', to, cc, alias:cur.alias||''});
-      toast('Adressen „gesamt“ gespeichert'); return;
-    }
-    if(b.dataset.act==='ok'){
-      for(const pname of ready){
-        const ovRec=await idbGet('partners', pname);
-        const part=agg.per.find(x=>x.partner===pname);
-        const html=mailPartnerHtml(pname, part.list, g.signature||'');
-        const subjP=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${(ovRec.alias||pname)} – ${todayStr()}`;
-        await deliverMail({subject:subjP, html, to:ovRec.to||'', cc:ovRec.cc||''});
-      }
-      const htmlTot=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
-      await deliverMail({subject:subj, html:htmlTot, to, cc});
-      ov.remove();
-    }
-  },{passive:false});
-}
-
-// ---------- Render ----------
-let renderTimer=null;
-async function render(force=false){
-  if(Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS && !force) return;
-  if(renderTimer){ clearTimeout(renderTimer); renderTimer=null; }
-
-  const run=async ()=>{
-    if(!CONTENT) return;
-    const res=await getAggregates();
-    if(!res){
-      CONTENT.innerHTML=`<div class="${NS}empty">Keine Daten gefunden (Tab „Fahrzeugübersicht“ sichtbar?).</div>`;
-      return;
-    }
-    const {per, totals}=res;
-    const html = summaryHtml(per, totals, '');
-    CONTENT.innerHTML = html;
-    makeTableSortable(CONTENT);
-  };
-  if(force) await run(); else renderTimer=setTimeout(run, RENDER_DEBOUNCE);
-}
-
-/* ====== TEIL 12/12 – Boot + Loader-Integration ====== */
-
-function openPanel(){
-  try { ensureStyles(); } catch {}
-  try { if (!document.querySelector(PANEL_ID)) mountUI(true); } catch {}
-  const p = document.querySelector(PANEL_ID);
-  if (p) p.style.removeProperty('display');
-  try { fillCfg(); } catch {}
-  try { render(true); } catch {}
-}
-
-function closePanel(){
-  const p = document.querySelector(PANEL_ID);
-  if (p) p.style.setProperty('display', 'none', 'important');
-}
-
-async function bootStandalone(){
-  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await render(true); }
-  catch(e){ console.error('[fvpr] init', e); }
-  let mo = null, refreshInterval = null;
-  if (!mo){
-    mo = new MutationObserver(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); });
-    mo.observe(document.body, { childList:true, subtree:true });
-  }
-  if (!refreshInterval){
-    refreshInterval = setInterval(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); }, REFRESH_MS);
-  }
-}
-
-// ====== Start ======
-function registerWithLoader(){
+  // ---------- Modul-Metadaten für das Hauptpanel ----------
   const def = {
-    id: 'partner-report',
-    label: 'Partner-Report',
-    panels: [PANEL_ID],
-    run: () => {
-      const el = document.querySelector(PANEL_ID);
-      if (el && getComputedStyle(el).display !== 'none') closePanel();
-      else openPanel();
-    },
-    close: () => closePanel(),
-    isOpen: () => {
-      const el = document.querySelector(PANEL_ID);
-      return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none';
-    }
+    id: 'dispatcher-neu-rekla',
+    label: 'Neu-/Reklakunden Kontrolle',
+    run: () => startModuleOnce()
   };
-  const G = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-  if (G.TM && typeof G.TM.register === 'function'){
-    G.TM.register(def);
-    removeStandaloneButton();        // <- Button sicher entfernen
+
+  // Sofort registrieren (oder queue’n, falls Loader noch nicht da)
+  if (window.TM && typeof window.TM.register === 'function') {
+    window.TM.register(def);
   } else {
-    const KEY='__tmQueue';
-    G[KEY] = Array.isArray(G[KEY]) ? G[KEY] : [];
-    G[KEY].push(def);                // <- nur vormerken, KEIN bootStandalone()
+    window.__tmQueue = window.__tmQueue || [];
+    window.__tmQueue.push(def);
   }
-  G.fvpr_open = openPanel;
-  G.fvpr_close = closePanel;
-}
 
-// Loader vorhanden → nur registrieren; sonst Standalone-Boot
-const G_BOOT = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
-  registerWithLoader();
-} else if (Array.isArray(G_BOOT.__tmQueue) || (G_BOOT.TM && G_BOOT.TM.register)) {
-  registerWithLoader();          // Loader kommt noch → in Queue einreihen
-} else {
-  // Kein Loader erkannt → standalone starten
-  bootStandalone();
-}
+  // ============== AB HIER: dein ursprüngliches Script – auf Lazy-Start umgebaut ==============
+  const NS = 'kn-'; // Klassen-/ID-Präfix beibehalten
+
+  try {
+   const s = sessionStorage.getItem(NS + 'lastReq');
+   if (s) {
+     const o = JSON.parse(s);
+     window.lastOkRequest = {
+       url: new URL(o.url, location.origin),
+       headers: o.headers || {}
+     };
+   }
+ } catch {}
+
+ // Hooks sofort installieren, nicht erst im Lazy-Start
+ installHooksOnce?.();
+
+  // Guard, damit UI/Hook nur 1x gebaut werden
+  let started = false;
+  function startModuleOnce() {
+    if (started) { togglePanel(true); return; }
+    started = true;
+    boot();             // alles initialisieren
+    togglePanel(true);  // Panel anzeigen
+  }
+
+  /* ======================= Basics & Storage ======================= */
+  const LS_KEY = 'kn.saved.customers';
+  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+  const digits = s => String(s||'').replace(/\D+/g,'');
+  const normShort = s => digits(s).replace(/^0+/,'');
+
+  function loadList(){ try{ const a=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch{ return []; } }
+  function saveList(arr){ const clean=[...new Set((arr||[]).map(normShort).filter(Boolean))]; localStorage.setItem(LS_KEY, JSON.stringify(clean)); renderList(); }
+
+  function tourKeys(t){
+    const s = String(t ?? '').trim();
+    const no0 = s.replace(/^0+/, '');
+    const pad2 = no0.padStart(2,'0');
+    const pad3 = no0.padStart(3,'0');
+    const pad4 = no0.padStart(4,'0');
+    return [...new Set([s, no0, pad2, pad3, pad4].filter(Boolean))];
+  }
+
+  /* ======================= Request Capture (lazy installiert) ======================= */
+ let lastOkRequest = window.lastOkRequest || null;
+  function installHooksOnce(){
+    if (!window.__kn_fetch_hooked && window.fetch){
+      const orig=window.fetch;
+      window.fetch = async function(i, init={}){
+        const res = await orig(i, init);
+        try{
+          const urlStr = typeof i==='string' ? i : (i && i.url) || '';
+          if (urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
+            const u = new URL(urlStr, location.origin);
+            const q = u.searchParams;
+            if (!q.get('parcelNumber')) {
+              const h = {};
+              const src = (init && init.headers) || (i && i.headers);
+              if (src){
+                if (src.forEach) src.forEach((v,k)=>h[String(k).toLowerCase()]=String(v));
+                else if (Array.isArray(src)) src.forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
+                else Object.entries(src).forEach(([k,v])=>h[String(k).toLowerCase()]=String(v));
+              }
+              if (!h['authorization']){
+                const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+                if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+              }
+              lastOkRequest = { url: u, headers: h };
+                 try {
+   sessionStorage.setItem(NS + 'lastReq', JSON.stringify({ url: u.href, headers: h }));
+ } catch {}
+              const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
+            }
+          }
+        }catch{}
+        return res;
+      };
+      window.__kn_fetch_hooked = true;
+    }
+
+    if (!window.__kn_xhr_hooked && window.XMLHttpRequest){
+      const X=window.XMLHttpRequest;
+      const open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
+      X.prototype.open=function(m,u){ this.__kn_url=(typeof u==='string')?new URL(u,location.origin):null; this.__kn_headers={}; return open.apply(this,arguments); };
+      X.prototype.setRequestHeader=function(k,v){ try{ this.__kn_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this,arguments); };
+      X.prototype.send=function(){
+        const onload=()=>{
+          try{
+            if (this.__kn_url && this.__kn_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){
+              const q=this.__kn_url.searchParams;
+              if (!q.get('parcelNumber')){
+                if (!this.__kn_headers['authorization']){
+                  const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+                  if (m) this.__kn_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+                }
+                lastOkRequest = { url:this.__kn_url, headers:this.__kn_headers };
+                const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
+              }
+            }
+          }catch{}
+          this.removeEventListener('load', onload);
+        };
+        this.addEventListener('load', onload);
+        return send.apply(this,arguments);
+      };
+      window.__kn_xhr_hooked = true;
+    }
+  }
+
+  /* ======================= Styles + UI ======================= */
+  function ensureStyles(){
+    if (document.getElementById(NS+'style')) return;
+    const s=document.createElement('style'); s.id=NS+'style';
+    s.textContent=`
+      .${NS}btn{border:1px solid rgba(0,0,0,.12);background:#fff;padding:6px 12px;border-radius:999px;font:600 12px system-ui;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+      .${NS}panel{position:fixed;top:72px;left:50%;transform:translateX(-50%);width:min(1800px,98vw);max-height:85vh;overflow-y:auto;overflow-x:hidden;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 12px 28px rgba(0,0,0,.18);border-radius:12px;z-index:100001;display:none}
+      .${NS}head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui}
+      .${NS}row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+      .${NS}inp{padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.15);font:13px system-ui}
+      .${NS}chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(0,0,0,.12);background:#fff;padding:4px 8px;border-radius:999px;font:600 12px system-ui;cursor:pointer}
+      .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
+      .${NS}tbl th,.${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top}
+      .${NS}tbl th{position:sticky;top:0;background:#fafafa;text-align:left}
+      .${NS}list{padding:8px 12px}
+      .${NS}muted{opacity:.7}
+      .${NS}warn-row { background: #fff3cd; }
+      .${NS}status-completed { color: #0a7a2a; font-weight: 700; }
+      .${NS}th-sort{ cursor:pointer; user-select:none; }
+      .${NS}th-sort .arrow{ margin-left:6px; font-size:10px; opacity:.6; }
+      .${NS}cust-collapser{display:flex;align-items:center;gap:8px;margin:8px 0 6px;font:600 12px system-ui;cursor:pointer;user-select:none}
+      .${NS}chev{display:inline-block;transition:transform .18s ease}
+      .${NS}chev.rot{transform:rotate(90deg)}
+      .${NS}cust-wrap{overflow:hidden;transition:max-height .18s ease}
+      .${NS}cust-wrap.collapsed{max-height:0}
+      .${NS}dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:#ccc;vertical-align:middle}
+      .${NS}dot.on{background:#2ecc71}
+      .${NS}status-problem { color:#c62828; font-weight:700; }
+    `;
+    document.head.appendChild(s);
+  }
+
+  function initSavedCollapser(){
+    const wrap = document.getElementById(NS+'saved-wrap');
+    const chev = document.getElementById(NS+'saved-chev');
+    const toggle = document.getElementById(NS+'saved-toggle');
+    if (!wrap || !chev || !toggle) return;
+    const LSKEY = 'pm.savedCust.collapsed';
+    let collapsed = localStorage.getItem(LSKEY);
+    collapsed = collapsed == null ? '1' : collapsed;
+    wrap.classList.toggle('collapsed', collapsed === '1');
+    chev.classList.toggle('rot', collapsed !== '1');
+    toggle.onclick = () => {
+      const isColl = wrap.classList.toggle('collapsed');
+      chev.classList.toggle('rot', !isColl);
+      localStorage.setItem(LSKEY, isColl ? '1' : '0');
+    };
+  }
+
+  let latestRows = [];
+
+  /* ======================= Auto-Refresh ======================= */
+  const AUTO_KEY = NS + 'auto.enabled';
+  const AUTO_MS  = 60 * 1000;
+  let autoTimer  = null;
+  function autoIsOn(){ return localStorage.getItem(AUTO_KEY) !== '0'; }
+  function autoStart(){ autoStop(); loadDetails(); autoTimer = setInterval(() => { try{ loadDetails(); }catch{} }, AUTO_MS);}
+  function autoStop(){ if (autoTimer){ clearInterval(autoTimer); autoTimer = null; } }
+  function autoSet(on){ localStorage.setItem(AUTO_KEY, on ? '1' : '0'); on ? autoStart() : autoStop(); updateAutoBtn(); }
+  function updateAutoBtn(){
+    const b = document.getElementById(NS+'auto'); if (!b) return;
+    const on = autoIsOn();
+    b.innerHTML = `<span class="${NS}dot ${on ? 'on' : ''}"></span> Auto 60s`;
+    b.title = on ? 'Auto-Refresh ist EIN (alle 60s). Klicken zum Ausschalten.' : 'Auto-Refresh ist AUS. Klicken zum Einschalten.';
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  let sortState = { key: null, dir: 1 };
+  const collator = new Intl.Collator('de-DE', { numeric: true, sensitivity: 'base' });
+  const sortGetters = {
+    number:r=>r.number,tour:r=>r.tour,name:r=>r.name,street:r=>r.street,plz:r=>Number(r.plz)||0,ort:r=>r.ort,phone:r=>r.phone,
+    driverName:r=>r.driverName,driverPhone:r=>r.driverPhone,predict:r=>r.predict,pickup:r=>r.pickup,status:r=>r.status,
+    hintText:r=>r.hintText,lastScanRaw:r=>r.lastScanRaw??new Date(0)
+  };
+  function sortRows(rows){
+    if (!sortState.key) return rows;
+    const get = sortGetters[sortState.key]; if (!get) return rows;
+    const dir = sortState.dir;
+    return [...rows].sort((a,b)=>{
+      const va = get(a), vb = get(b);
+      if (va instanceof Date || vb instanceof Date){ return dir * ((va instanceof Date?va:new Date(va)) - (vb instanceof Date?vb:new Date(vb))); }
+      if (typeof va === 'number' || typeof vb === 'number'){ return dir * ((Number(va)||0) - (Number(vb)||0)); }
+      return dir * collator.compare(String(va ?? ''), String(vb ?? ''));
+    });
+  }
+
+  function mountUI(){
+    ensureStyles();
+    if (document.getElementById(NS+'panel')) return;
+
+    // Nur das PANEL erstellen (kein eigener Button!)
+    const panel=document.createElement('div'); panel.id=NS+'panel'; panel.className=NS+'panel';
+    panel.innerHTML=`
+      <div class="${NS}head">
+        <div class="${NS}row">
+          <span>Kundennummern:</span>
+          <input id="${NS}add" class="${NS}inp" placeholder="Nummer eingeben, Enter zum Hinzufügen">
+          <button class="${NS}btn" id="${NS}addBtn" type="button">Hinzufügen</button>
+          <button class="${NS}btn" id="${NS}import" type="button">Import</button>
+          <button class="${NS}btn" id="${NS}export" type="button">Export</button>
+          <button class="${NS}btn" id="${NS}clear"  type="button">Liste leeren</button>
+        </div>
+        <div class="${NS}row">
+          <input id="${NS}tour" class="${NS}inp" placeholder="Tour-Filter (optional)">
+          <button class="${NS}btn" id="${NS}load"  type="button">Liste laden (API)</button>
+          <button class="${NS}btn" id="${NS}auto" type="button" aria-pressed="true"></button>
+          <button class="${NS}btn" id="${NS}close" type="button">Schließen</button>
+        </div>
+      </div>
+      <div class="${NS}list">
+        <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Einmal die normale Liste laden. Der letzte pickup-delivery-Request wird geklont.</div>
+        <div id="${NS}saved"></div>
+        <div id="${NS}out"></div>
+      </div>`;
+    document.body.appendChild(panel);
+
+    const fileInput=document.createElement('input'); fileInput.type='file'; fileInput.accept='.txt,.csv,.json'; fileInput.style.display='none'; fileInput.id=NS+'file';
+    document.body.appendChild(fileInput);
+
+    document.getElementById(NS+'close').onclick = ()=>togglePanel(false);
+    document.getElementById(NS+'addBtn').onclick = onAdd;
+    document.getElementById(NS+'add').addEventListener('keydown', e=>{ if(e.key==='Enter') onAdd(); });
+    document.getElementById(NS+'clear').onclick = ()=>{ if(confirm('Liste wirklich leeren?')) saveList([]); };
+    document.getElementById(NS+'import').onclick = ()=>fileInput.click();
+    document.getElementById(NS+'export').onclick = onExport;
+    fileInput.addEventListener('change', onImport);
+    document.getElementById(NS+'load').onclick = loadDetails;
+
+    const autoBtn = document.getElementById(NS+'auto');
+    if (autoBtn){ autoBtn.onclick = () => autoSet(!autoIsOn()); updateAutoBtn(); }
+
+    document.getElementById(NS+'tour').addEventListener('input', ()=>renderTable(applyTourFilter(latestRows)));
+
+     renderList();
+  updateAutoBtn();                 // Button direkt korrekt beschriften
+  if (autoIsOn()) autoStart();
+
+  // Tab-Visibility -> Timer steuern, um Throttling & Overlaps zu vermeiden
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) autoStop();
+    else if (autoIsOn()) autoStart();
+  });
+  }
+
+  function togglePanel(force){
+    const panel=document.getElementById(NS+'panel'); if(!panel) return;
+    const isHidden=getComputedStyle(panel).display==='none';
+    const show = force!=null ? !!force : isHidden;
+    panel.style.setProperty('display', show?'block':'none', 'important');
+  }
+
+  /* ======================= Import/Export ======================= */
+  function onAdd(){
+    const inp=document.getElementById(NS+'add');
+    const v=normShort(inp.value); if(!v) return;
+    const list=loadList(); list.push(v); saveList(list); inp.value='';
+  }
+  async function onImport(e){
+    const file=e.target.files && e.target.files[0]; e.target.value=''; if(!file) return;
+    try{
+      const txt=await file.text(); let nums=[];
+      try{ const j=JSON.parse(txt); if(Array.isArray(j)) nums=j.map(normShort); }catch{}
+      if(!nums.length) nums=[...String(txt).matchAll(/\d{5,}/g)].map(m=>normShort(m[0]));
+      if(!nums.length){ alert('Im Import keine Kundennummern gefunden.'); return; }
+      const list=loadList(); list.push(...nums); saveList(list);
+      alert(`Import OK: ${nums.length} Nummern.`);
+    }catch(err){ alert('Import fehlgeschlagen: '+(err&&err.message||err)); }
+  }
+  function onExport(){
+    const content=(loadList()).join('\n');
+    const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download='kundennummern.txt'; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },0);
+  }
+  function renderList(){
+    const saved = loadList();
+    const box = document.getElementById(NS+'saved');
+    if (!box) return;
+    if (!saved.length){ box.innerHTML = `<div class="${NS}muted">Noch keine Nummern gespeichert.</div>`; return; }
+    box.innerHTML = `
+      <div class="${NS}cust-collapser" id="${NS}saved-toggle" style="margin-bottom:6px;">
+        <span class="${NS}chev" id="${NS}saved-chev">▸</span>
+        <span>Gespeichert (${saved.length}):</span>
+      </div>
+      <div class="${NS}cust-wrap" id="${NS}saved-wrap">
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${saved.map(n=>`<span class="${NS}chip" data-n="${esc(n)}">${esc(n)} <button title="entfernen" data-n="${esc(n)}">×</button></span>`).join('')}
+        </div>
+      </div>`;
+    box.querySelectorAll('button[data-n]').forEach(b=>{
+      b.onclick = ()=>{ const n = String(b.dataset.n||''); saveList(loadList().filter(x=>x!==n)); };
+    });
+    initSavedCollapser();
+  }
+
+  /* ======================= API-Header ======================= */
+  function buildHeaders(h){
+    const H=new Headers();
+    try{
+      if(h){ Object.entries(h).forEach(([k,v])=>{
+        const key=k.toLowerCase();
+        if(['authorization','accept','x-xsrf-token','x-csrf-token'].includes(key)){
+          H.set(key==='accept'?'Accept':key.replace(/(^.|-.)/g,s=>s.toUpperCase()), v);
+        }
+      }); }
+          if(!H.has('Accept')) H.set('Accept','application/json, text/plain, */*');
+    // Autorisierung immer aus aktuellem Cookie aktualisieren (Token-Rotation)
+    try {
+     const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+      if (m) H.set('Authorization', 'Bearer ' + decodeURIComponent(m[1]));    } catch {}
+    }catch{}
+    return H;
+  }
+
+  // Versucht „Zusatzcode“/Problemcode aus dem Datensatz zu lesen
+    function getZusatzcode(r){
+    // robust – berücksichtigt Array-Felder wie additionalCodes
+    try {
+      if (Array.isArray(r.additionalCodes) && r.additionalCodes.length > 0) {
+        return String(r.additionalCodes[0]).trim();
+      }
+      // Fallbacks für mögliche andere Varianten:
+      const cand = r.zusatzcode || r.zusatzCode || r.problemCode || r.additionalCode || r.addCode || '';
+      return String(cand || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /* ======================= pickup-delivery ======================= */
+  function buildUrlAll(base, page){
+    const u=new URL(base.href);
+    const q=u.searchParams;
+    ['customerNo','customerNumber','customerNumbers','name','city','pcode','street','houseno'].forEach(k=>q.delete(k));
+    ['sort','scanCode','receiptId','insertUserName','modifyUserName','elements'].forEach(k=>q.delete(k));
+    q.set('page', String(page));
+    q.set('pageSize','500');
+    q.set('orderTypes','PICKUP');
+    q.set('active','true');
+    const today = new Date().toISOString().slice(0,10);
+    q.set('dateFrom', u.searchParams.get('dateFrom') || today);
+    q.set('dateTo',   u.searchParams.get('dateTo')   || today);
+    u.search=q.toString();
+    return u;
+  }
+  async function fetchPagedAll(){
+    if(!lastOkRequest) throw new Error('Kein pickup-delivery Request erkannt. Bitte einmal die normale Liste laden.');
+    const headers=buildHeaders(lastOkRequest.headers);
+    const size=500, maxPages=60;
+    let page=1, rows=[];
+    while(page<=maxPages){
+      const u=buildUrlAll(lastOkRequest.url, page);
+      const r=await fetch(u.toString(), {credentials:'include', headers});
+      if(!r.ok) break;
+      const j=await r.json();
+      const chunk=(j.items||j.content||j.data||j.results||j)||[];
+      rows.push(...chunk);
+      if(chunk.length<size) break;
+      page++; await sleep(30);
+    }
+    return rows;
+  }
+
+  /* ======================= vehicle-overview ======================= */
+  async function fetchDriverPhoneMap(){
+    if(!lastOkRequest) throw new Error('Kein Auth-Kontext. Bitte einmal die normale Liste laden.');
+    const headers = buildHeaders(lastOkRequest.headers);
+    const size=500, maxPages=20;
+    let page=1;
+    const map = new Map();
+
+    while(page<=maxPages){
+      const u = new URL('https://dispatcher2-de.geopost.com/dispatcher/api/vehicle-overview');
+      u.searchParams.set('page', String(page));
+      u.searchParams.set('pageSize', String(size));
+      u.searchParams.set('withOrders','true');
+
+      const r = await fetch(u.toString(), {credentials:'include', headers});
+      if(!r.ok) break;
+      const j = await r.json();
+      const items = (j.items||j.content||j.data||j.results||j)||[];
+
+      for(const it of items){
+        const rawTour = String(it.tour ?? it.tourNumber ?? it.round ?? '').trim();
+        if(!rawTour) continue;
+        const info = { name:String(it.courierName ?? it.driverName ?? '').trim(), phone:String(it.courierPhone ?? it.driverPhone ?? '').trim() };
+        for (const k of tourKeys(rawTour)) {
+          if (!map.has(k)) map.set(k, info);
+          else {
+            const cur = map.get(k);
+            if (!cur.name  && info.name)  cur.name  = info.name;
+            if (!cur.phone && info.phone) cur.phone = info.phone;
+          }
+        }
+      }
+      if(items.length<size) break;
+      page++; await sleep(30);
+    }
+    return map;
+  }
+
+  /* ======================= Zeit-/Interval-Tools + Feld-Getter ======================= */
+  function hhmm(ts){ if (!ts) return ''; if (typeof ts==='string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(ts)) return ts.slice(0,5); const d=new Date(ts); if (isNaN(d)) return ''; return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); }
+  function buildWindow(from,to){ const a=hhmm(from), b=hhmm(to); return (a||b) ? `${a}–${b}` : ''; }
+
+  function toMin(s){ if(!s) return null; const m=String(s).match(/^(\d{1,2}):(\d{2})/); if(!m) return null; const h=Math.min(23,parseInt(m[1],10)); const mi=Math.min(59,parseInt(m[2],10)); return h*60+mi; }
+  function makeInterval(f,t){ let a=toMin(f), b=toMin(t); if(a==null && b==null) return null; if(a==null) a=b; if(b==null) b=a; if(b<=a) b+=1440; return [a,b]; }
+  function intervalsOverlap(a,b){ if(!a||!b) return false; return a[0] < b[1] && b[0] < a[1]; }
+
+  function predictOutsidePickup(row){
+    const pred = makeInterval(row.from2 ?? row.timeFrom2, row.to2 ?? row.timeTo2);
+    if(!pred) return false;
+    const p1 = makeInterval(row.timeFrom1, row.timeTo1);
+    const p2 = makeInterval(row.timeFrom2, row.timeTo2);
+    const pickups = [p1,p2].filter(Boolean);
+    if(!pickups.length) return false;
+    return !pickups.some(p => intervalsOverlap(p, pred));
+  }
+
+  function closingHints(row){
+    const now = new Date();
+    const dateStr = row.date || new Date().toISOString().slice(0,10);
+    function endOf(f,t){
+      const iv=makeInterval(f,t); if(!iv) return null;
+      const endMin = iv[1] % 1440;
+      const h = Math.floor(endMin/60), m = endMin%60;
+      const dt = new Date(`${dateStr}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);
+      return isNaN(dt) ? null : dt;
+    }
+    const e1 = endOf(row.timeFrom1, row.timeTo1);
+    const e2 = endOf(row.timeFrom2, row.timeTo2);
+    const ends = [e1,e2].filter(Boolean);
+    if (!ends.length) return {soon:false,closed:false};
+    const soon = ends.some(e => e > now && (e - now) <= 30*60*1000);
+    const closed = ends.every(e => e <= now);
+    return {soon, closed};
+  }
+
+  function getCustomerFromRow(r){ const raw = Array.isArray(r.customerNo) ? (r.customerNo[0] || '') : (r.customerNumber || r.customer || r.customerId || ''); return String(raw); }
+  function getName(r){ return r.name ?? (Array.isArray(r.customerName) ? r.customerName[0] : r.customerName) ?? ''; }
+  function getStreet(r){ const s=r.street ?? ''; const hn=r.houseno ?? r.houseNumber ?? ''; return [s,hn].filter(Boolean).join(' '); }
+  function getPredict(r){ const a=r.from2 ?? r.timeFrom2 ?? ''; const b=r.to2 ?? r.timeTo2 ?? ''; return buildWindow(a,b); }
+  function getPickup(r){ const w1=buildWindow(r.timeFrom1, r.timeTo1); const w2=buildWindow(r.timeFrom2, r.timeTo2); return [w1,w2].filter(Boolean).join(' | '); }
+  function getStatus(r){ return r.pickupStatus ?? r.deliveryStatus ?? r.status ?? ''; }
+  function getPhone(r){ if (Array.isArray(r.addressPhone) && r.addressPhone.length) return String(r.addressPhone[0]); return r.phone || r.contactPhone || ''; }
+
+  function _toDateSafe(v){ if(!v) return null; const d=new Date(v); return isNaN(d)?null:d; }
+  function lastScanFromStop(s){
+    if (s.scanDate && s.scanTime) {
+      const d = new Date(`${s.scanDate}T${s.scanTime}`);
+      if (!isNaN(d)) return d;
+    }
+    const cands = [
+      _toDateSafe(s.deliveredTime),
+      _toDateSafe(s.modifyDate),
+      (s.firstStopHandlingScanTime && s.scanDate) ? _toDateSafe(`${s.scanDate}T${s.firstStopHandlingScanTime}`) : null,
+    ].filter(Boolean);
+    if(!cands.length) return null;
+    return cands.reduce((a,b)=> a>b ? a : b);
+  }
+  function toDate(v, dateStr=null){
+    if (!v) return null;
+    if (/^\d{2}:\d{2}:\d{2}$/.test(v) && dateStr) return new Date(`${dateStr}T${v}`);
+    const d = new Date(v);
+    return isNaN(d) ? null : d;
+  }
+  function lastScanInfo(r){
+    const cands = [
+      toDate(r.deliveredTime),
+      toDate(r.etaScanTime, r.scanDate),
+      toDate(r.firstStopHandlingScanTime, r.scanDate),
+      toDate(r.scanTime, r.scanDate),
+      toDate(r.modifyDate)
+    ].filter(Boolean);
+    if (!cands.length) return { dateTime:null, source:null };
+    const max = cands.reduce((a,b)=> a>b ? a : b);
+    let source = 'modifyDate';
+    if (max.getTime() === toDate(r.deliveredTime)?.getTime()) source = 'deliveredTime';
+    else if (max.getTime() === toDate(r.etaScanTime, r.scanDate)?.getTime()) source = 'etaScanTime';
+    else if (max.getTime() === toDate(r.firstStopHandlingScanTime, r.scanDate)?.getTime()) source = 'firstStopHandlingScanTime';
+    else if (max.getTime() === toDate(r.scanTime, r.scanDate)?.getTime()) source = 'scanTime';
+    return { dateTime:max, source };
+  }
+  function gmapsDirections(lat, lon, address, country='DE'){
+    const origin = (lat!=null && lon!=null) ? `${lat},${lon}` : '';
+    const dest = encodeURIComponent([address, country].filter(Boolean).join(', '));
+    return origin
+      ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`
+      : `https://www.google.com/maps/search/?api=1&query=${dest}`;
+  }
+  function getFirstParcel(r){ return r.parcelNumber || (Array.isArray(r.parcelNumbers) ? r.parcelNumbers[0] : ''); }
+
+  async function fetchTrackingByTour(depot, tour, dateStr){
+    if(!lastOkRequest) throw new Error('Kein Auth-Kontext. Bitte einmal die normale Liste laden.');
+    const headers = buildHeaders(lastOkRequest.headers);
+    let dep = String(depot || '').trim();
+    if (!dep) dep = lastOkRequest?.url?.searchParams?.get('depot') || '';
+    if (!dep) { console.warn('[tracking] Kein Depot -> übersprungen'); return null; }
+    const tourPadded = String(tour ?? '').trim().replace(/^0+/, '').padStart(3,'0');
+    const u = new URL('https://dispatcher2-de.geopost.com/dispatcher/api/vehicle-overview/tracking');
+    u.searchParams.set('depot', dep);
+    u.searchParams.set('tour', tourPadded);
+    const d = (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) ? dateStr : new Date().toISOString().slice(0,10);
+    u.searchParams.set('date', d);
+    const r = await fetch(u.toString(), { credentials:'include', headers });
+    if (!r.ok) { console.warn('[tracking] Request fehlgeschlagen', r.status); return null; }
+    const json = await r.json();
+    const stops = Array.isArray(json?.stops) ? json.stops
+                : Array.isArray(json) ? json
+                : (json?.items || json?.content || json?.data || json?.results || []);
+    if (!stops || !stops.length) return null;
+    let latest = null, latestTs = null;
+    for (const s of stops){
+      const ts = lastScanFromStop(s);
+      if(!ts) continue;
+      if(!latestTs || ts > latestTs){ latestTs = ts; latest = s; }
+    }
+    if (!latest) return null;
+    const lat = latest.gpsLat ?? latest.gpslat ?? latest.latitude ?? latest.plannedCoordinateLat ?? null;
+    const lon = latest.gpsLong ?? latest.gpsLon ?? latest.gpslon ?? latest.longitude ?? latest.plannedCoordinateLong ?? null;
+    return { lastScan: latestTs, lat, lon, tour: tourPadded };
+  }
+
+  function matchesSaved(cellRaw, wantSet){
+    const raw=digits(cellRaw); const pure=raw.replace(/^0+/, '');
+    for(const w of wantSet){ if(!w) continue; if (pure===w) return true; if (pure.endsWith(w)) return true; if (raw.endsWith(w)) return true; }
+    return false;
+  }
+  function applyTourFilter(rows){
+    const inp = document.getElementById(NS+'tour');
+    const v = (inp && inp.value || '').trim().toLowerCase();
+    if(!v) return rows;
+    return (rows||[]).filter(r => String(r.tour||'').toLowerCase().includes(v));
+  }
+let isLoading = false;
+  async function loadDetails(){
+       if (isLoading) return;           // Reentrancy-Schutz
+  isLoading = true;
+    const out=document.getElementById(NS+'out');
+    out.innerHTML = '<div class="'+NS+'muted">Lade …</div>';
+
+    const savedShorts = loadList().map(normShort).filter(Boolean);
+    if(!savedShorts.length){
+     out.innerHTML = '<div class="'+NS+'muted">Keine Nummern gespeichert.</div>';
+     isLoading = false;              // <<< wichtig
+     return;
+   }
+    const wantSet = new Set(savedShorts);
+
+    let rowsApi=[], driverMap=null;
+    try{
+      const [rows, map] = await Promise.all([fetchPagedAll(), fetchDriverPhoneMap()]);
+      rowsApi = rows;
+      driverMap = map;
+    }catch{
+      out.innerHTML = `<div class="${NS}muted">Kein API-Request erkannt. Bitte einmal die normale Liste laden und erneut versuchen.</div>`;
+      } finally {
+    isLoading = false;
+  }
+
+    const filteredSrc = rowsApi.filter(r => matchesSaved(getCustomerFromRow(r), wantSet));
+
+    const depotFromCtx = lastOkRequest?.url?.searchParams?.get('depot') || '';
+    const tourSet = new Set(filteredSrc.map(r => String(r.tour||'').trim()).filter(Boolean));
+    const latestByTour = new Map();
+    for (const t of tourSet) {
+      const one = filteredSrc.find(r => String(r.tour||'').trim() === t);
+      const depotGuess = String(one?.depot || depotFromCtx || '').trim();
+      const dateGuess  = (one?.date && /^\d{4}-\d{2}-\d{2}$/.test(one.date)) ? one.date : null;
+      try{
+        const info = await fetchTrackingByTour(depotGuess, t, dateGuess);
+        if (info) latestByTour.set(String(t).trim(), info);
+      }catch(e){ console.warn('[tracking] Fehler für Tour', t, e); }
+    }
+
+    const rows = filteredSrc.map(r => {
+      const status = getStatus(r) || '—';
+      const warnPredict = predictOutsidePickup(r);
+      const {soon, closed} = closingHints(r);
+      const hints=[];
+      if (warnPredict) hints.push('Predict außerhalb Abholfenster');
+      if (closed) hints.push('bereits geschlossen');
+      else if (soon) hints.push('schließt in ≤30 Min');
+      // Problemcode in Hinweise verschieben
+  const extraCode = getZusatzcode(r);
+  if (String(status).toUpperCase() === 'PROBLEM' && extraCode) {
+    hints.push(`Problemcode: ${extraCode}`);
+  }
+
+      const tour = String(r.tour || '').trim();
+      let drv = null;
+      for (const k of tourKeys(tour)) { if (driverMap && driverMap.has(k)) { drv = driverMap.get(k); break; } }
+
+      const tkey = String(r.tour || '').trim();
+      const tinfo = latestByTour.get(tkey) || null;
+
+      const address = [
+        getStreet(r),
+        [digits(r.postalCode || r.zip || ''), r.city || ''].filter(Boolean).join(' ')
+      ].filter(Boolean).join(', ');
+
+      const gmaps = (tinfo && tinfo.lat != null && tinfo.lon != null)
+        ? `https://www.google.com/maps/dir/?api=1&origin=${tinfo.lat},${tinfo.lon}&destination=${encodeURIComponent(address)}&travelmode=driving`
+        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+
+      return {
+        number: normShort(getCustomerFromRow(r)),
+        tour,
+        name:   getName(r)   || '—',
+        street: getStreet(r) || '—',
+        plz:    digits(r.postalCode || r.zip || ''),
+        ort:    r.city || '',
+        phone:  getPhone(r) || '—',
+        driverName:  (drv && drv.name)  ? drv.name  : '—',
+        driverPhone: (drv && drv.phone) ? drv.phone : '—',
+        predict: getPredict(r) || '—',
+        pickup:  getPickup(r)  || '—',
+        status,
+        isCompleted: String(status).toUpperCase()==='COMPLETED',
+        isProblem:   String(status).toUpperCase()==='PROBLEM',
+     //   extraCode: getZusatzcode(r) || '',
+        warnRow: warnPredict,
+        hintText: hints.join(' • ') || '—',
+        lastScan: tinfo?.lastScan ? tinfo.lastScan.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '—',
+        lastScanRaw: tinfo?.lastScan ?? null,
+        gpsLat: tinfo?.lat ?? '',
+        gpsLon: tinfo?.lon ?? '',
+        gmaps
+      };
+    });
+
+    latestRows = rows;
+    renderTable(applyTourFilter(latestRows));
+  }
+
+  function renderTable(rows){
+    const out = document.getElementById(NS+'out');
+    const cols = [
+      {label:'Kundennr.', key:'number'},
+      {label:'Tour', key:'tour'},
+      {label:'Kundenname', key:'name'},
+      {label:'Straße', key:'street'},
+      {label:'PLZ', key:'plz'},
+      {label:'Ort', key:'ort'},
+      {label:'Telefon', key:'phone'},
+      {label:'Fahrer', key:'driverName'},
+      {label:'Fahrer Telefon', key:'driverPhone'},
+      {label:'Predict Zeitfenster', key:'predict'},
+      {label:'Zeitfenster Abholung', key:'pickup'},
+      {label:'Status', key:'status'},
+      {label:'Hinweise', key:'hintText'},
+      {label:'Letzter Scan', key:'lastScanRaw'},
+      {label:'Karte', key:null}
+    ];
+
+    const headHtml = cols.map(c=>{
+      if (!c.key) return `<th>${esc(c.label)}</th>`;
+      const isSorted = sortState.key === c.key;
+      const arrow = isSorted ? (sortState.dir === 1 ? '▲' : '▼') : '';
+      return `<th class="${NS}th-sort" data-key="${esc(c.key)}">${esc(c.label)}<span class="arrow">${arrow}</span></th>`;
+    }).join('');
+
+    const rowsSorted = sortRows(rows || []);
+    const bodyHtml = (rowsSorted||[]).map(r=>{
+    const statusText = r.isProblem && r.extraCode
+        ? `${String(r.status||'—')} – ${r.extraCode}`
+        : String(r.status||'—');
+
+          const statusHtml =
+        r.isProblem
+          ? `<span class="${NS}status-problem">${esc(r.status||'—')}</span>`
+          : (r.isCompleted
+             ? `<span class="${NS}status-completed">${esc(r.status||'—')}</span>`
+             : esc(r.status||'—'));
 
 
 
+      const linkHtml = r.gmaps ? `<a href="${esc(r.gmaps)}" target="_blank" rel="noopener" title="${esc(r.gpsLat||'')}, ${esc(r.gpsLon||'')}">Karte</a>` : '—';
+      const cells = [
+        esc(r.number||'—'), esc(r.tour||'—'), esc(r.name||'—'), esc(r.street||'—'), esc(r.plz||'—'), esc(r.ort||'—'),
+        esc(r.phone||'—'), esc(r.driverName||'—'), esc(r.driverPhone||'—'), esc(r.predict||'—'), esc(r.pickup||'—'),
+        statusHtml, esc(r.hintText||'—'), esc(r.lastScan||'—'), linkHtml
+      ];
+      const trClass = r.warnRow ? ` class="${NS}warn-row"` : '';
+      const html = cells.map((v,i)=> (i===11 || i===14) ? `<td>${v}</td>` : `<td>${v}</td>`).join('');
+      return `<tr${trClass}>${html}</tr>`;
+    }).join('');
 
+    out.innerHTML = `<table class="${NS}tbl"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml || `<tr><td colspan="${cols.length}">Keine Treffer.</td></tr>`}</tbody></table>`;
+
+    out.querySelectorAll('th[data-key]').forEach(th=>{
+      th.onclick = () => {
+        const k = th.getAttribute('data-key');
+        if (sortState.key === k) { sortState.dir = -sortState.dir; }
+        else { sortState.key = k; sortState.dir = 1; }
+        renderTable(applyTourFilter(latestRows));
+      };
+    });
+  }
+
+  // Modul-Boot: Hooks + UI vorbereiten (kein eigener Button)
+  function boot(){
+    installHooksOnce();
+    mountUI();
+    // Auto-Refresh sauber stoppen, wenn Seite verlassen wird
+    window.addEventListener('beforeunload', () => { try{ autoStop(); }catch{} });
+  }
 })();
