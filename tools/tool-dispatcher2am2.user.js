@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      7.2.0
+// @version      7.2.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver. + Systempartner aus lokaler TourMap (IndexedDB).
@@ -74,12 +74,18 @@
 const TP_PARTNERS_STORE = 'partners';
 
 async function tpIdbGet(store, key){
-  const db = await tpIdbOpen();
-  return new Promise((res, rej) => {
-    const r = db.transaction(store,'readonly').objectStore(store).get(key);
-    r.onsuccess = () => res(r.result || null);
-    r.onerror = () => rej(r.error);
-  });
+  try{
+    const db = await tpIdbOpen();
+    if(!db.objectStoreNames.contains(store)) return null;
+    return new Promise((res, rej) => {
+      const r = db.transaction(store,'readonly').objectStore(store).get(key);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror = () => { console.warn('[PM] tpIdbGet', r.error); res(null); };
+    });
+  }catch(e){
+    console.warn('[PM] tpIdbGet error', e);
+    return null;
+  }
 }
 
 async function getPartnerMailRecord(partnerName){
@@ -150,25 +156,25 @@ async function copyHtmlToClipboard(html){
 
   function tpIdbOpen(){
     return new Promise((res,rej)=>{
-      const req = indexedDB.open(TP_IDB_NAME, TP_IDB_VER);
-      req.onupgradeneeded = () => {
-        const db=req.result;
-        if(!db.objectStoreNames.contains(TP_STORE)){
-          db.createObjectStore(TP_STORE,{keyPath:'tour'});
-        }
-      };
+      const req = indexedDB.open(TP_IDB_NAME);
       req.onsuccess=()=>res(req.result);
       req.onerror=()=>rej(req.error);
     });
   }
 
   async function tpIdbAll(store){
-    const db=await tpIdbOpen();
-    return new Promise((res,rej)=>{
-      const r=db.transaction(store,'readonly').objectStore(store).getAll();
-      r.onsuccess=()=>res(r.result||[]);
-      r.onerror=()=>rej(r.error);
-    });
+    try{
+      const db=await tpIdbOpen();
+      if(!db.objectStoreNames.contains(store)) return [];
+      return new Promise((res,rej)=>{
+        const r=db.transaction(store,'readonly').objectStore(store).getAll();
+        r.onsuccess=()=>res(r.result||[]);
+        r.onerror=()=>{ console.warn('[PM] tpIdbAll', r.error); res([]); };
+      });
+    }catch(e){
+      console.warn('[PM] tpIdbAll error', e);
+      return [];
+    }
   }
 
   async function loadTourPartnerMap(){
