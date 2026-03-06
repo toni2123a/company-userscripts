@@ -82,19 +82,6 @@
       "description": "Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen"
     },
     {
-      "id": "tool-dispatcher.partner",
-      "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
-      "version": "5.0.1",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js",
-      "match": [
-        "https://dispatcher2-de.geopost.com/*"
-      ],
-      "grants": [
-        "none"
-      ],
-      "description": "Tagesliste per API (ohne Kundenfilter), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap."
-    },
-    {
       "id": "tools-dispatcher-abholer",
       "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
       "version": "5.0.0",
@@ -148,6 +135,20 @@
         "GM_xmlhttpRequest"
       ],
       "description": "Dispatcher KPI Monitor"
+    },
+    {
+      "id": "tool-dispatcher.partner",
+      "name": "DPD Dispatcher – Partner-Report Mailer",
+      "version": "5.5.1",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "GM_xmlhttpRequest",
+        "unsafeWindow"
+      ],
+      "description": "✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM)."
     },
     {
       "id": "tool.dispatcher.partner.diagnose",
