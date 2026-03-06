@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher Site Tool Loader
 // @namespace    bodo.tools
-// @version      1.3.8
+// @version      1.4.0
 // @description  Schlankes Panel (ohne Kopfzeile) im hellgrauen Tab-Stil der Seite
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
@@ -180,14 +180,33 @@
   global.TM = TM;
   global.tm  = TM;
 
+  // Queue anlegen / bestehende Items sofort registrieren
   if (!Array.isArray(global[QUEUE_KEY])) global[QUEUE_KEY] = [];
-  setTimeout(() => {
-    const queued = global[QUEUE_KEY];
-    if (Array.isArray(queued) && queued.length) {
-      queued.forEach(def => { try { TM.register(def); } catch (e) { console.error(e); } });
-      queued.length = 0;
+  const drainQueue = () => {
+    const q = global[QUEUE_KEY];
+    if (!Array.isArray(q) || !q.length) return;
+    while (q.length) {
+      const def = q.shift();
+      try { TM.register(def); } catch (e) { console.error('[TM] Queue-Register Fehler:', e); }
     }
-  }, 0);
+  };
+  // sofort + nächster Tick
+  drainQueue();
+  setTimeout(drainQueue, 0);
+  // push() abfangen: spätere Scripte werden sofort registriert
+  try {
+    global[QUEUE_KEY].push = function (...args) {
+      Array.prototype.push.apply(this, args);
+      drainQueue();
+      return this.length;
+    };
+  } catch {}
+  // Safety-Net: kurzes Intervall für die ersten 10 s
+  let _qTicks = 0;
+  const _qIv = setInterval(() => {
+    drainQueue();
+    if (++_qTicks >= 20) clearInterval(_qIv);
+  }, 500);
 
   ensurePanel();
 })();
