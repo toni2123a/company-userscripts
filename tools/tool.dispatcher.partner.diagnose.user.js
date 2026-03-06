@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.4.5 Diagnose
+// @version      5.5.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -17,16 +17,40 @@
 (function(){
 'use strict';
 if (window.__FVPR_RUNNING) return; window.__FVPR_RUNNING = true;
+console.log('[fvpr] Script gestartet', { ua: navigator.userAgent, url: location.href, ts: new Date().toISOString() });
+
+
 // ganz oben bei den Konstanten
 const ENABLE_STANDALONE = false; // <- kein eigener Button
 
-const USE_LOADER = !!(window.TM && typeof window.TM.register === 'function'); // <— NEU
 const NS='fvpr-', PANEL_ID='#fvpr-panel', OFFSET_PX=-240;
 const REFRESH_MS=60_000, RENDER_DEBOUNCE=300, SCAN_MAX_STEPS=40, SCAN_STAG_LIMIT=2;
 const GATEWAY_DEFAULT='http://10.14.7.169/mail.php', GATEWAY_API_KEY='fvpr-SECRET-123';
 
 const DEBUG = localStorage.getItem('fvpr-debug')==='1';
 const LOG=(...a)=>{ if(DEBUG) console.log('[fvpr]',...a); };
+
+// ====== Visuelles Debug-Log (im Panel sichtbar) ======
+const DIAG_ENABLED = localStorage.getItem('fvpr-diag')==='1';
+const _diagEntries = [];
+const DIAG = (tag, msg, data) => {
+  const ts = new Date().toLocaleTimeString('de-DE');
+  const entry = { ts, tag, msg, data: data !== undefined ? data : '' };
+  _diagEntries.push(entry);
+  if (_diagEntries.length > 200) _diagEntries.shift();
+  if (DEBUG) console.log(`[fvpr-diag][${tag}]`, msg, data ?? '');
+  // Live-Update falls Panel offen
+  try { _diagRenderLive(); } catch {}
+};
+function _diagRenderLive(){
+  const box = document.getElementById(NS+'diagbox');
+  if (!box || box.style.display === 'none') return;
+  const pre = box.querySelector('pre');
+  if (pre) pre.textContent = _diagFormat();
+}
+function _diagFormat(){
+  return _diagEntries.map(e => `[${e.ts}] [${e.tag}] ${e.msg}${e.data !== '' ? '  → ' + (typeof e.data === 'object' ? JSON.stringify(e.data) : String(e.data)) : ''}`).join('\n');
+}
 
 const norm=s=>String(s||'').replace(/\s+/g,' ').trim();
 const parsePct=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=parseFloat(t); return Number.isFinite(v)?v:null; };
@@ -186,16 +210,20 @@ let GRID_VP=null, CACHED_COLS=null;
 function getGridViewport(){
   if (GRID_VP && document.body.contains(GRID_VP)) return GRID_VP;
   const grid = qsaMain('[role="grid"], [data-testid*="grid"], .Datagrid__Root-sc-')[0] || document.querySelector('[role="grid"]');
+  DIAG('grid', 'getGridViewport', { found: !!grid, tagName: grid?.tagName, class: grid?.className?.slice?.(0,80) });
   if(!grid) return null;
   GRID_VP = grid.closest('[class*="Datagrid"]') || grid;
   return GRID_VP;
 }
 function getAnyTable(){
   const tables = qsaMain('table');
+  DIAG('table', 'getAnyTable – Tabellen im DOM', { count: tables.length });
   for (const t of tables){
     const ths = Array.from(t.querySelectorAll('thead th')).map(th=>norm(th.textContent).toLowerCase());
+    DIAG('table', 'Spalten einer Tabelle', { cols: ths.length, headers: ths.slice(0,8).join(' | ') });
     if (ths.length && ths.some(x=>x.includes('systempartner'))) return t;
   }
+  DIAG('table', 'Keine passende Tabelle mit "systempartner" gefunden');
   return null;
 }
 const includesAll=(s,arr)=>arr.every(w=>new RegExp(w,'i').test(s||''));
@@ -250,6 +278,7 @@ function findColumnsDatagrid(){
   const pickupOpen = (()=>{ const i1=byEither(s=>includesAll(s, [/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/])); if (i1>=0) return i1; return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s)); })();
 
   const cols={sys,tour,driver,eta,status,stopsTotal,stopsOpen,pkgsTotal,obstacles,pickupOpen,_hdrCount:ths.length};
+  DIAG('cols', 'findColumnsDatagrid', cols);
   if (cols.sys<0) return null;
   CACHED_COLS=cols;
   return cols;
@@ -411,10 +440,14 @@ function readRowsPlainTable(){
 }
 
 async function readAllRows(){
+  DIAG('read', 'readAllRows gestartet');
   const tryA = await readAllRowsDatagrid();
+  DIAG('read', 'Datagrid-Ergebnis', { ok: tryA.ok, rows: tryA.rows.length });
   if (tryA.ok && tryA.rows.length) return tryA;
   const tryB = readRowsPlainTable();
+  DIAG('read', 'PlainTable-Ergebnis', { ok: tryB.ok, rows: tryB.rows.length });
   if (tryB.ok && tryB.rows.length) return tryB;
+  DIAG('read', 'KEINE Daten gefunden – weder Datagrid noch Tabelle');
   return {ok:false, rows:[]};
 }
 
@@ -458,7 +491,7 @@ function ensureStyles(){
 .${NS}cfg{padding:10px;border-top:1px solid rgba(0,0,0,.06);background:#fafafa}
 .${NS}cfg input{width:100%;padding:6px;border:1px solid #e5e7eb;border-radius:8px}
 .${NS}row{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin:6px 0}
-.${NS}modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:2147483647}
+.${NS}modal{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:2147483647}
 .${NS}modal-box{background:#fff;min-width:min(560px,96vw);max-width:96vw;border-radius:12px;box-shadow:0 20px 40px rgba(0,0,0,.25);padding:14px}
 .${NS}modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
 .${NS}iconbtn{padding:4px 8px;border:1px solid rgba(0,0,0,.15);border-radius:999px;background:#fff;cursor:pointer}
@@ -495,7 +528,8 @@ function makeTableSortable(root){
 }
 
 function mountUI(forLoader=false){
-  if (document.getElementById(NS+'wrap') && document.getElementById(NS+'panel')) return;
+  DIAG("mount", "mountUI aufgerufen", { forLoader, alreadyExists: !!document.getElementById(NS+"panel") });
+  if (document.getElementById(NS+'panel')) return;
 
   // — PANEL immer erstellen (für Loader geschlossen starten)
   PANEL=document.createElement('div');
@@ -511,6 +545,7 @@ function mountUI(forLoader=false){
         <button class="${NS}btn-sm" data-act="send-partner-and-total">✉ Pro Partner und gesamt an uns</button>
         <button class="${NS}btn-sm" data-act="send-total-only">✉ Gesamt</button>
         <button class="${NS}btn-sm" data-act="settings">Einstellungen</button>
+        <button class="${NS}btn-sm" data-act="diag-toggle" style="background:#ffe066;font-size:11px">🔍 Diagnose</button>
       </div>
     </div>
     <div id="${NS}content"></div>
@@ -523,6 +558,17 @@ function mountUI(forLoader=false){
       <button class="${NS}btn-sm" data-act="import">Import</button>
     </div>
     <div class="${NS}note">Pro Partner wird nur versendet, wenn im Partner-Eintrag eine gültige Adresse hinterlegt ist. Die Gesamt-Mail geht an den Eintrag mit Name = "gesamt".</div>
+    <div id="${NS}diagbox" style="display:none;border-top:1px solid rgba(0,0,0,.08);padding:10px;background:#1e1e2e">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h4 style="margin:0;font:700 13px monospace;color:#cdd6f4">Diagnose-Log</h4>
+        <div>
+          <button class="${NS}btn-sm" data-act="diag-copy" style="font-size:11px">Kopieren</button>
+          <button class="${NS}btn-sm" data-act="diag-clear" style="font-size:11px">Leeren</button>
+          <button class="${NS}btn-sm" data-act="diag-hide" style="font-size:11px">Schließen</button>
+        </div>
+      </div>
+      <pre style="max-height:260px;overflow:auto;font:11px/1.5 monospace;color:#a6e3a1;background:#11111b;padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+    </div>
     <input type="file" id="${NS}impfile" accept="application/json" style="display:none">
   `;
   document.body.appendChild(PANEL);
@@ -550,6 +596,14 @@ function mountUI(forLoader=false){
     if(b.dataset.act==='cfg-save') await saveCfgFromUI();
     if(b.dataset.act==='export') await exportDb();
     if(b.dataset.act==='import') document.getElementById(NS+'impfile').click();
+    // Diagnose-Bereich
+    if(b.dataset.act==='diag-toggle'){
+      const db=document.getElementById(NS+'diagbox');
+      if(db){ db.style.display=db.style.display==='none'?'':'none'; if(db.style.display!=='none'){ DIAG('diag','Diagnose-Panel geöffnet',{ua:navigator.userAgent,url:location.href,screen:screen.width+'x'+screen.height,dpr:devicePixelRatio,edge:/Edg/.test(navigator.userAgent)}); db.querySelector('pre').textContent=_diagFormat(); }}
+    }
+    if(b.dataset.act==='diag-hide'){ const db=document.getElementById(NS+'diagbox'); if(db) db.style.display='none'; }
+    if(b.dataset.act==='diag-clear'){ _diagEntries.length=0; const db=document.getElementById(NS+'diagbox'); if(db) db.querySelector('pre').textContent='(leer)'; }
+    if(b.dataset.act==='diag-copy'){ try{ await navigator.clipboard.writeText(_diagFormat()); toast('Log kopiert'); }catch{ toast('Kopieren fehlgeschlagen',false); }}
   },{passive:false});
 
   PANEL.querySelector('#'+NS+'impfile').addEventListener('change', async (ev)=>{
@@ -574,13 +628,28 @@ function mountUI(forLoader=false){
 
   // Delegation: ✉ / 👁 / ⧉ in Zeilen + Gesamtleiste
   PANEL.addEventListener('click', e=>{
-    const sendBtn=e.target.closest('button[data-sp]'); if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
-    const eyeBtn=e.target.closest('button[data-eye]'); if(eyeBtn){ e.preventDefault(); openPreview(eyeBtn.dataset.eye); return; }
-    const copyBtn=e.target.closest('button[data-copy]'); if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
-    const totalEye=e.target.closest('button[data-total-eye]'); if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
-    const totalCopy=e.target.closest('button[data-total-copy]'); if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
-    const totalBtn=e.target.closest('button[data-total-send]'); if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
-    const row=e.target.closest('tr[data-partner]'); if(row && !e.target.closest('button')){ e.preventDefault(); openPreview(row.getAttribute('data-partner')); }
+    try {
+      const sendBtn=e.target.closest('button[data-sp]'); if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
+      const eyeBtn=e.target.closest('button[data-eye]'); if(eyeBtn){ e.preventDefault(); DIAG('click','👁-Button geklickt',{partner:eyeBtn.dataset.eye}); openPreview(eyeBtn.dataset.eye).catch(err=>{ DIAG('error','openPreview fehlgeschlagen',{err:String(err)}); toast('Fehler: '+err.message,false); }); return; }
+      const copyBtn=e.target.closest('button[data-copy]'); if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
+      const totalEye=e.target.closest('button[data-total-eye]'); if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
+      const totalCopy=e.target.closest('button[data-total-copy]'); if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
+      const totalBtn=e.target.closest('button[data-total-send]'); if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
+      const row=e.target.closest('tr[data-partner]');
+      if(row && !e.target.closest('button')){
+        e.preventDefault();
+        const partner = row.getAttribute('data-partner');
+        DIAG('click','Zeile geklickt',{ partner, tagName: e.target.tagName });
+        toast('Lade Detail: '+partner+'…', true);
+        openPreview(partner).catch(err=>{
+          DIAG('error','openPreview Zeilen-Klick fehlgeschlagen',{ err: String(err), stack: err?.stack?.slice?.(0,300) });
+          toast('Detail-Fehler: '+err.message, false);
+        });
+      }
+    } catch(err) {
+      DIAG('error','Klick-Handler Exception',{ err: String(err), stack: err?.stack?.slice?.(0,300) });
+      toast('Klick-Fehler: '+err.message, false);
+    }
   },{passive:false});
 }
 
@@ -589,30 +658,13 @@ function removeStandaloneButton(){
   const wrap = document.getElementById(NS+'wrap');
   if (wrap) wrap.remove();
 }
-
-function modal(html){ const ov=document.createElement('div'); ov.className=NS+'modal'; ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`; document.body.appendChild(ov); return ov; }
-function softenColor(rgb, alpha=0.18){ if(!rgb) return ''; const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i); if(!m) return ''; const [_,r,g,b]=m; return `rgba(${r},${g},${b},${alpha})`; }
-function etaBg(v){ if(v==null) return ''; if(v>=100) return 'rgba(22,163,74,0.18)'; if(v>=94) return 'rgba(202,138,4,0.18)'; return 'rgba(185,28,28,0.18)'; }
-
-/* (… ALLES aus deinem Original ab hier unverändert …)
-   — openPreview, openConfirm, openPartnerDialog, Mail/Clipboard/Gateway,
-   — HTML-Builder (partnerHtml, summaryHtml, mailPartnerHtml, mailSummaryHtml),
-   — getAggregates, sendSinglePartnerConfirm, sendTotalOnlyConfirm, sendPartnerAndTotalConfirm
-   — render()
-   (Ich lasse die Funktionskörper unverändert, nur der Platz ist hier knapp.)
-   ↓ Die Funktionen stehen vollständig in deinem ursprünglichen Codeblock – ich kürze nur diese Erklärung.
-*/
-
-/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog (komplett) ====== */
-function removeStandaloneButton(){
-  const wrap = document.getElementById(NS+'wrap');
-  if (wrap) wrap.remove();
-}
 function modal(html){
+  DIAG("modal", "Modal wird erstellt", { htmlSnippet: (html||"").slice(0,100) });
   const ov=document.createElement('div');
   ov.className=NS+'modal';
   ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`;
   document.body.appendChild(ov);
+  DIAG("modal", "Modal ins DOM eingefügt", { display: getComputedStyle(ov).display, zIndex: getComputedStyle(ov).zIndex, rect: JSON.stringify(ov.getBoundingClientRect()) });
   return ov;
 }
 function softenColor(rgb, alpha=0.18){
@@ -921,7 +973,9 @@ function mailSummaryHtml(per,totals,signature){
 
 /* ---------- Aggregation + Flows ---------- */
 async function getAggregates(){
+  DIAG('agg', 'getAggregates gestartet');
   const {ok,rows}=await readAllRows();
+  DIAG('agg', 'readAllRows Ergebnis', { ok, rowCount: rows.length });
   if(!ok||rows.length===0) return null;
     cacheTourPartner(rows);
   const groups=groupByPartner(rows);
@@ -959,6 +1013,7 @@ async function copyPartnerHtml(partner){
   toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
 }
 async function openTotalPreview(){
+  DIAG("detail", "openTotalPreview aufgerufen");
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
   const html=summaryHtml(agg.per, agg.totals, g.signature||'');
@@ -1001,27 +1056,53 @@ async function saveCfgFromUI(){
   }
 }
 async function openPreview(partner){
-  const agg=await getAggregates();
-  if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const p=agg.per.find(x=>x.partner===partner);
-  if(!p){ alert('Partner nicht gefunden.'); return; }
-  const content=partnerHtml(partner, p.list, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
-    <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
-    <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
-      <button class="${NS}btn-sm" data-act="close">Schließen</button>
-    </div>
-  `);
-  const innerTable = ov.querySelector('table');
-  if(innerTable) makeTableSortable(innerTable.parentElement);
-  ov.addEventListener('click', e=>{
-    const btn=e.target.closest('button[data-act]'); if(!btn) return;
-    if(btn.dataset.act==='close') ov.remove();
-    if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
-  },{passive:false});
+  DIAG("detail", "openPreview aufgerufen", { partner });
+  try {
+    const agg=await getAggregates();
+    if(!agg){ DIAG("detail","getAggregates lieferte null"); alert('Keine Daten gefunden.'); return; }
+    const g=await ensureSettingsRecord();
+    const p=agg.per.find(x=>x.partner===partner);
+    if(!p){ DIAG("detail", "Partner nicht in Aggregates gefunden", { partner, verfuegbar: agg.per.map(x=>x.partner) }); alert('Partner nicht gefunden.'); return; }
+    DIAG("detail", "Partner gefunden", { partner, touren: p.tours, rows: p.list.length });
+    const content=partnerHtml(partner, p.list, g.signature||'');
+    DIAG("detail", "partnerHtml erzeugt", { htmlLen: content.length });
+    const ov=modal(`
+      <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
+      <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
+      <div class="${NS}modal-actions">
+        <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
+        <button class="${NS}btn-sm" data-act="close">Schließen</button>
+      </div>
+    `);
+    // Prüfen ob Modal wirklich sichtbar ist
+    const ovRect = ov.getBoundingClientRect();
+    const ovStyle = getComputedStyle(ov);
+    DIAG("detail", "Modal nach Erstellung", {
+      inDOM: document.body.contains(ov),
+      display: ovStyle.display,
+      visibility: ovStyle.visibility,
+      opacity: ovStyle.opacity,
+      zIndex: ovStyle.zIndex,
+      rect: `${Math.round(ovRect.width)}x${Math.round(ovRect.height)} @ ${Math.round(ovRect.left)},${Math.round(ovRect.top)}`,
+      childNodes: ov.childNodes.length,
+      boxHTML: ov.querySelector('.'+NS+'modal-box')?.innerHTML?.length || 0,
+    });
+    if (ovRect.width === 0 || ovRect.height === 0) {
+      DIAG("detail", "⚠ Modal hat Größe 0! Erzwinge Inline-Styles");
+      ov.style.cssText = 'position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;background:rgba(0,0,0,.35)!important;display:flex!important;align-items:center!important;justify-content:center!important;z-index:2147483647!important;';
+    }
+    const innerTable = ov.querySelector('table');
+    if(innerTable) makeTableSortable(innerTable.parentElement);
+    ov.addEventListener('click', e=>{
+      const btn=e.target.closest('button[data-act]'); if(!btn) return;
+      if(btn.dataset.act==='close') ov.remove();
+      if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
+    },{passive:false});
+  } catch(err) {
+    DIAG("error", "openPreview EXCEPTION", { err: String(err), stack: err?.stack?.slice?.(0,400) });
+    console.error('[fvpr] openPreview', err);
+    toast('Detail-Fehler: '+err.message, false);
+  }
 }
 function openConfirm({title, subject, to, cc, saveKey, onOk}){
   const ov=modal(`
@@ -1166,6 +1247,7 @@ async function render(force=false){
   if(renderTimer){ clearTimeout(renderTimer); renderTimer=null; }
 
   const run=async ()=>{
+    DIAG('render', 'run() gestartet', { contentExists: !!CONTENT });
     if(!CONTENT) return;
     const res=await getAggregates();
     if(!res){
@@ -1176,6 +1258,7 @@ async function render(force=false){
     const html = summaryHtml(per, totals, '');
     CONTENT.innerHTML = html;
     makeTableSortable(CONTENT);
+    DIAG('render', 'Panel-Inhalt gerendert', { htmlLen: html.length });
   };
   if(force) await run(); else renderTimer=setTimeout(run, RENDER_DEBOUNCE);
 }
@@ -1183,20 +1266,24 @@ async function render(force=false){
 /* ====== TEIL 12/12 – Boot + Loader-Integration ====== */
 
 function openPanel(){
+  DIAG("boot", "openPanel() aufgerufen");
   try { ensureStyles(); } catch {}
   try { if (!document.querySelector(PANEL_ID)) mountUI(true); } catch {}
   const p = document.querySelector(PANEL_ID);
-  if (p) p.style.display = '';
+  DIAG("boot", "Panel-Element", { found: !!p, display: p?.style?.display, id: p?.id, parentTag: p?.parentElement?.tagName });
+  if (p) p.style.removeProperty('display');
   try { fillCfg(); } catch {}
   try { render(true); } catch {}
+  DIAG("boot", "openPanel() abgeschlossen", { panelVisible: p ? getComputedStyle(p).display !== 'none' : false });
 }
 
 function closePanel(){
   const p = document.querySelector(PANEL_ID);
-  if (p) p.style.display = 'none';
+  if (p) p.style.setProperty('display', 'none', 'important');
 }
 
 async function bootStandalone(){
+  DIAG("boot", "bootStandalone()");
   try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await render(true); }
   catch(e){ console.error('[fvpr] init', e); }
   let mo = null, refreshInterval = null;
@@ -1219,6 +1306,11 @@ function registerWithLoader(){
       const el = document.querySelector(PANEL_ID);
       if (el && getComputedStyle(el).display !== 'none') closePanel();
       else openPanel();
+    },
+    close: () => closePanel(),
+    isOpen: () => {
+      const el = document.querySelector(PANEL_ID);
+      return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none';
     }
   };
   const G = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
@@ -1234,8 +1326,37 @@ function registerWithLoader(){
   G.fvpr_close = closePanel;
 }
 
-// Nur registrieren (und ggf. Button entfernen). KEIN bootStandalone() mehr!
-registerWithLoader();
+// Umgebungsinfo beim Start loggen
+DIAG('boot', 'Script initialisiert', {
+  ua: navigator.userAgent,
+  isEdge: /Edg\//.test(navigator.userAgent),
+  isChrome: /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent),
+  url: location.href,
+  screen: `${screen.width}x${screen.height}`,
+  innerSize: `${innerWidth}x${innerHeight}`,
+  dpr: devicePixelRatio,
+  tmLoaderAvail: !!(window.TM && typeof window.TM.register === 'function'),
+});
+
+// Loader vorhanden → nur registrieren; sonst kurz warten ob Loader noch kommt
+const G_BOOT = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
+  registerWithLoader();
+} else if (Array.isArray(G_BOOT.__tmQueue)) {
+  registerWithLoader();          // Loader kommt noch → in Queue einreihen
+} else {
+  // Loader noch nicht da → Queue selbst anlegen und kurz warten
+  G_BOOT['__tmQueue'] = G_BOOT['__tmQueue'] || [];
+  registerWithLoader();          // pushed in die Queue
+
+  // Fallback: wenn nach 3 s kein Loader kam → standalone starten
+  setTimeout(() => {
+    if (!(G_BOOT.TM && typeof G_BOOT.TM.register === 'function')) {
+      LOG('Loader nicht erschienen – starte standalone');
+      bootStandalone();
+    }
+  }, 3000);
+}
 
 
 
