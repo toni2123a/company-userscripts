@@ -3,7 +3,9 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.2
 // @description  Fügt einen IHP Button neben der Lager-Beschreibung hinzu, wenn Scanart 8 und ZC/DC 24 gefunden wird
-// @author       -
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal.ihp.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal.ihp.user.js
+// @author       Thiemo Schöler
 // @match        https://depotportal.dpd.com/*
 // @grant        none
 // @run-at       document-idle
