@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Depot Portal - IHP Button
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Fügt einen IHP Button neben der Lager-Beschreibung hinzu, wenn Scanart 8 und ZC/DC 24 gefunden wird
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal.ihp.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal.ihp.user.js
@@ -10,6 +10,7 @@
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+
 
 (function() {
     'use strict';
@@ -51,7 +52,7 @@
 
     function findLagerRow() {
         const rows = document.querySelectorAll('tr');
-
+        
         for (const row of rows) {
             const cells = row.querySelectorAll('td');
             if (cells.length < 5) continue;
@@ -65,7 +66,7 @@
             const beschreibungDiv = beschreibungCell.querySelector('div');
             const beschreibung = beschreibungDiv ? beschreibungDiv.textContent.trim() : beschreibungCell.textContent.trim();
 
-            if (scanart === '8' && (zcDc === '24' || zcDc === '024')) {
+            if (scanart === '8' && zcDc.includes('024')) {
                 if (beschreibung === 'Lager') {
                     return { row, zcDc: zcDc };
                 }
@@ -81,7 +82,7 @@
         if (targetCell.querySelector('.ihp-btn')) return;
 
         const beschreibungDiv = targetCell.querySelector('div');
-
+        
         const btnContainer = document.createElement('span');
         btnContainer.style.display = 'inline-flex';
         btnContainer.style.alignItems = 'center';
@@ -137,7 +138,7 @@
         });
 
         btnContainer.appendChild(btn);
-
+        
         if (beschreibungDiv) {
             beschreibungDiv.parentNode.insertBefore(btnContainer, beschreibungDiv.nextSibling);
         } else {
