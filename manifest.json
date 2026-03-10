@@ -123,6 +123,19 @@
       "description": "Neue Spalte mit L&F-Mail-Button + Status Änderung auf abgeschlossen"
     },
     {
+      "id": "tool-depotportal.ihp",
+      "name": "DPD Depot Portal - IHP Button",
+      "version": "1.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal.ihp.user.js",
+      "match": [
+        "https://depotportal.dpd.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Fügt einen IHP Button neben der Lager-Beschreibung hinzu, wenn Scanart 8 und ZC/DC 24 gefunden wird"
+    },
+    {
       "id": "tool_dispatcher_kpi",
       "name": "DPD Dispatcher – KPI Monitor (Depot flexibel)",
       "version": "2.1.8",
