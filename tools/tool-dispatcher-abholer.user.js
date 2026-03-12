@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – AbholKunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      1.3.0
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher-abholer.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher-abholer.user.js
 // @description  Tagesliste per API (ohne Kundenfilter), Kundennummern automatisch aus Abholung (API/DOM-Fallback), Alert-Monitoring (Scheduled/Complaint/Not Accepted/Critical/Distance), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
@@ -264,6 +264,7 @@
   const BRIDGE_PUSH_INTERVAL_MS = 60 * 1000;
   const BRIDGE_MAX_ROWS = 500;
   const BRIDGE_REQUIRED_STATUSES = 'OPEN';
+  const ALERT_COMPLAINT_LOOKBACK_DAYS = 14;
   let bridgePollTimer = null;
   const bridgeState = {
     inFlight: false,
@@ -325,7 +326,9 @@
             ${ALERT_TYPES.map(t => `<option value="${esc(t)}">${esc(alertTypeLabel(t))}</option>`).join('')}
           </select>
           <select id="${NS}alertStatus" class="${NS}inp" title="Alertstatus">
+            <option value="OPEN,ACKNOWLEDGED">OPEN + ACKNOWLEDGED</option>
             <option value="OPEN">OPEN</option>
+            <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
           </select>
           <input id="${NS}alertTour" class="${NS}inp" placeholder="Tour-Filter Alerts">
           <input id="${NS}alertSearch" class="${NS}inp" placeholder="Suche Kunde/Adresse/Depot">
@@ -341,7 +344,7 @@
         </div>
       </div>
       <div class="${NS}list">
-        <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Kundenliste bleibt bei leeren Zwischenständen erhalten. Alerts laden nur OPEN für PICKUP.</div>
+        <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Kundenliste bleibt bei leeren Zwischenständen erhalten. Alerts laden standardmäßig OPEN + ACKNOWLEDGED; Bridge sendet nur OPEN.</div>
         <div id="${NS}saved"></div>
         <div id="${NS}alerts-kpi" style="display:none"></div>
         <div id="${NS}out-customers"></div>
@@ -786,9 +789,41 @@
     if (v == null || v === '') return [];
     return [v];
   }
+  function normalizeAlertStatuses(raw){
+    const parts = String(raw || '')
+      .split(',')
+      .map(v => String(v || '').trim().toUpperCase())
+      .filter(Boolean);
+    return parts.length ? parts.join(',') : 'OPEN,ACKNOWLEDGED';
+  }
   function getAlertStatusesSelection(){
     const el = document.getElementById(NS+'alertStatus');
-    return (el && el.value) ? String(el.value) : 'OPEN';
+    return normalizeAlertStatuses((el && el.value) ? String(el.value) : 'OPEN,ACKNOWLEDGED');
+  }
+  function parseAlertStatuses(raw){
+    const set = new Set(normalizeAlertStatuses(raw).split(',').filter(Boolean));
+    if (!set.size) set.add('OPEN');
+    return set;
+  }
+  function formatLocalDateYmd(dateObj = new Date()){
+    const d = (dateObj instanceof Date) ? dateObj : new Date(dateObj);
+    if (isNaN(d)) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  function normalizeYmd(value){
+    const v = String(value || '').trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+  }
+  function shiftYmd(ymd, days){
+    const clean = normalizeYmd(ymd);
+    if (!clean) return '';
+    const d = new Date(`${clean}T00:00:00`);
+    if (isNaN(d)) return '';
+    d.setDate(d.getDate() + Number(days || 0));
+    return formatLocalDateYmd(d);
   }
   function formatScanDateTime(scanDate, scanTime){
     if (scanDate && scanTime) {
@@ -1113,13 +1148,15 @@
     bridgePollTimer = null;
   }
 
-  function buildAlertingUrl(alertType, alertStatuses, page){
+  function buildAlertingUrl(alertType, alertStatuses, page, dateFrom, dateTo){
     const u = new URL('https://dispatcher2-de.geopost.com/dispatcher/api/alerting');
-    const today = new Date().toISOString().slice(0,10);
+    const today = formatLocalDateYmd(new Date()) || new Date().toISOString().slice(0,10);
+    const from = normalizeYmd(dateFrom) || today;
+    const to = normalizeYmd(dateTo) || today;
     u.searchParams.set('page', String(page));
     u.searchParams.set('pageSize', '250');
-    u.searchParams.set('dateFrom', today);
-    u.searchParams.set('dateTo', today);
+    u.searchParams.set('dateFrom', from);
+    u.searchParams.set('dateTo', to);
     u.searchParams.set('depots', '');
     u.searchParams.set('tours', '');
     u.searchParams.set('customerNumbers', '');
@@ -1130,7 +1167,7 @@
     u.searchParams.set('deliveryStatuses', '');
     u.searchParams.set('additionalCodes', '');
     u.searchParams.set('alertTypes', alertType || '');
-    u.searchParams.set('alertStatuses', alertStatuses || 'OPEN');
+    u.searchParams.set('alertStatuses', normalizeAlertStatuses(alertStatuses));
     u.searchParams.set('eventIds', '');
     u.searchParams.set('elements', '');
     u.searchParams.set('sort', '');
@@ -1143,15 +1180,17 @@
     if (!r.ok) throw new Error(`alerting/alerts ${r.status}`);
     return await r.json();
   }
-  async function fetchAlertRowsByType(alertType, alertStatuses){
+  async function fetchAlertRowsByType(alertType, alertStatuses, opts = {}){
     const headers = buildHeaders(lastOkRequest?.headers);
     const size = 250;
     const maxPages = 20;
     const rows = [];
     let page = 1;
+    const from = normalizeYmd(opts.dateFrom);
+    const to = normalizeYmd(opts.dateTo);
 
     while (page <= maxPages){
-      const u = buildAlertingUrl(alertType, alertStatuses, page);
+      const u = buildAlertingUrl(alertType, alertStatuses, page, from, to);
       const r = await fetch(u.toString(), { credentials:'include', headers });
       if (!r.ok) throw new Error(`alerting ${alertType} ${r.status}`);
       const j = await r.json();
@@ -1222,21 +1261,33 @@
     if (out && !silent) out.innerHTML = `<div class="${NS}muted">Alerts werden geladen …</div>`;
 
     try {
-      const statuses = String(opts.forceStatuses || getAlertStatusesSelection() || BRIDGE_REQUIRED_STATUSES);
-      const summaryPromise = fetchAlertSummary();
-      const detailPromises = ALERT_TYPES.map(t => fetchAlertRowsByType(t, statuses));
-      const settled = await Promise.allSettled([summaryPromise, ...detailPromises]);
+      const statuses = normalizeAlertStatuses(opts.forceStatuses || getAlertStatusesSelection() || BRIDGE_REQUIRED_STATUSES);
+      const today = formatLocalDateYmd(new Date()) || new Date().toISOString().slice(0,10);
 
-      const summaryRes = settled[0];
-      latestAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+      try {
+        latestAlertSummary = await fetchAlertSummary();
+      } catch {
+        latestAlertSummary = null;
+      }
+
+      const summaryMinDate = normalizeYmd(latestAlertSummary && latestAlertSummary.minOrderDate);
+      const complaintFrom = summaryMinDate || shiftYmd(today, -ALERT_COMPLAINT_LOOKBACK_DAYS) || today;
+
+      const detailPromises = ALERT_TYPES.map((t) => {
+        const dateFrom = t === 'COLLECTION_COMPLAINT' ? complaintFrom : today;
+        return fetchAlertRowsByType(t, statuses, { dateFrom, dateTo: today });
+      });
+      const settled = await Promise.allSettled(detailPromises);
 
       const combined = [];
-      for (let i=1; i<settled.length; i++) {
-        const res = settled[i];
+      for (const res of settled) {
         if (res.status === 'fulfilled' && Array.isArray(res.value)) combined.push(...res.value);
       }
 
-      const normalized = combined.map(normalizeAlertRow).filter((r) => String(r && r.alertStatus || '').toUpperCase() === 'OPEN');
+      const allowedStatuses = parseAlertStatuses(statuses);
+      const normalized = combined
+        .map(normalizeAlertRow)
+        .filter((r) => allowedStatuses.has(String(r && r.alertStatus || '').toUpperCase()));
       const dedup = [];
       const seen = new Set();
       for (const r of normalized) {
@@ -1261,7 +1312,6 @@
       isLoadingAlerts = false;
     }
   }
-
   let isLoading = false;
   async function loadDetails(){
     if (isLoading) return;           // Reentrancy-Schutz
