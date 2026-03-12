@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dispatcher – AbholKunden Kontrolle
 // @namespace    bodo.dpd.custom
-// @version      1.2.0
+// @version      1.3.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher-abholer.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher-abholer.user.js
 // @description  Tagesliste per API (ohne Kundenfilter), Kundennummern automatisch aus Abholung (API/DOM-Fallback), Alert-Monitoring (Scheduled/Complaint/Not Accepted/Critical/Distance), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap.
@@ -18,7 +18,7 @@
 
   // ---------- Modul-Metadaten für das Hauptpanel ----------
   const def = {
-    id: 'dispatcher-neu-rekla',
+    id: 'dispatcher-abholer-kontrolle',
     label: 'Abholkunden Kontrolle',
     run: () => startModuleOnce()
   };
@@ -32,13 +32,21 @@
   }
 
   // ============== AB HIER: dein ursprüngliches Script – auf Lazy-Start umgebaut ==============
-  const NS = 'kn-'; // Klassen-/ID-Präfix beibehalten
+  const NS = 'abholer-';
+  const STORAGE_PREFIX = 'dispatcher.abholer.';
+  const LEGACY_STORAGE_PREFIX = 'kn.';
+  const LAST_REQ_SESSION_KEY = STORAGE_PREFIX + 'lastReq';
+  const LAST_REQ_GLOBAL_KEY = '__dispatcherAbholerLastOkRequest';
+  const FETCH_HOOK_FLAG = '__dispatcherAbholerFetchHooked';
+  const XHR_HOOK_FLAG = '__dispatcherAbholerXhrHooked';
+  const XHR_URL_KEY = '__dispatcherAbholerUrl';
+  const XHR_HEADERS_KEY = '__dispatcherAbholerHeaders';
 
   try {
-   const s = sessionStorage.getItem(NS + 'lastReq');
+   const s = sessionStorage.getItem(LAST_REQ_SESSION_KEY);
    if (s) {
      const o = JSON.parse(s);
-     window.lastOkRequest = {
+      window[LAST_REQ_GLOBAL_KEY] = {
        url: new URL(o.url, location.origin),
        headers: o.headers || {}
      };
@@ -58,13 +66,20 @@
   }
 
   /* ======================= Basics & Storage ======================= */
-  const LS_KEY = 'kn.saved.customers';
+  const LS_KEY = STORAGE_PREFIX + 'saved.customers';
+  const LEGACY_LS_KEY = LEGACY_STORAGE_PREFIX + 'saved.customers';
   const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
   const esc = s => String(s||'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
   const digits = s => String(s||'').replace(/\D+/g,'');
   const normShort = s => digits(s).replace(/^0+/,'');
 
-  function loadList(){ try{ const a=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(a)?a:[]; }catch{ return []; } }
+  function loadList(){
+    try{
+      const raw = localStorage.getItem(LS_KEY) ?? localStorage.getItem(LEGACY_LS_KEY) ?? '[]';
+      const a = JSON.parse(raw);
+      return Array.isArray(a) ? a : [];
+    }catch{ return []; }
+  }
   function saveList(arr){ const clean=[...new Set((arr||[]).map(normShort).filter(Boolean))]; localStorage.setItem(LS_KEY, JSON.stringify(clean)); renderList(); }
 
   function tourKeys(t){
@@ -77,9 +92,9 @@
   }
 
   /* ======================= Request Capture (lazy installiert) ======================= */
- let lastOkRequest = window.lastOkRequest || null;
+ let lastOkRequest = window[LAST_REQ_GLOBAL_KEY] || null;
   function installHooksOnce(){
-    if (!window.__kn_fetch_hooked && window.fetch){
+    if (!window[FETCH_HOOK_FLAG] && window.fetch){
       const orig=window.fetch;
       window.fetch = async function(i, init={}){
         const res = await orig(i, init);
@@ -101,8 +116,9 @@
                 if (m) h['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
               }
               lastOkRequest = { url: u, headers: h };
+              window[LAST_REQ_GLOBAL_KEY] = lastOkRequest;
                  try {
-   sessionStorage.setItem(NS + 'lastReq', JSON.stringify({ url: u.href, headers: h }));
+   sessionStorage.setItem(LAST_REQ_SESSION_KEY, JSON.stringify({ url: u.href, headers: h }));
  } catch {}
               const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
             }
@@ -110,25 +126,26 @@
         }catch{}
         return res;
       };
-      window.__kn_fetch_hooked = true;
+      window[FETCH_HOOK_FLAG] = true;
     }
 
-    if (!window.__kn_xhr_hooked && window.XMLHttpRequest){
+    if (!window[XHR_HOOK_FLAG] && window.XMLHttpRequest){
       const X=window.XMLHttpRequest;
       const open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
-      X.prototype.open=function(m,u){ this.__kn_url=(typeof u==='string')?new URL(u,location.origin):null; this.__kn_headers={}; return open.apply(this,arguments); };
-      X.prototype.setRequestHeader=function(k,v){ try{ this.__kn_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this,arguments); };
+      X.prototype.open=function(m,u){ this[XHR_URL_KEY]=(typeof u==='string')?new URL(u,location.origin):null; this[XHR_HEADERS_KEY]={}; return open.apply(this,arguments); };
+      X.prototype.setRequestHeader=function(k,v){ try{ this[XHR_HEADERS_KEY][String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this,arguments); };
       X.prototype.send=function(){
         const onload=()=>{
           try{
-            if (this.__kn_url && this.__kn_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){
-              const q=this.__kn_url.searchParams;
+            if (this[XHR_URL_KEY] && this[XHR_URL_KEY].href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){
+              const q=this[XHR_URL_KEY].searchParams;
               if (!q.get('parcelNumber')){
-                if (!this.__kn_headers['authorization']){
+                if (!this[XHR_HEADERS_KEY]['authorization']){
                   const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
-                  if (m) this.__kn_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+                  if (m) this[XHR_HEADERS_KEY]['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
                 }
-                lastOkRequest = { url:this.__kn_url, headers:this.__kn_headers };
+                lastOkRequest = { url:this[XHR_URL_KEY], headers:this[XHR_HEADERS_KEY] };
+                window[LAST_REQ_GLOBAL_KEY] = lastOkRequest;
                 const n = document.getElementById(NS+'note'); if (n) n.style.display='none';
               }
             }
@@ -138,7 +155,7 @@
         this.addEventListener('load', onload);
         return send.apply(this,arguments);
       };
-      window.__kn_xhr_hooked = true;
+      window[XHR_HOOK_FLAG] = true;
     }
   }
 
@@ -198,8 +215,9 @@
     const chev = document.getElementById(NS+'saved-chev');
     const toggle = document.getElementById(NS+'saved-toggle');
     if (!wrap || !chev || !toggle) return;
-    const LSKEY = 'pm.savedCust.collapsed';
+    const LSKEY = STORAGE_PREFIX + 'saved.collapsed';
     let collapsed = localStorage.getItem(LSKEY);
+    if (collapsed == null) collapsed = localStorage.getItem('pm.savedCust.collapsed');
     collapsed = collapsed == null ? '1' : collapsed;
     wrap.classList.toggle('collapsed', collapsed === '1');
     chev.classList.toggle('rot', collapsed !== '1');
@@ -245,7 +263,7 @@
   const BRIDGE_TOKEN = '12c87869d52fc4651843512b595fc79ba8251d450988cbf4199e5918b33ecbd0';
   const BRIDGE_PUSH_INTERVAL_MS = 60 * 1000;
   const BRIDGE_MAX_ROWS = 500;
-  const BRIDGE_REQUIRED_STATUSES = 'OPEN,ACKNOWLEDGED';
+  const BRIDGE_REQUIRED_STATUSES = 'OPEN';
   let bridgePollTimer = null;
   const bridgeState = {
     inFlight: false,
@@ -307,9 +325,7 @@
             ${ALERT_TYPES.map(t => `<option value="${esc(t)}">${esc(alertTypeLabel(t))}</option>`).join('')}
           </select>
           <select id="${NS}alertStatus" class="${NS}inp" title="Alertstatus">
-            <option value="OPEN,ACKNOWLEDGED">OPEN + ACKNOWLEDGED</option>
             <option value="OPEN">OPEN</option>
-            <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
           </select>
           <input id="${NS}alertTour" class="${NS}inp" placeholder="Tour-Filter Alerts">
           <input id="${NS}alertSearch" class="${NS}inp" placeholder="Suche Kunde/Adresse/Depot">
@@ -325,7 +341,7 @@
         </div>
       </div>
       <div class="${NS}list">
-        <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Kundenliste bleibt bei leeren Zwischenständen erhalten. Alerts laden OPEN+ACKNOWLEDGED für PICKUP.</div>
+        <div id="${NS}note" class="${NS}muted" style="margin-bottom:8px">Hinweis: Kundenliste bleibt bei leeren Zwischenständen erhalten. Alerts laden nur OPEN für PICKUP.</div>
         <div id="${NS}saved"></div>
         <div id="${NS}alerts-kpi" style="display:none"></div>
         <div id="${NS}out-customers"></div>
@@ -772,7 +788,7 @@
   }
   function getAlertStatusesSelection(){
     const el = document.getElementById(NS+'alertStatus');
-    return (el && el.value) ? String(el.value) : 'OPEN,ACKNOWLEDGED';
+    return (el && el.value) ? String(el.value) : 'OPEN';
   }
   function formatScanDateTime(scanDate, scanTime){
     if (scanDate && scanTime) {
@@ -957,6 +973,8 @@
     for (const row of (rows || [])) {
       const rowDepot = normalizeBridgeDepot(row && row.depot ? row.depot : '');
       if (rowDepot && rowDepot !== depot) continue;
+      const status = String(row && row.alertStatus || '').toUpperCase().trim();
+      if (status !== 'OPEN') continue;
       out.push({
         id: String(row && row.id || ''),
         alertType: String(row && row.alertType || ''),
@@ -1112,7 +1130,7 @@
     u.searchParams.set('deliveryStatuses', '');
     u.searchParams.set('additionalCodes', '');
     u.searchParams.set('alertTypes', alertType || '');
-    u.searchParams.set('alertStatuses', alertStatuses || 'OPEN,ACKNOWLEDGED');
+    u.searchParams.set('alertStatuses', alertStatuses || 'OPEN');
     u.searchParams.set('eventIds', '');
     u.searchParams.set('elements', '');
     u.searchParams.set('sort', '');
@@ -1149,7 +1167,6 @@
   function renderAlertKpis(summary, rows){
     const box = document.getElementById(NS+'alerts-kpi');
     if (!box) return;
-    const countsFromSummary = (summary && summary.alertTypes && typeof summary.alertTypes === 'object') ? summary.alertTypes : {};
     const countsFromRows = {};
     for (const t of ALERT_TYPES) countsFromRows[t] = 0;
     for (const r of (rows || [])) {
@@ -1158,7 +1175,7 @@
     }
 
     const cards = ALERT_TYPES.map(t => {
-      const n = Number.isFinite(Number(countsFromSummary[t])) ? Number(countsFromSummary[t]) : countsFromRows[t] || 0;
+      const n = countsFromRows[t] || 0;
       return `<div class="${NS}kpi"><h4>${esc(alertTypeLabel(t))}</h4><div class="n">${esc(n)}</div><div class="m">${esc(t)}</div></div>`;
     }).join('');
 
@@ -1219,7 +1236,7 @@
         if (res.status === 'fulfilled' && Array.isArray(res.value)) combined.push(...res.value);
       }
 
-      const normalized = combined.map(normalizeAlertRow);
+      const normalized = combined.map(normalizeAlertRow).filter((r) => String(r && r.alertStatus || '').toUpperCase() === 'OPEN');
       const dedup = [];
       const seen = new Set();
       for (const r of normalized) {
