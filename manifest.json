@@ -82,6 +82,19 @@
       "description": "Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen"
     },
     {
+      "id": "tool-dispatcher-abholer",
+      "name": "Dispatcher – AbholKunden Kontrolle",
+      "version": "1.2.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher-abholer.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Tagesliste per API (ohne Kundenfilter), Kundennummern automatisch aus Abholung (API/DOM-Fallback), Alert-Monitoring (Scheduled/Complaint/Not Accepted/Critical/Distance), lokal filtern; Hinweise: Predict außerhalb, schließt ≤30 Min, bereits geschlossen; COMPLETED grün; Telefon-Spalte; Fahrer-Telefon via vehicle-overview; Tour-Filter; Button dockt an #pm-wrap."
+    },
+    {
       "id": "tools-dispatcher-abholer",
       "name": "Dispatcher – Neu-/Rekla-Kunden Kontrolle",
       "version": "5.0.1",
