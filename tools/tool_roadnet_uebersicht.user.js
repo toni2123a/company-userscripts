@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.8.3
+// @version      1.8.5
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -688,12 +688,17 @@
   const BRIDGE_POLL_INTERVAL_MS = 15000;
   const BRIDGE_MAX_ROWS = 700;
   const ROADNET_SOFT_REFRESH_ENABLED = true;
-  const ROADNET_SOFT_REFRESH_INTERVAL_MS = 60000;
+  const ROADNET_SOFT_REFRESH_MIN_MS = 90000;   // min 1,5 Min
+  const ROADNET_SOFT_REFRESH_MAX_MS = 180000;  // max 3 Min
   const ROADNET_HARD_REFRESH_ENABLED = true;
-  const ROADNET_HARD_REFRESH_INTERVAL_MS = 300000;
-  const ROADNET_HARD_REFRESH_IDLE_MS = 120000;
+  const ROADNET_HARD_REFRESH_INTERVAL_MS = 600000;  // 10 Min
+  const ROADNET_HARD_REFRESH_IDLE_MS = 180000;       // 3 Min Idle
   const ROADNET_STALE_RELOAD_ENABLED = true;
-  const ROADNET_STALE_RELOAD_AFTER_MS = 60000;
+  const ROADNET_STALE_RELOAD_AFTER_MS = 600000;      // 10 Min ohne Datenänderung
+
+  function randBetween(minMs, maxMs) {
+    return minMs + Math.floor(Math.random() * (maxMs - minMs));
+  }
 
   const MODEL_UNLOAD = {
     modeKey: 'unload',
@@ -2723,10 +2728,12 @@ function ensureEntladungShortcutButton() {
     return candidates[0].el || null;
   }
 
+  let nextSoftRefreshGap = randBetween(ROADNET_SOFT_REFRESH_MIN_MS, ROADNET_SOFT_REFRESH_MAX_MS);
+
   function triggerRoadnetSoftRefresh() {
     if (!ROADNET_SOFT_REFRESH_ENABLED || !isTransportUnitsPage()) return false;
     const now = Date.now();
-    if ((now - state.lastSoftRefreshAt) < ROADNET_SOFT_REFRESH_INTERVAL_MS) return false;
+    if ((now - state.lastSoftRefreshAt) < nextSoftRefreshGap) return false;
 
     const root = findRoadnetDataTableRoot();
     if (!root) return false;
@@ -2734,9 +2741,10 @@ function ensureEntladungShortcutButton() {
     if (!trigger) return false;
 
     state.lastSoftRefreshAt = now;
+    nextSoftRefreshGap = randBetween(ROADNET_SOFT_REFRESH_MIN_MS, ROADNET_SOFT_REFRESH_MAX_MS);
     try {
       trigger.click();
-      addBridgeLog('info', 'AUTO: Roadnet-Datenaktualisierung ausgelöst.');
+      addBridgeLog('info', `AUTO: Roadnet-Datenaktualisierung ausgelöst (nächste in ~${Math.round(nextSoftRefreshGap / 1000)}s).`);
       setTimeout(() => autoClickTargets(), 1200);
       setTimeout(() => extractData(), 1400);
       return true;
@@ -2768,10 +2776,15 @@ function ensureEntladungShortcutButton() {
 
   function installRoadnetAutoRefresh() {
     if (!isTransportUnitsPage()) return;
-    setInterval(() => {
-      triggerRoadnetSoftRefresh();
-      maybeHardReloadRoadnetPage();
-    }, 10000);
+    function scheduleNext() {
+      const delay = randBetween(8000, 18000);
+      setTimeout(() => {
+        triggerRoadnetSoftRefresh();
+        maybeHardReloadRoadnetPage();
+        scheduleNext();
+      }, delay);
+    }
+    scheduleNext();
   }
 
   /* ===================== BOOTSTRAP ===================== */
