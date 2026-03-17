@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Roadnet – Transporteinheiten (Zusammenfassung + LTS Lebenslauf Fix + Frachtführer)
 // @namespace    bodo.dpd.custom
-// @version      1.8.5
+// @version      1.8.6
 // @description  Roadnet transport_units: Beladung/Entladung automatisch. Panel mit Sortierung, Badges, Zebra, Scroll-Memory, Auto-Fit. Copy formatiert. Optionaler Bridge-Export an lokales DPD-Dashboard. LTS# Klick: öffnet LTS auf /index.aspx, wartet auf Login/Session und springt dann robust auf /(S(...))/WBLebenslauf.aspx. Nummer wird persistent per postMessage/window.name übergeben. LTS füllt txtWBNR1/txtWBNR4 und triggert „Suchen“ robust (requestSubmit + click + submit), max. 3 Versuche, stoppt sobald Ergebnis-Tabelle sichtbar ist. LTS-Hinweis: fehlende/unsichtbare Lebenslauf-Spaltenköpfe werden robust korrigiert. Frachtführer: Bezeichnung statt Nummer; Entladung mit „Frachtführer“ am Ende.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
@@ -686,6 +686,9 @@
   const BRIDGE_TOKEN = '12c87869d52fc4651843512b595fc79ba8251d450988cbf4199e5918b33ecbd0'; // Pflicht bei requireClient=true: lokal im Userscript setzen
   const BRIDGE_MIN_INTERVAL_MS = 15000;
   const BRIDGE_POLL_INTERVAL_MS = 15000;
+  const BRIDGE_FETCH_TIMEOUT_MS = 12000;
+  const BRIDGE_INFLIGHT_GUARD_MS = 45000;
+  const BRIDGE_RESUME_RETRY_DELAY_MS = 1200;
   const BRIDGE_MAX_ROWS = 700;
   const ROADNET_SOFT_REFRESH_ENABLED = true;
   const ROADNET_SOFT_REFRESH_MIN_MS = 90000;   // min 1,5 Min
@@ -801,6 +804,7 @@
     lastSig: '',
     lastSentAt: 0,
     inFlight: false,
+    inFlightSince: 0,
     statusLabel: 'Idle',
     statusColor: '#4b5563',
     logs: []
@@ -886,6 +890,13 @@
     return out;
   }
 
+  function bridgeFetchWithTimeout(url, init, timeoutMs = BRIDGE_FETCH_TIMEOUT_MS) {
+    if (typeof AbortController === 'undefined') return fetch(url, init);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  }
+
   function postBridgePayload(payload, endpoints, idx = 0, trigger = 'auto') {
     if (!Array.isArray(endpoints) || idx >= endpoints.length) {
       const err = new Error('no_endpoint_available');
@@ -899,7 +910,7 @@
     const startedAt = Date.now();
     addBridgeLog('info', `${bridgeTriggerLabel(trigger)}: Versuch ${attempt}/${total} -> ${endpoint}`);
 
-    return fetch(endpoint, {
+    return bridgeFetchWithTimeout(endpoint, {
       method: 'POST',
       mode: 'cors',
       credentials: 'omit',
@@ -908,7 +919,7 @@
         'X-Roadnet-Token': BRIDGE_TOKEN
       },
       body: JSON.stringify(payload)
-    })
+    }, BRIDGE_FETCH_TIMEOUT_MS)
       .then((r) => r.text().then((bodyText) => ({ r, bodyText })))
       .then(({ r, bodyText }) => {
         const durationMs = Date.now() - startedAt;
@@ -930,7 +941,10 @@
       })
       .catch((err) => {
         const durationMs = Date.now() - startedAt;
-        const message = norm(err && err.message ? err.message : String(err || 'network_error'));
+        const isAbort = !!(err && (err.name === 'AbortError' || /aborted|abort/i.test(String(err.message || ''))));
+        const message = isAbort
+          ? `timeout_${BRIDGE_FETCH_TIMEOUT_MS}ms`
+          : norm(err && err.message ? err.message : String(err || 'network_error'));
         addBridgeLog('error', `${bridgeTriggerLabel(trigger)}: ${endpoint} Fehler nach ${durationMs}ms: ${message}`);
         return postBridgePayload(payload, endpoints, idx + 1, trigger);
       });
@@ -1183,11 +1197,18 @@
     }
 
     if (bridgeState.inFlight) {
-      if (trigger === 'manual') {
-        setBridgeStatus('Senden laeuft bereits', '#b45309');
-        addBridgeLog('warn', `${triggerLabel}: Export laeuft bereits, bitte kurz warten.`);
+      const flightAge = Date.now() - (bridgeState.inFlightSince || 0);
+      if (bridgeState.inFlightSince && flightAge > BRIDGE_INFLIGHT_GUARD_MS) {
+        bridgeState.inFlight = false;
+        bridgeState.inFlightSince = 0;
+        addBridgeLog('warn', `${triggerLabel}: Vorheriger Export hing fest (${Math.round(flightAge / 1000)}s), Neustart.`);
+      } else {
+        if (trigger === 'manual') {
+          setBridgeStatus('Senden laeuft bereits', '#b45309');
+          addBridgeLog('warn', `${triggerLabel}: Export laeuft bereits, bitte kurz warten.`);
+        }
+        return;
       }
-      return;
     }
 
     if (!Array.isArray(state.rows) || !state.rows.length) {
@@ -1245,6 +1266,7 @@
     );
 
     bridgeState.inFlight = true;
+    bridgeState.inFlightSince = Date.now();
     postBridgePayload(payload, endpoints, 0, trigger)
       .then((usedEndpoint) => {
         bridgeState.lastSig = sig;
@@ -1268,7 +1290,27 @@
       })
       .finally(() => {
         bridgeState.inFlight = false;
+        bridgeState.inFlightSince = 0;
       });
+  }
+
+  function installBridgeResumeTriggers() {
+    if (!BRIDGE_ENABLED) return;
+    let pendingTimer = null;
+    const scheduleExtract = () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null;
+        extractData();
+      }, BRIDGE_RESUME_RETRY_DELAY_MS);
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) scheduleExtract();
+    });
+    window.addEventListener('focus', scheduleExtract);
+    window.addEventListener('online', scheduleExtract);
+    window.addEventListener('pageshow', scheduleExtract);
   }
 
   function findActiveMode() {
@@ -2798,6 +2840,7 @@ function ensureEntladungShortcutButton() {
   ensurePanel();
   if (BRIDGE_ENABLED) ensureBridgeDepotConfigured(false);
   installObserver();
+  installBridgeResumeTriggers();
   autoClickTargets();
   installRoadnetAutoRefresh();
   if (BRIDGE_ENABLED) {
@@ -2805,8 +2848,6 @@ function ensureEntladungShortcutButton() {
     setInterval(() => extractData(), BRIDGE_POLL_INTERVAL_MS);
   }
 })();
-
-
 
 
 
