@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio/Express12 Monitoring
 // @namespace    bodo.dpd.custom
-// @version      7.2.1
+// @version      7.2.2
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver. + Systempartner aus lokaler TourMap (IndexedDB).
@@ -867,7 +867,7 @@ async function copyHtmlToClipboard(html){
   }
 
   const EXPRESS12_CODES = new Set([
-    '104','107','135','196','210','225','226','227','231','232','234','237','238','239','240',
+    '104','107','135','196','210','225','226','227','228','231','232','234','237','238','239','240',
     '243','245','247','249','255','261','262','267','269','286','310','311','323','379','412','414',
     '452','453','458','459','488','490','503','505','530','531','537','538','542','547','567',
     '786','797','811'
