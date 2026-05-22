@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.21
+// @version      6.22
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -17,26 +17,147 @@
   const DEPOT = (window.location.hostname.match(/scanserver-d(\d{7})\.ssw\.dpdit\.de/i) || [])[1] || '0000000';
   const STORAGE_KEY = 'spTourConfigScanmonitor_v5';
   const COLLAPSE_KEY = STORAGE_KEY + '_collapsed';
+  const DEPOTPORTAL_BASE_URL = 'https://depotportal.dpd.com/dp/de_DE/tracking/parcels/';
+
+  // =========================
+  // Depotportal / Lebenslauf
+  // =========================
+
+  function cleanPsn(value) {
+    return String(value || '').replace(/\D/g, '').trim();
+  }
+
+  function buildDepotportalUrl(psn) {
+    const nr = cleanPsn(psn);
+    return nr ? (DEPOTPORTAL_BASE_URL + encodeURIComponent(nr)) : '';
+  }
+
+  function openDepotportalTracking(psn) {
+    const url = buildDepotportalUrl(psn);
+    if (!url) return;
+    window.open(url, '_blank', 'noopener');
+  }
+
 
   // =========================
   // QR / Barcode Helfer
   // =========================
 
+  function gmRequestText(url, headers = {}) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        reject(new Error('GM_xmlhttpRequest nicht verfügbar.'));
+        return;
+      }
+
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers,
+        timeout: 30000,
+        anonymous: false,
+        onload: function (resp) {
+          resolve({
+            ok: resp.status >= 200 && resp.status < 300,
+            status: resp.status,
+            statusText: resp.statusText || '',
+            text: resp.responseText || ''
+          });
+        },
+        onerror: function () {
+          reject(new Error('GM Request fehlgeschlagen.'));
+        },
+        ontimeout: function () {
+          reject(new Error('GM Request Timeout.'));
+        }
+      });
+    });
+  }
+
   async function fetchQrContentForTour(tour) {
-    const base = window.location.origin + '/lso/jcrp_ws/scanpocket/qrcode/clearance-granted?tour=';
-    const url = base + encodeURIComponent(tour);
-    const resp = await fetch(url, { credentials: 'include' });
-    if (!resp.ok) throw new Error('HTTP-Status ' + resp.status + ' (' + resp.statusText + ')');
+    const url = window.location.origin + '/lso/jcrp_ws/scanpocket/qrcode/clearance-granted?tour=' + encodeURIComponent(tour);
+    const commonHeaders = {
+      'Accept': 'application/json, text/plain, */*',
+      'X-Requested-With': 'XMLHttpRequest'
+    };
 
-    let json;
-    try { json = await resp.json(); } catch { throw new Error('Antwort ist kein gültiges JSON.'); }
+    let lastErr = null;
 
-    if (json && json.qrCode && typeof json.qrCode.code === 'string' && json.qrCode.code.trim() !== '') return json.qrCode.code;
-    if (json && typeof json.code === 'string' && json.code.trim() !== '') return json.code;
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: commonHeaders
+      });
 
-    console.error('QR-API Antwort für Tour', tour, json);
-    if (json && (json.error || json.message)) throw new Error('Server meldet: ' + (json.error || json.message));
-    throw new Error('Server liefert keinen QR-Code für diese Tour (kein Feld "code" in der Antwort).');
+      if (!resp.ok) {
+        let extra = '';
+        try { extra = await resp.text(); } catch {}
+        throw new Error(
+          'HTTP-Status ' + resp.status + ' (' + resp.statusText + ')' +
+          (extra ? '\nAntwort: ' + extra.slice(0, 300) : '')
+        );
+      }
+
+      let json;
+      try {
+        json = await resp.json();
+      } catch {
+        throw new Error('Antwort ist kein gültiges JSON.');
+      }
+
+      if (json && json.qrCode && typeof json.qrCode.code === 'string' && json.qrCode.code.trim() !== '') {
+        return json.qrCode.code;
+      }
+      if (json && typeof json.code === 'string' && json.code.trim() !== '') {
+        return json.code;
+      }
+
+      console.error('QR-API Antwort für Tour', tour, json);
+      if (json && (json.error || json.message)) {
+        throw new Error('Server meldet: ' + (json.error || json.message));
+      }
+      throw new Error('Server liefert keinen QR-Code für diese Tour.');
+    } catch (e) {
+      lastErr = e;
+      console.warn('Normaler fetch für QR fehlgeschlagen, versuche GM_xmlhttpRequest Fallback:', e);
+    }
+
+    try {
+      const gmResp = await gmRequestText(url, commonHeaders);
+
+      if (!gmResp.ok) {
+        throw new Error(
+          'HTTP-Status ' + gmResp.status + ' (' + gmResp.statusText + ')' +
+          (gmResp.text ? '\nAntwort: ' + gmResp.text.slice(0, 300) : '')
+        );
+      }
+
+      let json;
+      try {
+        json = JSON.parse(gmResp.text);
+      } catch {
+        throw new Error('Antwort ist kein gültiges JSON.');
+      }
+
+      if (json && json.qrCode && typeof json.qrCode.code === 'string' && json.qrCode.code.trim() !== '') {
+        return json.qrCode.code;
+      }
+      if (json && typeof json.code === 'string' && json.code.trim() !== '') {
+        return json.code;
+      }
+
+      console.error('QR-API Antwort für Tour', tour, json);
+      if (json && (json.error || json.message)) {
+        throw new Error('Server meldet: ' + (json.error || json.message));
+      }
+      throw new Error('Server liefert keinen QR-Code für diese Tour.');
+    } catch (e2) {
+      const msg1 = lastErr?.message ? ('Fetch: ' + lastErr.message) : '';
+      const msg2 = e2?.message ? ('GM: ' + e2.message) : '';
+      throw new Error([msg1, msg2].filter(Boolean).join('\n'));
+    }
   }
 
   function buildQrImageUrl(content) {
@@ -50,7 +171,6 @@
   function buildFinalBarcodeFromRow(plz5Digits, paketNr, soCode) {
     return `%00${plz5Digits}${paketNr}${soCode}276`;
   }
-
   // =========================
   // Clipboard / Image
   // =========================
@@ -67,42 +187,69 @@
     }
   }
 
-  async function copyTextToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', 'readonly');
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  }
-
   async function fetchImageBitmap(url) {
-    const resp = await fetch(url, { mode: 'cors' });
-    if (!resp.ok) throw new Error('Bild nicht ladbar: ' + resp.status);
-    const blob = await resp.blob();
+    try {
+      const resp = await fetch(url, { mode: 'cors' });
+      if (!resp.ok) throw new Error('Bild nicht ladbar: ' + resp.status);
+      const blob = await resp.blob();
 
-    if (window.createImageBitmap) return await createImageBitmap(blob);
+      if (window.createImageBitmap) return await createImageBitmap(blob);
 
-    return await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Bild decode fehlgeschlagen'));
-      img.src = URL.createObjectURL(blob);
-    });
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Bild decode fehlgeschlagen'));
+        img.src = URL.createObjectURL(blob);
+      });
+    } catch (e1) {
+      if (typeof GM_xmlhttpRequest !== 'function') throw e1;
+
+      const blob = await new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          responseType: 'blob',
+          timeout: 30000,
+          anonymous: false,
+          onload: function (resp) {
+            if (resp.status >= 200 && resp.status < 300 && resp.response) {
+              resolve(resp.response);
+            } else {
+              reject(new Error('GM Bild nicht ladbar: ' + resp.status));
+            }
+          },
+          onerror: function () {
+            reject(new Error('GM Bild-Request fehlgeschlagen'));
+          },
+          ontimeout: function () {
+            reject(new Error('GM Bild-Request Timeout'));
+          }
+        });
+      });
+
+      if (window.createImageBitmap) {
+        try { return await createImageBitmap(blob); } catch {}
+      }
+
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        const objUrl = URL.createObjectURL(blob);
+        img.onload = () => {
+          URL.revokeObjectURL(objUrl);
+          resolve(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objUrl);
+          reject(new Error('GM Bild decode fehlgeschlagen'));
+        };
+        img.src = objUrl;
+      });
+    }
   }
-
-  // =========================
-  // Text Wrap / Metrics
-  // =========================
+   // =========================
+   // Text Wrap / Metrics
+   // =========================
 
   function wrapTextLines(ctx, text, maxWidth, maxLines = 2) {
     const words = String(text || '').split(/\s+/).filter(Boolean);
@@ -136,7 +283,7 @@
   }
 
   // =========================
-  // Tabelle finden / Daten holen (frame-sicher)
+  // Tabelle finden / Daten holen
   // =========================
 
   function collectAllDocs() {
@@ -249,6 +396,16 @@
     return score;
   }
 
+  function findBestTableInDoc(doc) {
+    let best = null;
+    for (const t of Array.from(doc.querySelectorAll('table'))) {
+      const s = scoreTable(t);
+      if (s <= 0) continue;
+      if (!best || s > best.score) best = { table: t, score: s };
+    }
+    return best;
+  }
+
   function findBestTableAnyDoc() {
     const docs = collectAllDocs();
     let best = null;
@@ -263,12 +420,13 @@
     return best;
   }
 
-  function extractVisibleRows_ANYWHERE() {
-    const found = findBestTableAnyDoc();
-    if (!found) throw new Error('Tabelle nicht gefunden.');
+  function extractRowsFromTable(table, options = {}) {
+    const {
+      visibilityMode = 'visible',
+      win = null
+    } = options || {};
 
-    const { doc: dataDoc, table } = found;
-    const win = dataDoc.defaultView || window;
+    if (!table) throw new Error('Tabelle nicht gefunden.');
 
     const headerRow = getHeaderRow(table);
     if (!headerRow) throw new Error('Kopfzeile nicht erkannt.');
@@ -297,13 +455,14 @@
     const rows = [];
     for (let i = headerIndex + 1; i < allRows.length; i++) {
       const tr = allRows[i];
-      if (!isRowVisibleInDoc(win, tr)) continue;
+      if (visibilityMode === 'visible' && win && !isRowVisibleInDoc(win, tr)) continue;
 
       const tds = Array.from(tr.querySelectorAll('td'));
       if (!tds.length) continue;
 
       const psn = cellText(tds[idx.psn]);
       if (!psn) continue;
+      if (!/^\d/.test(psn)) continue;
 
       const so  = cellText(tds[idx.so]);
       const zc  = cellText(tds[idx.zc]);
@@ -325,77 +484,27 @@
       });
     }
 
-    if (!rows.length) throw new Error('Keine sichtbaren Datenzeilen gefunden.');
+    if (!rows.length) throw new Error('Keine Datenzeilen gefunden.');
     return rows;
   }
 
-  // =========================
-  // WhatsApp Text
-  // =========================
-
-  function padRight(s, w) {
-    s = String(s ?? '');
-    if (s.length >= w) return s;
-    return s + ' '.repeat(w - s.length);
+  function extractVisibleRows_ANYWHERE() {
+    const found = findBestTableAnyDoc();
+    if (!found) throw new Error('Tabelle nicht gefunden.');
+    const win = found.doc.defaultView || window;
+    return extractRowsFromTable(found.table, { visibilityMode: 'visible', win });
   }
 
-  function clip(s, w) {
-    s = String(s ?? '');
-    if (s.length <= w) return s;
-    if (w <= 1) return s.slice(0, w);
-    return s.slice(0, w - 1) + '…';
-  }
-
-  function buildWhatsAppText(rows) {
-    const list = rows.map(r => ({
-      psn: r.psn,
-      so: r.so,
-      zc: r.zc,
-      plzort: (r.plz + (r.ort ? ' ' + r.ort : '')).trim(),
-      str: r.str,
-      name: r.name,
-      umv: r.umv
-    }));
-
-    const W = {
-      psn:    Math.min(16, Math.max(12, ...list.map(r => r.psn.length))),
-      so:     Math.min(6,  Math.max(2,  ...list.map(r => r.so.length))),
-      zc:     Math.min(10, Math.max(6,  ...list.map(r => r.zc.length))),
-      plzort: Math.min(22, Math.max(8,  ...list.map(r => r.plzort.length))),
-      str:    Math.min(24, Math.max(10, ...list.map(r => r.str.length))),
-      name:   Math.min(24, Math.max(10, ...list.map(r => r.name.length))),
-      umv:    Math.min(12, Math.max(3,  ...list.map(r => r.umv.length)))
-    };
-
-    const header =
-      padRight('Paketschein', W.psn) + '  ' +
-      padRight('SO',         W.so)  + '  ' +
-      padRight('Zusatz',     W.zc)  + '  ' +
-      padRight('PLZ Ort',    W.plzort) + '  ' +
-      padRight('Strasse',    W.str) + '  ' +
-      padRight('Name',       W.name) + '  ' +
-      padRight('Umv',        W.umv);
-
-    const sep = '-'.repeat(header.length);
-
-    const lines = [header, sep];
-    for (const r of list) {
-      lines.push(
-        padRight(clip(r.psn,    W.psn),    W.psn)    + '  ' +
-        padRight(clip(r.so,     W.so),     W.so)     + '  ' +
-        padRight(clip(r.zc,     W.zc),     W.zc)     + '  ' +
-        padRight(clip(r.plzort, W.plzort), W.plzort) + '  ' +
-        padRight(clip(r.str,    W.str),    W.str)    + '  ' +
-        padRight(clip(r.name,   W.name),   W.name)   + '  ' +
-        padRight(clip(r.umv,    W.umv),    W.umv)
-      );
-    }
-
-    return '```' + '\n' + lines.join('\n') + '\n' + '```';
+  function extractRowsFromHtml(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const best = findBestTableInDoc(doc);
+    if (!best) throw new Error('Tabelle in Hintergrundantwort nicht gefunden.');
+    return extractRowsFromTable(best.table, { visibilityMode: 'all' });
   }
 
   // =========================
-  // Sammelbild (Screenshot-Canvas)
+  // Sammelbild
   // =========================
 
   function computeAutoColumnWidths(ctx, rows) {
@@ -425,29 +534,72 @@
     return W;
   }
 
-  async function buildScreenshotCanvas(rows, { withBarcode } = { withBarcode: false }) {
-    const scale = Math.min(2, Math.max(1, (window.devicePixelRatio || 1)));
+async function buildScreenshotCanvas(rows, { withBarcode } = { withBarcode: false }) {
+  const scale = Math.min(2, Math.max(1, (window.devicePixelRatio || 1)));
 
-    const pad = 12;
-    const headerH = 34;
-    const gap = 10;
+  const pad = 12;
+  const headerH = 34;
+  const gap = 10;
+  const lineH = 14;
+  const rowPadY = 6;
 
-    const barcodeW = 360;
-    const barcodeH = 42;
+  const measure = document.createElement('canvas');
+  const mctx = measure.getContext('2d');
+  mctx.font = '12px Arial';
 
-    const lineH = 14;
-    const rowPadY = 6;
+  function ellipsize(ctx, text, maxWidth) {
+    let t = String(text || '').trim();
+    if (!t) return '';
+    if (ctx.measureText(t).width <= maxWidth) return t;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxWidth) {
+      t = t.slice(0, -1);
+    }
+    return t + '…';
+  }
 
-    const measure = document.createElement('canvas');
-    const mctx = measure.getContext('2d');
-    mctx.font = '12px Arial';
+  function wrapOneOrTwoLines(ctx, text, maxWidth) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    if (!words.length) return [''];
+    const lines = [];
+    let line = words[0];
 
+    for (let i = 1; i < words.length; i++) {
+      const test = line + ' ' + words[i];
+      if (ctx.measureText(test).width <= maxWidth) {
+        line = test;
+      } else {
+        lines.push(line);
+        line = words[i];
+        if (lines.length >= 1) break;
+      }
+    }
+    lines.push(line);
+
+    if (lines.length > 2) lines.length = 2;
+    if (lines.length === 2) {
+      lines[1] = ellipsize(ctx, lines[1], maxWidth);
+    }
+    return lines;
+  }
+
+  function getAddressLines(r, ctx, width) {
+    const name = String(r.name1 || '').trim();
+    const street = String(r.str || '').trim();
+    const plzOrt = [String(r.plz || '').trim(), String(r.ort || '').trim()].filter(Boolean).join(' ').trim();
+
+    const out = [];
+    if (name) out.push(...wrapOneOrTwoLines(ctx, name, width));
+    if (street) out.push(...wrapOneOrTwoLines(ctx, street, width));
+    if (plzOrt) out.push(...wrapOneOrTwoLines(ctx, plzOrt, width));
+
+    return out.length ? out.slice(0, 6) : [''];
+  }
+
+  // Für "Kopie" (ohne Code) bleibt die alte Tabellenart weitgehend erhalten
+  if (!withBarcode) {
     const col = computeAutoColumnWidths(mctx, rows);
-
     const textAreaW =
       col.psn + col.so + col.zc + col.plzort + col.str + col.name + col.umv + (6 * gap);
-
-    const extraW = withBarcode ? (16 + barcodeW) : 0;
 
     const rowHeights = [];
     for (const r of rows) {
@@ -466,14 +618,11 @@
 
       const maxLines = Math.max(...counts, 1);
       const textHeight = rowPadY * 2 + (maxLines * lineH);
-      const minHeight = withBarcode ? (rowPadY * 2 + barcodeH) : 0;
-
-      rowHeights.push(Math.max(textHeight, minHeight, 26));
+      rowHeights.push(Math.max(textHeight, 26));
     }
 
     const totalRowsH = rowHeights.reduce((a, b) => a + b, 0);
-
-    const widthCss = pad * 2 + textAreaW + extraW;
+    const widthCss = pad * 2 + textAreaW;
     const heightCss = pad * 2 + headerH + totalRowsH;
 
     const canvas = document.createElement('canvas');
@@ -505,9 +654,6 @@
     drawHead('Strasse', col.str);
     drawHead('Name', col.name);
     drawHead('Umv', col.umv);
-
-    const barcodeX = pad + textAreaW;
-    if (withBarcode) ctx.fillText('Barcode', barcodeX + 16, yHead);
 
     ctx.strokeStyle = '#ddd';
     ctx.beginPath();
@@ -550,29 +696,6 @@
       drawCell(name, col.name);
       drawCell(r.umv, col.umv);
 
-      if (withBarcode) {
-        const bx = barcodeX + 16;
-        const by = y + Math.floor((rowH - barcodeH) / 2);
-
-        const finalCode = buildFinalBarcodeFromRow(r.plz, r.psn, r.so);
-        const url = buildCode128Url(finalCode);
-
-        ctx.strokeStyle = '#ccc';
-        ctx.strokeRect(bx, by, barcodeW, barcodeH);
-
-        try {
-          const bmp = await fetchImageBitmap(url);
-          const iw = bmp.width || barcodeW;
-          const ih = bmp.height || barcodeH;
-          const s = Math.min(barcodeW / iw, barcodeH / ih);
-          const dw = iw * s;
-          const dh = ih * s;
-          const dx = bx + (barcodeW - dw) / 2;
-          const dy = by + (barcodeH - dh) / 2;
-          ctx.drawImage(bmp, dx, dy, dw, dh);
-        } catch {}
-      }
-
       ctx.strokeStyle = '#eee';
       ctx.beginPath();
       ctx.moveTo(pad, y + rowH);
@@ -585,6 +708,147 @@
     return canvas;
   }
 
+  // Ab hier nur für "Kopie mit Code"
+  const addrColW = 240;
+  const barcodePadding = 12;
+
+  // Barcode-Bilder vorladen und natürliche Größe verwenden
+  const barcodeData = [];
+  let barcodeMaxW = 0;
+  let barcodeMaxH = 0;
+
+  for (const r of rows) {
+    const finalCode = buildFinalBarcodeFromRow(r.plz, r.psn, r.so);
+    const url = buildCode128Url(finalCode);
+
+    try {
+      const bmp = await fetchImageBitmap(url);
+      const iw = bmp?.width || bmp?.naturalWidth || 0;
+      const ih = bmp?.height || bmp?.naturalHeight || 0;
+      barcodeData.push({ bmp, iw, ih, url, finalCode });
+      barcodeMaxW = Math.max(barcodeMaxW, iw);
+      barcodeMaxH = Math.max(barcodeMaxH, ih);
+    } catch {
+      barcodeData.push({ bmp: null, iw: 0, ih: 0, url, finalCode });
+    }
+  }
+
+  barcodeMaxW = Math.max(barcodeMaxW, 420);
+  barcodeMaxH = Math.max(barcodeMaxH, 70);
+
+  const barcodeBoxW = barcodeMaxW + barcodePadding * 2;
+  const barcodeBoxH = barcodeMaxH + barcodePadding * 2 + 18; // + Platz für Text unter Barcode
+
+  const textAreaW = addrColW;
+  const totalW = textAreaW + gap + barcodeBoxW;
+
+  const rowHeights = rows.map((r) => {
+    const addrLines = getAddressLines(r, mctx, addrColW);
+    const addrHeight = rowPadY * 2 + (addrLines.length * lineH);
+    return Math.max(addrHeight, barcodeBoxH + rowPadY * 2, 92);
+  });
+
+  const totalRowsH = rowHeights.reduce((a, b) => a + b, 0);
+  const widthCss = pad * 2 + totalW;
+  const heightCss = pad * 2 + headerH + totalRowsH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(widthCss * scale);
+  canvas.height = Math.ceil(heightCss * scale);
+
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, widthCss, heightCss);
+
+  ctx.fillStyle = '#666';
+  ctx.font = '10px Arial';
+  const ts = new Date().toLocaleString();
+  const tw = ctx.measureText(ts).width;
+  ctx.fillText(ts, widthCss - pad - tw, pad + 10);
+
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 12px Arial';
+  const yHead = pad + 16;
+  ctx.fillText('Adresse', pad, yHead);
+  ctx.fillText('Barcode', pad + textAreaW + gap, yHead);
+
+  ctx.strokeStyle = '#ddd';
+  ctx.beginPath();
+  ctx.moveTo(pad, pad + headerH - 8);
+  ctx.lineTo(widthCss - pad, pad + headerH - 8);
+  ctx.stroke();
+
+  let yCursor = pad + headerH;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rowH = rowHeights[i];
+    const y = yCursor;
+
+    if (i % 2 === 1) {
+      ctx.fillStyle = '#f7f7f7';
+      ctx.fillRect(pad, y, widthCss - pad * 2, rowH);
+    }
+
+    ctx.fillStyle = '#000';
+    ctx.font = '12px Arial';
+
+    // Adresse links
+    const addrLines = getAddressLines(r, ctx, addrColW);
+    const textX = pad;
+    let textY = y + rowPadY + 12;
+
+    for (const line of addrLines) {
+      ctx.fillText(line || '', textX, textY);
+      textY += lineH;
+    }
+
+    // Barcode rechts
+    const bd = barcodeData[i];
+    const boxX = pad + textAreaW + gap;
+    const boxY = y + Math.floor((rowH - barcodeBoxH) / 2);
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(boxX, boxY, barcodeBoxW, barcodeBoxH);
+    ctx.strokeStyle = '#ccc';
+    ctx.strokeRect(boxX, boxY, barcodeBoxW, barcodeBoxH);
+
+    if (bd && bd.bmp && bd.iw && bd.ih) {
+      const dx = Math.round(boxX + (barcodeBoxW - bd.iw) / 2);
+      const dy = Math.round(boxY + barcodePadding);
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bd.bmp, dx, dy, bd.iw, bd.ih);
+      ctx.restore();
+
+ctx.fillStyle = '#000';
+ctx.font = '11px Arial';
+ctx.fillText(
+  String(r.psn || ''),
+  boxX + 8,
+  boxY + barcodePadding + bd.ih + 14
+);
+    } else {
+      ctx.fillStyle = '#c00';
+      ctx.font = '12px Arial';
+      ctx.fillText('Barcode nicht ladbar', boxX + 8, boxY + 22);
+    }
+
+    ctx.strokeStyle = '#eee';
+    ctx.beginPath();
+    ctx.moveTo(pad, y + rowH);
+    ctx.lineTo(widthCss - pad, y + rowH);
+    ctx.stroke();
+
+    yCursor += rowH;
+  }
+
+  return canvas;
+}
   // =========================
   // Row Counter in Button Labels
   // =========================
@@ -605,13 +869,11 @@
   function startRowCountAutoUpdate(doc, containerEl) {
     if (!containerEl) return;
 
-    const btnList = containerEl.querySelector('#tm-copy-list');
     const btnImg  = containerEl.querySelector('#tm-copy-img');
     const btnCode = containerEl.querySelector('#tm-copy-with-code');
 
-    if (!btnList && !btnImg && !btnCode) return;
+    if (!btnImg && !btnCode) return;
 
-    if (btnList && !btnList.dataset.baseText) btnList.dataset.baseText = (btnList.textContent || 'Liste kopieren');
     if (btnImg  && !btnImg.dataset.baseText)  btnImg.dataset.baseText  = (btnImg.textContent  || 'Kopie');
     if (btnCode && !btnCode.dataset.baseText) btnCode.dataset.baseText = (btnCode.textContent || 'Kopie mit Code');
 
@@ -625,7 +887,6 @@
       if (n === last) return;
       last = n;
 
-      if (btnList && !btnList.disabled) btnList.textContent = formatCopyLabel(btnList.dataset.baseText, n);
       if (btnImg  && !btnImg.disabled)  btnImg.textContent  = formatCopyLabel(btnImg.dataset.baseText,  n);
       if (btnCode && !btnCode.disabled) btnCode.textContent = formatCopyLabel(btnCode.dataset.baseText, n);
     };
@@ -639,7 +900,7 @@
   }
 
   // =========================
-  // Übersicht: Systempartner -> Anzahl
+  // Übersicht: Hintergrundabfrage + Copy + Popup
   // =========================
 
   function isVisibleInput(el) {
@@ -727,45 +988,6 @@
     return await resp.text();
   }
 
-  function countRowsInReportHtml(html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-
-    const tables = Array.from(doc.querySelectorAll('table'));
-    if (!tables.length) return 0;
-
-    let best = null;
-    let bestScore = -1;
-    for (const t of tables) {
-      const s = scoreTable(t);
-      if (s > bestScore) { bestScore = s; best = t; }
-    }
-    const table = best || tables[0];
-
-    const headerRow = getHeaderRow(table);
-    if (!headerRow) return 0;
-
-    const allRows = Array.from(table.querySelectorAll('tr'));
-    const headerIndex = allRows.indexOf(headerRow);
-
-    const colMap = getColumnIndexMap(headerRow);
-    const psnIdx = resolveIdx(colMap, 'paketscheinnummer') ?? 0;
-
-    let cnt = 0;
-    for (let i = headerIndex + 1; i < allRows.length; i++) {
-      const tr = allRows[i];
-      const tds = Array.from(tr.querySelectorAll('td'));
-      if (!tds.length) continue;
-
-      const psn = (tds[psnIdx]?.textContent || '').trim();
-      if (!psn) continue;
-      if (!/^\d/.test(psn)) continue;
-
-      cnt++;
-    }
-    return cnt;
-  }
-
   function getSystempartnerOptions(doc) {
     const sel = doc.querySelector('select[name="systempartner"]');
     if (!sel) return [];
@@ -794,12 +1016,13 @@
     const box = doc.createElement('div');
     Object.assign(box.style, {
       background: '#fff',
-      borderRadius: '6px',
-      minWidth: '540px',
-      maxWidth: '92vw',
-      maxHeight: '80vh',
+      borderRadius: '8px',
+      width: 'min(980px, calc(100vw - 32px))',
+      minWidth: '0',
+      maxWidth: '98vw',
+      maxHeight: '82vh',
       overflow: 'auto',
-      boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+      boxShadow: '0 12px 34px rgba(0,0,0,0.38)',
       fontFamily: 'Arial, sans-serif',
       fontSize: '12px',
       position: 'relative'
@@ -820,16 +1043,28 @@
     });
 
     const title = doc.createElement('div');
-    title.textContent = 'Übersicht – Systempartner (Anzahl angezeigter Zeilen)';
+    title.textContent = 'Übersicht – Systempartner (Anzahl angezeigter Zeilen + Direkt-Kopie + QR-Popup)';
     title.style.fontWeight = 'bold';
 
     const sub = doc.createElement('div');
     sub.style.color = '#666';
     sub.style.marginTop = '2px';
+  sub.style.fontSize = '11px';
 
     const left = doc.createElement('div');
     left.appendChild(title);
     left.appendChild(sub);
+
+    const right = doc.createElement('div');
+    right.style.display = 'flex';
+    right.style.alignItems = 'center';
+    right.style.gap = '6px';
+
+    const btnRefresh = doc.createElement('button');
+    btnRefresh.type = 'button';
+    btnRefresh.textContent = 'Aktualisieren';
+    btnRefresh.style.padding = '3px 8px';
+    btnRefresh.style.cursor = 'pointer';
 
     const btnClose = doc.createElement('button');
     btnClose.type = 'button';
@@ -837,8 +1072,11 @@
     btnClose.style.padding = '3px 8px';
     btnClose.style.cursor = 'pointer';
 
+    right.appendChild(btnRefresh);
+    right.appendChild(btnClose);
+
     head.appendChild(left);
-    head.appendChild(btnClose);
+    head.appendChild(right);
 
     const body = doc.createElement('div');
     body.style.padding = '10px 12px 44px 12px';
@@ -849,6 +1087,14 @@
 
     const thead = doc.createElement('thead');
     const thr = doc.createElement('tr');
+
+    const th0 = doc.createElement('th');
+    th0.textContent = '▦';
+    th0.title = 'QR/Barcodes';
+    th0.style.width = '48px';
+    th0.style.borderBottom = '1px solid #ddd';
+    th0.style.padding = '6px 6px';
+    th0.style.textAlign = 'center';
 
     const th1 = doc.createElement('th');
     th1.textContent = 'Systempartner';
@@ -861,10 +1107,19 @@
     th2.style.textAlign = 'right';
     th2.style.borderBottom = '1px solid #ddd';
     th2.style.padding = '6px 6px';
-    th2.style.width = '140px';
+    th2.style.width = '120px';
 
+    const th3 = doc.createElement('th');
+    th3.textContent = 'Kopieren';
+    th3.style.textAlign = 'center';
+    th3.style.borderBottom = '1px solid #ddd';
+    th3.style.padding = '6px 6px';
+    th3.style.width = '110px';
+
+    thr.appendChild(th0);
     thr.appendChild(th1);
     thr.appendChild(th2);
+    thr.appendChild(th3);
     thead.appendChild(thr);
     table.appendChild(thead);
 
@@ -880,12 +1135,15 @@
       background: '#fff',
       borderTop: '2px solid #ddd',
       padding: '8px 12px',
-      display: 'flex',
-      justifyContent: 'space-between',
+      display: 'grid',
+      gridTemplateColumns: '48px 1fr 120px 110px',
       alignItems: 'center',
+      columnGap: '0',
       fontWeight: 'bold',
       zIndex: '2'
     });
+
+    const sumQr = doc.createElement('div');
 
     const sumLabel = doc.createElement('div');
     sumLabel.textContent = 'Summe';
@@ -893,48 +1151,1010 @@
     const sumCell = doc.createElement('div');
     sumCell.textContent = '0';
     sumCell.style.fontVariantNumeric = 'tabular-nums';
+    sumCell.style.textAlign = 'right';
 
+    const btnCopyAll = doc.createElement('button');
+    btnCopyAll.type = 'button';
+    btnCopyAll.textContent = 'Kopieren';
+    btnCopyAll.title = 'Alle geladenen Daten als Bild kopieren';
+    btnCopyAll.style.cursor = 'pointer';
+    btnCopyAll.style.justifySelf = 'center';
+
+    sticky.appendChild(sumQr);
     sticky.appendChild(sumLabel);
     sticky.appendChild(sumCell);
+    sticky.appendChild(btnCopyAll);
 
     box.appendChild(head);
     box.appendChild(body);
     box.appendChild(sticky);
     overlay.appendChild(box);
 
+    let closed = false;
+
     const close = () => {
+      if (closed) return;
+      closed = true;
       try { overlay.remove(); } catch {}
-      try { doc.removeEventListener('click', outsideClickCapture, true); } catch {}
       try { doc.removeEventListener('keydown', escClose, true); } catch {}
     };
 
-    const outsideClickCapture = (e) => {
-      if (!overlay.isConnected) return;
-      if (!box.contains(e.target)) close();
-    };
-
     const escClose = (e) => {
-      if (e.key === 'Escape') close();
+      if (!overlay.isConnected) return;
+      if (e.key !== 'Escape') return;
+
+      const allOverlays = Array.from(doc.querySelectorAll('div')).filter(el =>
+        el.style &&
+        el.style.position === 'fixed' &&
+        (el.style.zIndex === '1000000' || el.style.zIndex === '1000003')
+      );
+      const topMost = allOverlays[allOverlays.length - 1];
+      if (topMost === overlay) close();
     };
 
-    doc.addEventListener('click', outsideClickCapture, true);
     doc.addEventListener('keydown', escClose, true);
 
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) close();
-    });
-
-    box.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
-
-    btnClose.addEventListener('click', (e) => {
+    btnClose.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       close();
+    };
+
+    overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    }, true);
+
+    box.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+    }, true);
+
+    return { overlay, sub, tbody, sumCell, btnCopyAll, btnRefresh, close, sortHeaders: { th1, th2 } };
+  }
+  function createTinyActionButton(doc, label, title) {
+    const btn = doc.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.title = title;
+    Object.assign(btn.style, {
+      padding: '1px 6px',
+      margin: '0 2px',
+      minWidth: '22px',
+      height: '22px',
+      lineHeight: '18px',
+      cursor: 'pointer',
+      fontSize: '12px'
+    });
+    return btn;
+  }
+
+
+  // =========================
+  // Sortierung in Script-Tabellen
+  // =========================
+
+  function getSortableTextValue(v) {
+    return String(v ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  function compareSmartValues(a, b) {
+    const av = getSortableTextValue(a);
+    const bv = getSortableTextValue(b);
+
+    const an = Number(av.replace(/\./g, '').replace(',', '.'));
+    const bn = Number(bv.replace(/\./g, '').replace(',', '.'));
+
+    const aIsNum = av !== '' && !Number.isNaN(an) && /^-?\d+([.,]\d+)?$/.test(av.replace(/\./g, ''));
+    const bIsNum = bv !== '' && !Number.isNaN(bn) && /^-?\d+([.,]\d+)?$/.test(bv.replace(/\./g, ''));
+
+    if (aIsNum && bIsNum) return an - bn;
+
+    return av.localeCompare(bv, 'de', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+  }
+
+  function applySortableHeader(doc, th, label, key, sortState, renderFn) {
+    th.dataset.sortLabel = label;
+    th.dataset.sortKey = key;
+    th.title = 'Sortieren nach ' + label;
+    th.style.cursor = 'pointer';
+    th.style.userSelect = 'none';
+
+    if (th._tmSortHandler) {
+      try { th.removeEventListener('click', th._tmSortHandler); } catch {}
+    }
+
+    th._tmSortHandler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (sortState.key === key) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState.key = key;
+        sortState.dir = 'asc';
+      }
+
+      renderFn();
+    };
+
+    th.addEventListener('click', th._tmSortHandler);
+  }
+
+  function updateSortableHeaderLabels(headers, sortState) {
+    for (const h of headers) {
+      const label = h.dataset.sortLabel || h.textContent || '';
+      if (h.dataset.sortKey && sortState.key === h.dataset.sortKey) {
+        h.textContent = label + (sortState.dir === 'asc' ? ' ▲' : ' ▼');
+      } else {
+        h.textContent = label;
+      }
+    }
+  }
+
+
+  async function fetchReportRowsForSystempartner(baseUrl, baseParams, option) {
+    const p = new URLSearchParams(baseParams.toString());
+    const sp = option.value || option.label;
+    p.set('systempartner', sp);
+
+    const url = baseUrl + '?' + p.toString();
+    const html = await fetchHtml(url);
+    const rows = extractRowsFromHtml(html);
+
+    return { url, html, rows };
+  }
+
+  async function copyRowsAsImage(rows, withBarcode = false) {
+    const canvas = await buildScreenshotCanvas(rows, { withBarcode });
+    const ok = await copyCanvas(canvas);
+    if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+  }
+
+  function normalizeName(name) {
+    return String(name || '').trim().toLowerCase();
+  }
+
+  function getConfiguredToursForPartner(label) {
+    const cfg = loadConfig();
+    const norm = normalizeName(label);
+    const entry = cfg.find(p => normalizeName(p.name) === norm);
+    return entry && Array.isArray(entry.tours) ? entry.tours.map(String).filter(Boolean) : [];
+  }
+
+function createBarcodeOverlayForDoc(doc) {
+  let overlay = doc.getElementById('tm-barcode-overlay');
+  if (overlay) return overlay;
+
+  overlay = doc.createElement('div');
+  overlay.id = 'tm-barcode-overlay';
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'none',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.7)',
+    zIndex: '1000004'
+  });
+
+  const box = doc.createElement('div');
+  Object.assign(box.style, {
+    background: '#fff',
+    padding: '12px',
+    borderRadius: '4px',
+    textAlign: 'center',
+    boxShadow: '0 0 20px #000',
+    maxWidth: '95vw',
+    maxHeight: '90vh'
+  });
+
+  const img = doc.createElement('img');
+  img.id = 'tm-barcode-overlay-img';
+  Object.assign(img.style, {
+    maxWidth: '90vw',
+    maxHeight: '70vh',
+    marginBottom: '8px',
+    display: 'block'
+  });
+
+  const info = doc.createElement('div');
+  info.id = 'tm-barcode-overlay-info';
+  Object.assign(info.style, {
+    marginBottom: '8px',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '12px',
+    color: '#333'
+  });
+
+  const btnCopy = doc.createElement('button');
+  btnCopy.type = 'button';
+  btnCopy.textContent = '▣  Kopieren';
+  btnCopy.style.margin = '4px';
+
+  const btnClose = doc.createElement('button');
+  btnClose.type = 'button';
+  btnClose.textContent = 'Schließen';
+  btnClose.style.margin = '4px';
+
+  box.appendChild(img);
+  box.appendChild(info);
+  box.appendChild(btnCopy);
+  box.appendChild(btnClose);
+  overlay.appendChild(box);
+  doc.body.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.style.display = 'none';
+  });
+
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  btnClose.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    overlay.style.display = 'none';
+  });
+
+  doc.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.style.display !== 'none') {
+      overlay.style.display = 'none';
+    }
+  }, true);
+
+  btnCopy.addEventListener('click', async () => {
+    if (!img.src) return;
+
+    const old = btnCopy.textContent;
+    btnCopy.disabled = true;
+    btnCopy.textContent = 'Kopiere...';
+
+    try {
+      const image = await fetchImageBitmap(img.src);
+
+      const canvas = doc.createElement('canvas');
+      const iw = image?.width || image?.naturalWidth || 0;
+      const ih = image?.height || image?.naturalHeight || 0;
+      if (!iw || !ih) throw new Error('Barcode-Bild nicht lesbar.');
+
+      canvas.width = iw;
+      canvas.height = ih;
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, iw, ih);
+      ctx.drawImage(image, 0, 0, iw, ih);
+
+      const ok = await copyCanvas(canvas);
+      if (!ok) throw new Error('Kopieren vom Browser blockiert.');
+
+      btnCopy.textContent = 'Kopiert ✓';
+      setTimeout(() => {
+        btnCopy.textContent = old;
+        btnCopy.disabled = false;
+      }, 1200);
+    } catch (e) {
+      console.error(e);
+      btnCopy.textContent = old;
+      btnCopy.disabled = false;
+      alert('Kopieren fehlgeschlagen:\n' + (e?.message || String(e)));
+    }
+  });
+
+  return overlay;
+}
+
+function openBarcodeOverlay(doc, row) {
+  const overlay = createBarcodeOverlayForDoc(doc);
+  const img = overlay.querySelector('#tm-barcode-overlay-img');
+  const info = overlay.querySelector('#tm-barcode-overlay-info');
+
+  const plzValue = String(row?.plz || '').trim().replace(/\D/g, '').slice(0, 5);
+  const paketNr = String(row?.psn || '').trim();
+  const soCode = String(row?.so || '').trim();
+
+  if (!plzValue || !paketNr || !soCode) {
+    alert('Barcode kann nicht erzeugt werden: PLZ, PSN oder SO fehlt.');
+    return;
+  }
+
+  const finalBarcode = buildFinalBarcodeFromRow(plzValue, paketNr, soCode);
+  const url = buildCode128Url(finalBarcode);
+
+  img.src = url;
+  info.textContent = 'PSN: ' + paketNr + ' | SO: ' + soCode + ' | PLZ: ' + plzValue;
+  overlay.style.display = 'flex';
+}
+
+function createRowsPreviewOverlay(doc, partnerLabel, rows) {
+  const sourceRows = Array.isArray(rows) ? rows.slice() : [];
+  let displayRows = sourceRows.slice();
+  const sortState = { key: '', dir: 'asc' };
+  const headerCells = [];
+  const selectedRows = new Set();
+
+  const overlay = doc.createElement('div');
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    background: 'rgba(0,0,0,0.45)',
+    zIndex: '1000003',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingTop: '50px'
+  });
+
+  const box = doc.createElement('div');
+  Object.assign(box.style, {
+    background: '#fff',
+    borderRadius: '6px',
+    width: 'min(1450px, calc(100vw - 16px))',
+    maxWidth: 'calc(100vw - 8px)',
+    maxHeight: '92vh',
+    overflow: 'hidden',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '12px',
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column'
+  });
+
+  const head = doc.createElement('div');
+  Object.assign(head.style, {
+    padding: '8px 10px',
+    borderBottom: '1px solid #e5e5e5',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    background: '#fff',
+    flexWrap: 'nowrap'
+  });
+
+  const left = doc.createElement('div');
+
+  const title = doc.createElement('div');
+  title.textContent = 'Details – ' + partnerLabel;
+  title.style.fontWeight = 'bold';
+  title.style.fontSize = '13px';
+  title.style.lineHeight = '16px';
+
+  const sub = doc.createElement('div');
+  sub.textContent = 'Zeilen: ' + displayRows.length;
+  sub.style.color = '#666';
+  sub.style.marginTop = '2px';
+  sub.style.fontSize = '11px';
+
+  left.appendChild(title);
+  left.appendChild(sub);
+
+  const right = doc.createElement('div');
+  right.style.display = 'flex';
+  right.style.alignItems = 'center';
+  right.style.gap = '4px';
+  right.style.flexWrap = 'nowrap';
+  right.style.marginTop = '0';
+  right.style.marginLeft = '8px';
+
+  const btnCopy = doc.createElement('button');
+  btnCopy.type = 'button';
+  btnCopy.textContent = 'Kopieren';
+  btnCopy.title = 'Kopiert die aktuell angezeigte Sortierung als Bild';
+  btnCopy.style.padding = '3px 8px';
+  btnCopy.style.cursor = 'pointer';
+  btnCopy.style.fontSize = '11px';
+
+  const btnCopyCode = doc.createElement('button');
+  btnCopyCode.type = 'button';
+  btnCopyCode.textContent = 'Kopieren mit Code';
+  btnCopyCode.title = 'Kopiert die aktuell angezeigte Sortierung inkl. Barcode je Zeile';
+  btnCopyCode.style.padding = '3px 8px';
+  btnCopyCode.style.cursor = 'pointer';
+  btnCopyCode.style.fontSize = '11px';
+
+  const btnCopySelected = doc.createElement('button');
+  btnCopySelected.type = 'button';
+  btnCopySelected.textContent = 'Auswahl kopieren';
+  btnCopySelected.title = 'Kopiert nur die vorne angehakten Zeilen als Bild';
+  btnCopySelected.style.padding = '3px 8px';
+  btnCopySelected.style.cursor = 'pointer';
+  btnCopySelected.style.fontSize = '11px';
+
+  const btnCopySelectedCode = doc.createElement('button');
+  btnCopySelectedCode.type = 'button';
+  btnCopySelectedCode.textContent = 'Auswahl kopieren mit Code';
+  btnCopySelectedCode.title = 'Kopiert nur die vorne angehakten Zeilen inkl. Barcode je Zeile';
+  btnCopySelectedCode.style.padding = '3px 8px';
+  btnCopySelectedCode.style.cursor = 'pointer';
+  btnCopySelectedCode.style.fontSize = '11px';
+
+  const btnShowSelectedCode = doc.createElement('button');
+  btnShowSelectedCode.type = 'button';
+  btnShowSelectedCode.textContent = 'Auswahl anzeigen mit Code';
+  btnShowSelectedCode.title = 'Zeigt nur die vorne angehakten Zeilen mit Barcode in einem eigenen Fenster';
+  btnShowSelectedCode.style.padding = '3px 8px';
+  btnShowSelectedCode.style.cursor = 'pointer';
+  btnShowSelectedCode.style.fontSize = '11px';
+
+  const btnClose = doc.createElement('button');
+  btnClose.type = 'button';
+  btnClose.textContent = 'Schließen';
+  btnClose.style.padding = '3px 8px';
+  btnClose.style.cursor = 'pointer';
+  btnClose.style.fontSize = '11px';
+
+  right.appendChild(btnCopy);
+  right.appendChild(btnCopyCode);
+  right.appendChild(btnCopySelected);
+  right.appendChild(btnCopySelectedCode);
+  right.appendChild(btnShowSelectedCode);
+  right.appendChild(btnClose);
+
+  head.appendChild(left);
+  head.appendChild(right);
+
+  const body = doc.createElement('div');
+  Object.assign(body.style, {
+    overflow: 'auto',
+    padding: '0',
+    background: '#fff',
+    flex: '1 1 auto'
+  });
+
+  const table = doc.createElement('table');
+  Object.assign(table.style, {
+    width: '100%',
+    minWidth: '0',
+    borderCollapse: 'collapse',
+    tableLayout: 'auto',
+    fontSize: '11px'
+  });
+
+  const thead = doc.createElement('thead');
+  const hr = doc.createElement('tr');
+
+  const headers = [
+    { label: '', key: '', width: '4%', align: 'center', selectCol: true },
+    { label: 'III', key: '', width: '5%', align: 'center' },
+    { label: 'Paketscheinnummer', key: 'psn', width: '16%', align: 'left' },
+    { label: 'SO', key: 'so', width: '5%', align: 'left' },
+    { label: 'Zusatzcodes', key: 'zc', width: '9%', align: 'left' },
+    { label: 'PLZ', key: 'plz', width: '6%', align: 'left' },
+    { label: 'Ort', key: 'ort', width: '12%', align: 'left' },
+    { label: 'Straße', key: 'str', width: '18%', align: 'left' },
+    { label: 'Name', key: 'name', width: '19%', align: 'left' },
+    { label: 'Umverfügung', key: 'umv', width: '6%', align: 'left' }
+  ];
+
+  let selectAllBox = null;
+
+  headers.forEach((h) => {
+    const th = doc.createElement('th');
+    th.textContent = h.label;
+    Object.assign(th.style, {
+      position: 'sticky',
+      top: '0',
+      background: '#f5f5f5',
+      borderBottom: '1px solid #dcdcdc',
+      padding: h.selectCol ? '4px 6px' : '4px 6px',
+      textAlign: h.align,
+      fontWeight: 'bold',
+      fontSize: '11px',
+      width: h.width,
+      zIndex: '1'
     });
 
-    return { overlay, sub, tbody, sumCell, close };
+    if (h.selectCol) {
+      selectAllBox = doc.createElement('input');
+      selectAllBox.type = 'checkbox';
+      selectAllBox.title = 'Alle angezeigten Zeilen auswählen/abwählen';
+      Object.assign(selectAllBox.style, {
+        cursor: 'pointer',
+        width: '13px',
+        height: '13px',
+        margin: '0',
+        verticalAlign: 'middle',
+        display: 'inline-block',
+        opacity: '1',
+        position: 'static',
+        appearance: 'auto',
+        WebkitAppearance: 'checkbox',
+        MozAppearance: 'checkbox'
+      });
+      function toggleAllRowsFromHeader(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+
+        const totalCount = displayRows.length;
+        const selectedCount = getSelectedDisplayRows().length;
+        const shouldSelectAll = totalCount > 0 && selectedCount < totalCount;
+
+        if (shouldSelectAll) {
+          displayRows.forEach(r => selectedRows.add(r));
+        } else {
+          displayRows.forEach(r => selectedRows.delete(r));
+        }
+
+        renderRows();
+      }
+
+      selectAllBox.addEventListener('click', toggleAllRowsFromHeader);
+      th.addEventListener('click', toggleAllRowsFromHeader);
+      th.textContent = '';
+      th.appendChild(selectAllBox);
+    }
+
+    if (h.key) applySortableHeader(doc, th, h.label, h.key, sortState, renderRows);
+    headerCells.push(th);
+    hr.appendChild(th);
+  });
+
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = doc.createElement('tbody');
+
+  function rowValue(row, key) {
+    if (key === 'name') return (String(row.name1 || '') + (row.name2 ? ' ' + row.name2 : '')).trim();
+    return row[key] || '';
+  }
+
+  function sortDisplayRows() {
+    displayRows = sourceRows.slice();
+    if (!sortState.key) return;
+
+    displayRows.sort((a, b) => {
+      const res = compareSmartValues(rowValue(a, sortState.key), rowValue(b, sortState.key));
+      return sortState.dir === 'asc' ? res : -res;
+    });
+  }
+
+  function getSelectedDisplayRows() {
+    return displayRows.filter(r => selectedRows.has(r));
+  }
+
+  function updateSelectionUi() {
+    const selectedCount = getSelectedDisplayRows().length;
+    const totalCount = displayRows.length;
+
+    if (selectAllBox) {
+      selectAllBox.checked = totalCount > 0 && selectedCount === totalCount;
+      selectAllBox.indeterminate = selectedCount > 0 && selectedCount < totalCount;
+    }
+
+    btnCopySelected.textContent = selectedCount ? `Auswahl kopieren (${selectedCount})` : 'Auswahl kopieren';
+    btnCopySelectedCode.textContent = selectedCount ? `Auswahl kopieren mit Code (${selectedCount})` : 'Auswahl kopieren mit Code';
+    btnShowSelectedCode.textContent = selectedCount ? `Auswahl anzeigen mit Code (${selectedCount})` : 'Auswahl anzeigen mit Code';
+  }
+
+  function renderRows() {
+    sortDisplayRows();
+    updateSortableHeaderLabels(headerCells.filter(h => h.dataset && h.dataset.sortKey), sortState);
+    tbody.innerHTML = '';
+    sub.textContent = 'Zeilen: ' + displayRows.length + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
+
+    displayRows.forEach((r, idx) => {
+      const tr = doc.createElement('tr');
+      tr.style.background = idx % 2 === 1 ? '#fafafa' : '#fff';
+
+      const tdSelect = doc.createElement('td');
+      Object.assign(tdSelect.style, {
+        borderBottom: '1px solid #efefef',
+        padding: '4px 6px',
+        verticalAlign: 'middle',
+        textAlign: 'center'
+      });
+
+      const rowCheck = doc.createElement('input');
+      rowCheck.type = 'checkbox';
+      rowCheck.checked = selectedRows.has(r);
+      rowCheck.title = 'Diese Zeile für Auswahl-Kopie markieren';
+      Object.assign(rowCheck.style, {
+        cursor: 'pointer',
+        width: '13px',
+        height: '13px',
+        margin: '0',
+        verticalAlign: 'middle',
+        display: 'inline-block',
+        opacity: '1',
+        position: 'static',
+        appearance: 'auto',
+        WebkitAppearance: 'checkbox',
+        MozAppearance: 'checkbox'
+      });
+      rowCheck.addEventListener('click', (e) => e.stopPropagation());
+      rowCheck.addEventListener('change', () => {
+        if (rowCheck.checked) selectedRows.add(r);
+        else selectedRows.delete(r);
+        updateSelectionUi();
+      });
+      tdSelect.appendChild(rowCheck);
+      tr.appendChild(tdSelect);
+
+      const tdBarcode = doc.createElement('td');
+      Object.assign(tdBarcode.style, {
+        borderBottom: '1px solid #efefef',
+        padding: '4px 6px',
+        verticalAlign: 'middle',
+        textAlign: 'center'
+      });
+
+      const barcodeLink = doc.createElement('a');
+      barcodeLink.href = '#';
+      barcodeLink.textContent = 'III';
+      barcodeLink.title = 'Strichcode anzeigen';
+      barcodeLink.style.textDecoration = 'underline';
+      barcodeLink.style.cursor = 'pointer';
+
+      barcodeLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openBarcodeOverlay(doc, r);
+      });
+
+      tdBarcode.appendChild(barcodeLink);
+      tr.appendChild(tdBarcode);
+
+      const cells = [
+        r.psn || '',
+        r.so || '',
+        r.zc || '',
+        r.plz || '',
+        r.ort || '',
+        r.str || '',
+        (String(r.name1 || '') + (r.name2 ? ' ' + r.name2 : '')).trim(),
+        r.umv || ''
+      ];
+
+      cells.forEach((val, i) => {
+        const td = doc.createElement('td');
+
+        if (i === 0 && cleanPsn(val)) {
+          const psnLink = doc.createElement('a');
+          psnLink.href = buildDepotportalUrl(val);
+          psnLink.target = '_blank';
+          psnLink.rel = 'noopener';
+          psnLink.textContent = val;
+          psnLink.title = 'Paketscheinnummer im Depotportal öffnen';
+          psnLink.style.textDecoration = 'underline';
+          psnLink.style.cursor = 'pointer';
+          psnLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openDepotportalTracking(val);
+          });
+          td.appendChild(psnLink);
+        } else {
+          td.textContent = val;
+        }
+
+        Object.assign(td.style, {
+          borderBottom: '1px solid #efefef',
+          padding: '4px 6px',
+          verticalAlign: 'middle',
+          wordBreak: i === 0 ? 'break-all' : 'break-word',
+          fontVariantNumeric: i <= 3 ? 'tabular-nums' : 'normal'
+        });
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+
+    updateSelectionUi();
+  }
+
+  table.appendChild(tbody);
+  body.appendChild(table);
+
+  const foot = doc.createElement('div');
+  Object.assign(foot.style, {
+    padding: '8px 12px',
+    borderTop: '1px solid #eee',
+    textAlign: 'center',
+    background: '#fff'
+  });
+
+  const btnCloseBottom = doc.createElement('button');
+  btnCloseBottom.type = 'button';
+  btnCloseBottom.textContent = 'Schließen';
+  Object.assign(btnCloseBottom.style, {
+    padding: '4px 24px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    border: '1px solid #cfcfcf',
+    borderRadius: '4px',
+    background: '#fff'
+  });
+  foot.appendChild(btnCloseBottom);
+
+  box.appendChild(head);
+  box.appendChild(body);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+
+  const close = () => {
+    try { overlay.remove(); } catch {}
+    try { doc.removeEventListener('keydown', escClose, true); } catch {}
+    try { doc.removeEventListener('click', outsideClickCapture, true); } catch {}
+  };
+
+  const escClose = (e) => {
+    if (e.key === 'Escape') close();
+  };
+
+  const outsideClickCapture = (e) => {
+    if (!overlay.isConnected) return;
+    const barcodeOverlay = doc.getElementById('tm-barcode-overlay');
+    if (barcodeOverlay && barcodeOverlay.style.display !== 'none') return;
+    if (!box.contains(e.target)) close();
+  };
+
+  btnClose.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  });
+
+  btnCloseBottom.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  });
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  doc.addEventListener('keydown', escClose, true);
+  doc.addEventListener('click', outsideClickCapture, true);
+
+  async function showSelectedRowsWithBarcodeWindow(rowsToShow) {
+    if (!Array.isArray(rowsToShow) || !rowsToShow.length) {
+      alert('Keine Zeilen ausgewählt.');
+      return;
+    }
+
+    const bad = rowsToShow.find(r => !r.plz || !r.psn || !r.so);
+    if (bad) {
+      alert('Anzeige mit Code nicht möglich:\nFehlende Daten für Barcode.');
+      return;
+    }
+
+    const previewOverlay = doc.createElement('div');
+    Object.assign(previewOverlay.style, {
+      position: 'fixed',
+      inset: '0',
+      background: 'rgba(0,0,0,0.45)',
+      zIndex: '1000005',
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+      paddingTop: '45px'
+    });
+
+    const previewBox = doc.createElement('div');
+    Object.assign(previewBox.style, {
+      background: '#fff',
+      borderRadius: '6px',
+      width: 'min(1100px, calc(100vw - 32px))',
+      maxWidth: '98vw',
+      maxHeight: '90vh',
+      overflow: 'hidden',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '12px',
+      display: 'flex',
+      flexDirection: 'column'
+    });
+
+    const previewHead = doc.createElement('div');
+    Object.assign(previewHead.style, {
+      padding: '10px 12px',
+      borderBottom: '1px solid #e5e5e5',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '10px',
+      background: '#fff'
+    });
+
+    const previewTitle = doc.createElement('div');
+    previewTitle.textContent = 'Auswahl mit Barcode – ' + partnerLabel + ' (' + rowsToShow.length + ')';
+    previewTitle.style.fontWeight = 'bold';
+
+    const previewActions = doc.createElement('div');
+    previewActions.style.display = 'flex';
+    previewActions.style.gap = '6px';
+
+    const previewCopy = doc.createElement('button');
+    previewCopy.type = 'button';
+    previewCopy.textContent = 'Bild kopieren';
+    previewCopy.style.padding = '4px 8px';
+    previewCopy.style.cursor = 'pointer';
+
+    const previewClose = doc.createElement('button');
+    previewClose.type = 'button';
+    previewClose.textContent = 'Schließen';
+    previewClose.style.padding = '4px 8px';
+    previewClose.style.cursor = 'pointer';
+
+    previewActions.appendChild(previewCopy);
+    previewActions.appendChild(previewClose);
+    previewHead.appendChild(previewTitle);
+    previewHead.appendChild(previewActions);
+
+    const previewBody = doc.createElement('div');
+    Object.assign(previewBody.style, {
+      overflow: 'auto',
+      padding: '12px',
+      background: '#f7f7f7',
+      flex: '1 1 auto',
+      textAlign: 'center'
+    });
+
+    const loading = doc.createElement('div');
+    loading.textContent = 'Barcode-Vorschau wird aufgebaut...';
+    loading.style.padding = '20px';
+    previewBody.appendChild(loading);
+
+    previewBox.appendChild(previewHead);
+    previewBox.appendChild(previewBody);
+    previewOverlay.appendChild(previewBox);
+    doc.body.appendChild(previewOverlay);
+
+    const closePreview = () => {
+      try { previewOverlay.remove(); } catch {}
+      try { doc.removeEventListener('keydown', escPreviewClose, true); } catch {}
+    };
+
+    const escPreviewClose = (e) => {
+      if (e.key === 'Escape') closePreview();
+    };
+
+    previewClose.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closePreview();
+    });
+
+    previewOverlay.addEventListener('click', (e) => {
+      if (e.target === previewOverlay) closePreview();
+    });
+
+    previewBox.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    doc.addEventListener('keydown', escPreviewClose, true);
+
+    try {
+      const canvas = await buildScreenshotCanvas(rowsToShow, { withBarcode: true });
+      const img = doc.createElement('img');
+      img.alt = 'Auswahl mit Barcode';
+      img.src = canvas.toDataURL('image/png');
+      Object.assign(img.style, {
+        maxWidth: '100%',
+        height: 'auto',
+        background: '#fff',
+        boxShadow: '0 1px 8px rgba(0,0,0,0.18)'
+      });
+
+      previewBody.innerHTML = '';
+      previewBody.appendChild(img);
+
+      previewCopy.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const old = previewCopy.textContent;
+        previewCopy.disabled = true;
+        previewCopy.textContent = 'Kopiere...';
+        try {
+          const ok = await copyCanvas(canvas);
+          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+          previewCopy.textContent = 'Kopiert ✓';
+          setTimeout(() => {
+            previewCopy.textContent = old;
+            previewCopy.disabled = false;
+          }, 1200);
+        } catch (e2) {
+          console.error(e2);
+          previewCopy.textContent = old;
+          previewCopy.disabled = false;
+          alert('Kopie fehlgeschlagen:\n' + (e2?.message || String(e2)));
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      previewBody.innerHTML = '';
+      const err = doc.createElement('div');
+      err.textContent = 'Barcode-Vorschau fehlgeschlagen: ' + (e?.message || String(e));
+      err.style.color = '#c00';
+      err.style.padding = '20px';
+      previewBody.appendChild(err);
+    }
+  }
+
+  async function handleCopyButton(btn, rowsToCopy, withBarcode, emptyMessage, errorTitle) {
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Kopiere...';
+    try {
+      if (!Array.isArray(rowsToCopy) || !rowsToCopy.length) {
+        throw new Error(emptyMessage || 'Keine Zeilen ausgewählt.');
+      }
+
+      if (withBarcode) {
+        const bad = rowsToCopy.find(r => !r.plz || !r.psn || !r.so);
+        if (bad) throw new Error('Fehlende Daten für Barcode.');
+      }
+
+      await copyRowsAsImage(rowsToCopy, withBarcode);
+
+      btn.textContent = 'Kopiert ✓';
+      setTimeout(() => {
+        btn.textContent = old;
+        btn.disabled = false;
+        updateSelectionUi();
+      }, 1200);
+    } catch (e) {
+      console.error(e);
+      btn.textContent = old;
+      btn.disabled = false;
+      updateSelectionUi();
+      alert(errorTitle + ':\n' + (e?.message || String(e)));
+    }
+  }
+
+  btnCopy.addEventListener('click', async () => {
+    await handleCopyButton(btnCopy, displayRows, false, 'Keine Zeilen vorhanden.', 'Kopie fehlgeschlagen');
+  });
+
+  btnCopyCode.addEventListener('click', async () => {
+    await handleCopyButton(btnCopyCode, displayRows, true, 'Keine Zeilen vorhanden.', 'Kopie mit Code fehlgeschlagen');
+  });
+
+  btnCopySelected.addEventListener('click', async () => {
+    await handleCopyButton(btnCopySelected, getSelectedDisplayRows(), false, 'Keine Zeilen ausgewählt.', 'Auswahl-Kopie fehlgeschlagen');
+  });
+
+  btnCopySelectedCode.addEventListener('click', async () => {
+    await handleCopyButton(btnCopySelectedCode, getSelectedDisplayRows(), true, 'Keine Zeilen ausgewählt.', 'Auswahl-Kopie mit Code fehlgeschlagen');
+  });
+
+  btnShowSelectedCode.addEventListener('click', async () => {
+    await showSelectedRowsWithBarcodeWindow(getSelectedDisplayRows());
+  });
+
+  renderRows();
+
+  return { overlay, close };
+}
+
+  async function showRowsPreviewPopup(doc, partnerLabel, rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      alert('Keine Zeilen vorhanden.');
+      return;
+    }
+
+    const ui = createRowsPreviewOverlay(doc, partnerLabel, rows);
+    doc.body.appendChild(ui.overlay);
   }
 
   async function runOverview(doc) {
@@ -951,118 +2171,357 @@
 
     const from = (baseParams.get('stimestamp_from') || '').trim();
     const till = (baseParams.get('stimestamp_till') || '').trim();
-    ui.sub.textContent = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
 
-    ui.tbody.innerHTML = '';
-    for (const o of options) {
-      const tr = doc.createElement('tr');
+    async function loadOverviewData() {
+      if (!ui.overlay.isConnected) return;
 
-      const td1 = doc.createElement('td');
-      td1.textContent = o.label;
-      td1.style.padding = '6px 6px';
-      td1.style.borderBottom = '1px solid #f0f0f0';
-
-      const td2 = doc.createElement('td');
-      td2.textContent = '…';
-      td2.style.padding = '6px 6px';
-      td2.style.borderBottom = '1px solid #f0f0f0';
-      td2.style.textAlign = 'right';
-      td2.style.fontVariantNumeric = 'tabular-nums';
-
-      tr.appendChild(td1);
-      tr.appendChild(td2);
-      ui.tbody.appendChild(tr);
-    }
-
-    const results = [];
-    const CONCURRENCY = 4;
-    let idx = 0;
-    let done = 0;
-
-    let runningSum = 0;
-
-    function updateProgress() {
-      const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
-      ui.sub.textContent = `${base}   ${done}/${options.length}`;
-      ui.sumCell.textContent = String(runningSum);
-    }
-
-    updateProgress();
-
-    async function worker() {
-      while (idx < options.length && ui.overlay.isConnected) {
-        const opt = options[idx++];
-
-        try {
-          const p = new URLSearchParams(baseParams.toString());
-          const sp = opt.value || opt.label;
-          p.set('systempartner', sp);
-
-          const url = baseUrl + '?' + p.toString();
-          const html = await fetchHtml(url);
-          const c = countRowsInReportHtml(html);
-
-          const count = Number.isFinite(c) ? c : 0;
-          results.push({ label: opt.label, count });
-          runningSum += count;
-        } catch (e) {
-          results.push({ label: opt.label, count: 0, err: (e?.message || String(e)) });
-        } finally {
-          done++;
-          updateProgress();
-        }
-      }
-    }
-
-    const workers = [];
-    for (let i = 0; i < Math.min(CONCURRENCY, options.length); i++) workers.push(worker());
-    await Promise.all(workers);
-
-    if (!ui.overlay.isConnected) return;
-
-    const nonZero = results.filter(r => (r.count || 0) > 0);
-    nonZero.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
-
-    ui.tbody.innerHTML = '';
-
-    if (!nonZero.length) {
-      const tr = doc.createElement('tr');
-      const td = doc.createElement('td');
-      td.colSpan = 2;
-      td.textContent = 'Keine Treffer (alle 0).';
-      td.style.padding = '8px 6px';
-      td.style.color = '#666';
-      tr.appendChild(td);
-      ui.tbody.appendChild(tr);
+      ui.tbody.innerHTML = '';
       ui.sumCell.textContent = '0';
-    } else {
-      let sum = 0;
-      for (const it of nonZero) {
+
+      const rowMap = new Map();
+      let overviewItems = [];
+      const overviewSort = { key: 'count', dir: 'desc' };
+
+      function getOverviewSortValue(item, key) {
+        if (key === 'partner') return item.label || '';
+        if (key === 'count') return item.count || 0;
+        return '';
+      }
+
+      function renderOverviewRows() {
+        if (!ui.overlay.isConnected) return;
+
+        updateSortableHeaderLabels([ui.sortHeaders.th1, ui.sortHeaders.th2], overviewSort);
+
+        const sortedItems = overviewItems
+          .filter(it => (it.count || 0) > 0)
+          .slice()
+          .sort((a, b) => {
+            const res = compareSmartValues(
+              getOverviewSortValue(a, overviewSort.key),
+              getOverviewSortValue(b, overviewSort.key)
+            );
+            return overviewSort.dir === 'asc' ? res : -res;
+          });
+
+        ui.tbody.innerHTML = '';
+
+        if (!sortedItems.length) {
+          const tr = doc.createElement('tr');
+          const td = doc.createElement('td');
+          td.colSpan = 4;
+          td.textContent = 'Keine Treffer (alle 0).';
+          td.style.padding = '8px 6px';
+          td.style.color = '#666';
+          tr.appendChild(td);
+          ui.tbody.appendChild(tr);
+          ui.sumCell.textContent = '0';
+          return;
+        }
+
+        let sum = 0;
+        for (const it of sortedItems) {
+          const rowUi = rowMap.get(it.label);
+          if (!rowUi) continue;
+
+          rowUi.td2.textContent = String(it.count);
+          ui.tbody.appendChild(rowUi.tr);
+          sum += it.count;
+        }
+
+        ui.sumCell.textContent = String(sum);
+      }
+
+      applySortableHeader(doc, ui.sortHeaders.th1, 'Systempartner', 'partner', overviewSort, renderOverviewRows);
+      applySortableHeader(doc, ui.sortHeaders.th2, 'Anzahl', 'count', overviewSort, renderOverviewRows);
+
+      for (const o of options) {
         const tr = doc.createElement('tr');
 
+        const td0 = doc.createElement('td');
+        td0.style.padding = '4px 6px';
+        td0.style.borderBottom = '1px solid #f0f0f0';
+        td0.style.textAlign = 'center';
+        td0.style.whiteSpace = 'nowrap';
+
+        const btnQr = createTinyActionButton(doc, '▦', 'QR/Barcode für die hinterlegten Touren öffnen');
+        td0.appendChild(btnQr);
+
         const td1 = doc.createElement('td');
-        td1.textContent = it.label;
+        td1.textContent = o.label;
         td1.style.padding = '6px 6px';
         td1.style.borderBottom = '1px solid #f0f0f0';
+        td1.style.cursor = 'pointer';
+        td1.style.textDecoration = 'underline';
 
         const td2 = doc.createElement('td');
-        td2.textContent = String(it.count);
+        td2.textContent = '…';
         td2.style.padding = '6px 6px';
         td2.style.borderBottom = '1px solid #f0f0f0';
         td2.style.textAlign = 'right';
         td2.style.fontVariantNumeric = 'tabular-nums';
+        td2.style.cursor = 'pointer';
+        td2.style.textDecoration = 'underline';
 
+        const td3 = doc.createElement('td');
+        td3.style.padding = '4px 6px';
+        td3.style.borderBottom = '1px solid #f0f0f0';
+        td3.style.textAlign = 'center';
+        td3.style.whiteSpace = 'nowrap';
+
+        const btnCopyImg = createTinyActionButton(doc, 'Kopieren', 'Tabelle dieses Systempartners im Hintergrund laden und als Bild kopieren');
+        td3.appendChild(btnCopyImg);
+
+        tr.appendChild(td0);
         tr.appendChild(td1);
         tr.appendChild(td2);
-        ui.tbody.appendChild(tr);
+        tr.appendChild(td3);
 
-        sum += it.count;
+        rowMap.set(o.label, {
+          tr, td2, td1, td3, btnQr, btnCopyImg, option: o,
+          rows: null,
+          configuredTours: getConfiguredToursForPartner(o.label)
+        });
       }
-      ui.sumCell.textContent = String(sum);
+
+      let runningSum = 0;
+      let done = 0;
+
+      function updateProgress(isFinished = false) {
+        const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
+        ui.sub.textContent = isFinished ? `${base}   fertig` : `${base}   ${done}/${options.length}`;
+        ui.sumCell.textContent = String(runningSum);
+      }
+
+      updateProgress(false);
+
+      async function handleCopy(entry, button) {
+        const old = button.textContent;
+        button.disabled = true;
+        button.textContent = '…';
+
+        try {
+          let rows = entry.rows;
+          if (!rows) {
+            const res = await fetchReportRowsForSystempartner(baseUrl, baseParams, entry.option);
+            rows = res.rows;
+            entry.rows = rows;
+          }
+
+          await copyRowsAsImage(rows, false);
+
+          button.textContent = '✓';
+          setTimeout(() => {
+            button.textContent = old;
+            button.disabled = false;
+          }, 1200);
+        } catch (e) {
+          console.error(e);
+          button.textContent = '!';
+          setTimeout(() => {
+            button.textContent = old;
+            button.disabled = false;
+          }, 1400);
+          alert('Kopieren fehlgeschlagen für "' + entry.option.label + '":\n' + (e?.message || String(e)));
+        }
+      }
+
+      async function handleOpenQr(entry) {
+        try {
+          const tours = Array.isArray(entry.configuredTours) ? entry.configuredTours.filter(Boolean) : [];
+          if (!tours.length) {
+            throw new Error('Für diesen Systempartner sind in den Einstellungen keine Touren hinterlegt.');
+          }
+          await showMultiQrPopup(doc, tours);
+        } catch (e) {
+          console.error(e);
+          alert('QR-Popup fehlgeschlagen für "' + entry.option.label + '":\n' + (e?.message || String(e)));
+        }
+      }
+
+      async function handleOpenRows(entry) {
+        try {
+          let rows = entry.rows;
+          if (!rows) {
+            const res = await fetchReportRowsForSystempartner(baseUrl, baseParams, entry.option);
+            rows = res.rows;
+            entry.rows = rows;
+          }
+          await showRowsPreviewPopup(doc, entry.option.label, rows);
+        } catch (e) {
+          console.error(e);
+          alert('Detailanzeige fehlgeschlagen für "' + entry.option.label + '":\n' + (e?.message || String(e)));
+        }
+      }
+
+      const results = [];
+      const CONCURRENCY = 4;
+      let idx = 0;
+
+      async function worker() {
+        while (idx < options.length && ui.overlay.isConnected) {
+          const opt = options[idx++];
+          try {
+            const { rows } = await fetchReportRowsForSystempartner(baseUrl, baseParams, opt);
+            const count = Array.isArray(rows) ? rows.length : 0;
+
+            results.push({ label: opt.label, count, rows });
+
+            const rowUi = rowMap.get(opt.label);
+            if (rowUi) {
+              rowUi.rows = rows;
+              rowUi.td2.textContent = String(count);
+            }
+
+            runningSum += count;
+          } catch (e) {
+            results.push({ label: opt.label, count: 0, err: (e?.message || String(e)), rows: null });
+
+            const rowUi = rowMap.get(opt.label);
+            if (rowUi) {
+              rowUi.td2.textContent = '0';
+            }
+          } finally {
+            done++;
+            updateProgress(false);
+          }
+        }
+      }
+
+      const workers = [];
+      for (let i = 0; i < Math.min(CONCURRENCY, options.length); i++) workers.push(worker());
+      await Promise.all(workers);
+
+      if (!ui.overlay.isConnected) return;
+
+      overviewItems = results.slice();
+
+      for (const it of overviewItems) {
+        const rowUi = rowMap.get(it.label);
+        if (!rowUi) continue;
+
+        rowUi.td2.textContent = String(it.count || 0);
+
+        rowUi.btnQr.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleOpenQr(rowUi);
+        };
+
+        rowUi.td1.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleOpenRows(rowUi);
+        };
+
+        rowUi.td2.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleOpenRows(rowUi);
+        };
+
+        rowUi.btnCopyImg.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCopy(rowUi, rowUi.btnCopyImg);
+        };
+      }
+
+      ui.sumCell.style.cursor = 'pointer';
+      ui.sumCell.style.textDecoration = 'underline';
+
+      ui.sumCell.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        try {
+          const allRows = [];
+
+          for (const entry of rowMap.values()) {
+            if (entry && Array.isArray(entry.rows) && entry.rows.length) {
+              allRows.push(...entry.rows);
+            }
+          }
+
+          if (!allRows.length) {
+            alert('Keine Daten vorhanden.');
+            return;
+          }
+
+          await showRowsPreviewPopup(doc, 'Alle Systempartner', allRows);
+        } catch (err) {
+          console.error(err);
+          alert('Fehler beim Öffnen der Gesamtliste:\n' + (err?.message || String(err)));
+        }
+      };
+
+      ui.btnCopyAll.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const old = ui.btnCopyAll.textContent;
+        ui.btnCopyAll.disabled = true;
+        ui.btnCopyAll.textContent = 'Kopiere...';
+
+        try {
+          const allRows = [];
+
+          const visibleItems = overviewItems
+            .filter(it => (it.count || 0) > 0)
+            .slice()
+            .sort((a, b) => {
+              const res = compareSmartValues(
+                getOverviewSortValue(a, overviewSort.key),
+                getOverviewSortValue(b, overviewSort.key)
+              );
+              return overviewSort.dir === 'asc' ? res : -res;
+            });
+
+          for (const it of visibleItems) {
+            const entry = rowMap.get(it.label);
+            if (entry && Array.isArray(entry.rows) && entry.rows.length) {
+              allRows.push(...entry.rows);
+            }
+          }
+
+          if (!allRows.length) {
+            alert('Keine Daten vorhanden.');
+            return;
+          }
+
+          await copyRowsAsImage(allRows, false);
+          ui.btnCopyAll.textContent = 'Kopiert ✓';
+          setTimeout(() => {
+            ui.btnCopyAll.textContent = old;
+            ui.btnCopyAll.disabled = false;
+          }, 1200);
+        } catch (err) {
+          console.error(err);
+          ui.btnCopyAll.textContent = old;
+          ui.btnCopyAll.disabled = false;
+          alert('Fehler beim Kopieren:\n' + (err?.message || String(err)));
+        }
+      };
+
+      renderOverviewRows();
+      updateProgress(true);
     }
 
-    const base = (from && till) ? `Zeitraum: ${from} – ${till}` : 'Zeitraum: (nicht gefunden)';
-    ui.sub.textContent = `${base}   fertig`;
+    ui.btnRefresh.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      ui.btnRefresh.disabled = true;
+      const old = ui.btnRefresh.textContent;
+      ui.btnRefresh.textContent = 'Aktualisiere...';
+      try {
+        await loadOverviewData();
+      } finally {
+        ui.btnRefresh.textContent = old;
+        ui.btnRefresh.disabled = false;
+      }
+    });
+
+    await loadOverviewData();
   }
 
   // =========================
@@ -1072,36 +2531,6 @@
   function addCopyButtons(doc, containerEl) {
     if (!containerEl) return;
 
-    // Liste kopieren (ist bei dir in 6.x aktuell deaktiviert -> bleibt wie bei dir: false)
-    if (false && !containerEl.querySelector('#tm-copy-list')) {
-      const btn = doc.createElement('button');
-      btn.id = 'tm-copy-list';
-      btn.type = 'button';
-      btn.textContent = 'Liste kopieren';
-
-      btn.addEventListener('click', async () => {
-        const old = btn.dataset.baseText || btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Kopiere...';
-        try {
-          const rows = extractVisibleRows_ANYWHERE();
-          const text = buildWhatsAppText(rows);
-          const ok = await copyTextToClipboard(text);
-          if (!ok) throw new Error('Clipboard nicht verfügbar.');
-          btn.textContent = 'Kopiert ✓';
-          setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1200);
-        } catch (e) {
-          console.error(e);
-          btn.textContent = old;
-          btn.disabled = false;
-          alert('Konnte Liste nicht kopieren:\n' + (e?.message || e));
-        }
-      });
-
-      containerEl.appendChild(btn);
-    }
-
-    // Kopie (Sammelbild) -> SOLL unter Mehrfachauswahl stehen (Screenshot)
     if (!containerEl.querySelector('#tm-copy-img')) {
       const b = doc.createElement('button');
       b.id = 'tm-copy-img';
@@ -1132,38 +2561,54 @@
       containerEl.appendChild(b);
     }
 
-    // Kopie mit Code (bei dir deaktiviert -> bleibt wie bei dir: false)
-    if (false && !containerEl.querySelector('#tm-copy-with-code')) {
+    if (!containerEl.querySelector('#tm-copy-with-code')) {
       const btn2 = doc.createElement('button');
       btn2.id = 'tm-copy-with-code';
       btn2.type = 'button';
       btn2.textContent = 'Kopie mit Code';
       btn2.title = 'Kopiert ein Sammelbild wie Screenshot inkl. Barcode je Zeile';
 
-      btn2.addEventListener('click', async () => {
-        const old = btn2.dataset.baseText || btn2.textContent;
-        btn2.disabled = true;
-        btn2.textContent = 'Erzeuge Bild...';
-        try {
-          const rows = extractVisibleRows_ANYWHERE();
-          const bad = rows.find(r => !r.plz || !r.psn || !r.so);
-          if (bad) throw new Error('Mindestens eine Zeile hat keine PLZ(5)/Paketschein/SOCode – Barcode kann nicht gebaut werden.');
+btn2.addEventListener('click', () => {
+  const old = btn2.dataset.baseText || btn2.textContent;
+  btn2.disabled = true;
+  btn2.textContent = 'Erzeuge Bild...';
 
-          const canvas = await buildScreenshotCanvas(rows, { withBarcode: true });
-          btn2.textContent = 'Kopiere...';
-          const ok = await copyCanvas(canvas);
-          if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+  (async () => {
+    try {
+      const rows = extractVisibleRows_ANYWHERE();
 
-          btn2.textContent = 'Kopiert ✓';
-          setTimeout(() => { btn2.textContent = old; btn2.disabled = false; }, 1400);
-        } catch (e) {
-          console.error(e);
-          btn2.textContent = old;
-          btn2.disabled = false;
-          alert('Kopie mit Code fehlgeschlagen:\n' + (e?.message || e));
-        }
-      });
+      const bad = rows.find(r => !r.plz || !r.psn || !r.so);
+      if (bad) throw new Error('Fehlende Daten für Barcode.');
 
+      const canvas = await buildScreenshotCanvas(rows, { withBarcode: true });
+
+      // 🔴 WICHTIG: DIREKT HIER, OHNE WEITERE WAITS
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('Blob fehlgeschlagen.');
+
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+
+      btn2.textContent = 'Kopiert ✓';
+      setTimeout(() => {
+        btn2.textContent = old;
+        btn2.disabled = false;
+      }, 1200);
+
+    } catch (e) {
+      console.error(e);
+      btn2.textContent = old;
+      btn2.disabled = false;
+
+      alert(
+        'Kopie mit Code fehlgeschlagen.\n\n' +
+        'Grund: Browser blockiert Clipboard.\n\n' +
+        'Lösung:\n- Seite neu laden\n- Direkt klicken (kein lang warten)\n- Chrome/Edge verwenden'
+      );
+    }
+  })();
+});
       containerEl.appendChild(btn2);
     }
 
@@ -1308,15 +2753,25 @@
 
       const overlay = doc.createElement('div');
       Object.assign(overlay.style, {
-        position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '999999'
+        position: 'fixed',
+        inset: '0',
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: '1000002'
       });
 
       const box = doc.createElement('div');
       Object.assign(box.style, {
-        background: '#fff', padding: '12px', borderRadius: '4px', textAlign: 'center',
-        minWidth: '320px', boxShadow: '0 0 15px rgba(0,0,0,0.5)',
-        fontFamily: 'Arial, sans-serif', fontSize: '12px'
+        background: '#fff',
+        padding: '12px',
+        borderRadius: '4px',
+        textAlign: 'center',
+        minWidth: '320px',
+        boxShadow: '0 0 15px rgba(0,0,0,0.5)',
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '12px'
       });
 
       const title = doc.createElement('div');
@@ -1326,7 +2781,11 @@
 
       const img = doc.createElement('img');
       img.src = imgUrl;
-      Object.assign(img.style, { maxWidth: '360px', maxHeight: '360px', marginBottom: '6px' });
+      Object.assign(img.style, {
+        maxWidth: '360px',
+        maxHeight: '360px',
+        marginBottom: '6px'
+      });
       box.appendChild(img);
 
       const info = doc.createElement('div');
@@ -1371,7 +2830,10 @@
           const canvas = await buildSingleCanvas(tour, imgUrl);
           const ok = await copyCanvas(canvas);
           btnCopy.textContent = ok ? 'Kopiert ✓' : old;
-          setTimeout(() => { btnCopy.textContent = old; btnCopy.disabled = false; }, 1200);
+          setTimeout(() => {
+            btnCopy.textContent = old;
+            btnCopy.disabled = false;
+          }, 1200);
           if (!ok) alert('Kopieren nicht möglich.');
         } catch {
           btnCopy.textContent = old;
@@ -1382,153 +2844,197 @@
       box.appendChild(btnCopy);
 
       overlay.appendChild(box);
-      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+     overlay.addEventListener('click', (e) => {
+  if (e.target === overlay) overlay.remove();
+});
+
+box.addEventListener('click', (e) => {
+  e.stopPropagation();
+});
+
       doc.body.appendChild(overlay);
     } catch (e) {
-      alert('Fehler beim Laden des QR-Codes für Tour ' + tour + ':\n' + e.message);
+      alert('Fehler beim Laden des QR-Codes für Tour ' + tour + ':\n' + (e?.message || e));
     }
   }
 
   async function showMultiQrPopup(doc, tours) {
-    if (!tours || !tours.length) return;
+  if (!tours || !tours.length) return;
 
-    const overlay = doc.createElement('div');
-    Object.assign(overlay.style, {
-      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.6)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '999999'
+  const overlay = doc.createElement('div');
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: '1000002'
+  });
+
+  const box = doc.createElement('div');
+  Object.assign(box.style, {
+    background: '#fff',
+    padding: '12px',
+    borderRadius: '4px',
+    textAlign: 'center',
+    minWidth: '340px',
+    maxWidth: '90vw',
+    maxHeight: '90vh',
+    overflow: 'auto',
+    boxShadow: '0 0 15px rgba(0,0,0,0.5)',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '12px'
+  });
+
+  const title = doc.createElement('div');
+  title.textContent = 'MDE Freigabe PIN – mehrere Touren (' + tours.join(', ') + ')';
+  title.style.marginBottom = '6px';
+  box.appendChild(title);
+
+  const grid = doc.createElement('div');
+  Object.assign(grid.style, {
+    display: 'flex',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: '10px'
+  });
+  box.appendChild(grid);
+
+  const info = doc.createElement('div');
+  info.textContent = 'Touren: ' + tours.join(', ') + ' | Depot: ' + DEPOT;
+  info.style.margin = '6px 0';
+  box.appendChild(info);
+
+  const btnClose = doc.createElement('button');
+  btnClose.textContent = 'Schließen';
+  btnClose.style.margin = '4px';
+  btnClose.onclick = () => overlay.remove();
+  box.appendChild(btnClose);
+
+  const btnPrint = doc.createElement('button');
+  btnPrint.textContent = 'Alle drucken';
+  btnPrint.style.margin = '4px';
+  box.appendChild(btnPrint);
+
+  const btnCopy = doc.createElement('button');
+  btnCopy.textContent = 'Kopieren';
+  btnCopy.style.margin = '4px';
+  box.appendChild(btnCopy);
+
+  overlay.appendChild(box);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  doc.body.appendChild(overlay);
+
+  const imgUrls = {};
+  const loadedTours = [];
+
+  for (const oneTour of tours) {
+    const card = doc.createElement('div');
+    Object.assign(card.style, {
+      border: '1px solid #ccc',
+      borderRadius: '4px',
+      padding: '4px',
+      textAlign: 'center',
+      minWidth: '150px'
     });
 
-    const box = doc.createElement('div');
-    Object.assign(box.style, {
-      background: '#fff', padding: '12px', borderRadius: '4px', textAlign: 'center',
-      minWidth: '340px', maxWidth: '90vw', maxHeight: '90vh', overflow: 'auto',
-      boxShadow: '0 0 15px rgba(0,0,0,0.5)', fontFamily: 'Arial, sans-serif', fontSize: '12px'
-    });
+    const h = doc.createElement('div');
+    h.textContent = 'Tour ' + oneTour;
+    h.style.marginBottom = '4px';
+    card.appendChild(h);
 
-    const title = doc.createElement('div');
-    title.textContent = 'MDE Freigabe PIN – mehrere Touren (' + tours.join(', ') + ')';
-    title.style.marginBottom = '6px';
-    box.appendChild(title);
+    const status = doc.createElement('div');
+    status.textContent = 'Lädt...';
+    status.style.fontSize = '10px';
+    status.style.color = '#666';
+    card.appendChild(status);
 
-    const grid = doc.createElement('div');
-    Object.assign(grid.style, { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '10px' });
-    box.appendChild(grid);
+    grid.appendChild(card);
 
-    const info = doc.createElement('div');
-    info.textContent = 'Touren: ' + tours.join(', ') + ' | Depot: ' + DEPOT;
-    info.style.margin = '6px 0';
-    box.appendChild(info);
+    try {
+      const content = await fetchQrContentForTour(oneTour);
+      const url = buildQrImageUrl(content);
+      imgUrls[oneTour] = url;
+      loadedTours.push(oneTour);
 
-    const btnClose = doc.createElement('button');
-    btnClose.textContent = 'Schließen';
-    btnClose.style.margin = '4px';
-    btnClose.onclick = () => overlay.remove();
-    box.appendChild(btnClose);
+      const img = doc.createElement('img');
+      img.src = url;
+      Object.assign(img.style, { maxWidth: '160px', maxHeight: '160px' });
 
-    const btnPrint = doc.createElement('button');
-    btnPrint.textContent = 'Alle drucken';
-    btnPrint.style.margin = '4px';
-    box.appendChild(btnPrint);
-
-    const btnCopy = doc.createElement('button');
-    btnCopy.textContent = 'Kopieren';
-    btnCopy.style.margin = '4px';
-    box.appendChild(btnCopy);
-
-    overlay.appendChild(box);
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-    doc.body.appendChild(overlay);
-
-    const imgUrls = {};
-    const loadedTours = [];
-
-    for (const tour of tours) {
-      const card = doc.createElement('div');
-      Object.assign(card.style, {
-        border: '1px solid #ccc', borderRadius: '4px', padding: '4px',
-        textAlign: 'center', minWidth: '150px'
-      });
-
-      const h = doc.createElement('div');
-      h.textContent = 'Tour ' + tour;
-      h.style.marginBottom = '4px';
-      card.appendChild(h);
-
-      const status = doc.createElement('div');
-      status.textContent = 'Lädt...';
-      status.style.fontSize = '10px';
-      status.style.color = '#666';
-      card.appendChild(status);
-
-      grid.appendChild(card);
-
-      try {
-        const content = await fetchQrContentForTour(tour);
-        const url = buildQrImageUrl(content);
-        imgUrls[tour] = url;
-        loadedTours.push(tour);
-
-        const img = doc.createElement('img');
-        img.src = url;
-        Object.assign(img.style, { maxWidth: '160px', maxHeight: '160px' });
-
-        card.replaceChild(img, status);
-      } catch (e) {
-        status.textContent = 'Fehler: ' + e.message;
-        status.style.color = '#c00';
-      }
+      card.replaceChild(img, status);
+    } catch (e) {
+      status.textContent = 'Fehler: ' + (e?.message || e);
+      status.style.color = '#c00';
     }
-
-    btnPrint.onclick = () => {
-      const w = window.open('', '_blank');
-      if (!w) return;
-      let html = '<html><head><title>MDE Freigabe PIN – mehrere Touren</title></head><body style="text-align:center;font-family:Arial, sans-serif;">';
-      html += '<h3>MDE Freigabe PIN (Zustellung) – mehrere Touren</h3>';
-      tours.forEach(t => {
-        const url = imgUrls[t];
-        if (!url) return;
-        html += '<div style="page-break-inside:avoid;margin-bottom:20px;">';
-        html += '<div>Tour ' + t + ' | Depot: ' + DEPOT + '</div>';
-        html += '<img src="' + url + '"><br>';
-        html += '</div>';
-      });
-      html += '</body></html>';
-      w.document.write(html);
-      w.document.close();
-      w.focus();
-      w.print();
-    };
-
-    btnCopy.onclick = async () => {
-      if (!loadedTours.length) {
-        alert('Keine QR-Codes geladen – kein Kopieren möglich.');
-        return;
-      }
-
-      btnCopy.disabled = true;
-      const old = btnCopy.textContent;
-      btnCopy.textContent = 'Kopiere...';
-
-      try {
-        const canvas = await buildMultiCanvas(loadedTours, imgUrls);
-        const ok = await copyCanvas(canvas);
-
-        btnCopy.textContent = ok ? 'Kopiert ✓' : old;
-        setTimeout(() => { btnCopy.textContent = old; btnCopy.disabled = false; }, 1200);
-        if (!ok) alert('Kopieren nicht möglich.');
-      } catch {
-        btnCopy.textContent = old;
-        btnCopy.disabled = false;
-        alert('Kopieren fehlgeschlagen.');
-      }
-    };
   }
 
+  btnPrint.onclick = () => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+
+    let html = '<html><head><title>MDE Freigabe PIN – mehrere Touren</title></head><body style="text-align:center;font-family:Arial, sans-serif;">';
+    html += '<h3>MDE Freigabe PIN (Zustellung) – mehrere Touren</h3>';
+
+    loadedTours.forEach(oneTour => {
+      const url = imgUrls[oneTour];
+      if (!url) return;
+      html += '<div style="page-break-inside:avoid;margin-bottom:20px;">';
+      html += '<div>Tour ' + oneTour + ' | Depot: ' + DEPOT + '</div>';
+      html += '<img src="' + url + '"><br>';
+      html += '</div>';
+    });
+
+    html += '</body></html>';
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  btnCopy.onclick = async () => {
+    if (!loadedTours.length) {
+      alert('Keine QR-Codes geladen – kein Kopieren möglich.');
+      return;
+    }
+
+    btnCopy.disabled = true;
+    const old = btnCopy.textContent;
+    btnCopy.textContent = 'Kopiere...';
+
+    try {
+      const canvas = await buildMultiCanvas(loadedTours, imgUrls);
+      const ok = await copyCanvas(canvas);
+
+      if (!ok) throw new Error('Bildkopie vom Browser blockiert.');
+
+      btnCopy.textContent = 'Kopiert ✓';
+      setTimeout(() => {
+        btnCopy.textContent = old;
+        btnCopy.disabled = false;
+      }, 1200);
+    } catch (e) {
+      console.error('Multi-QR-Kopieren fehlgeschlagen:', e);
+      btnCopy.textContent = old;
+      btnCopy.disabled = false;
+      alert('Kopieren fehlgeschlagen:\n' + (e?.message || String(e)));
+    }
+  };
+}
+
   // =========================
-  // Config / Einstellungen (aus 5.7 zurück in 6.x)
+  // Config / Einstellungen
   // =========================
 
-  function normalizeName(name) { return String(name || '').trim().toLowerCase(); }
 
   function loadConfig() {
     try {
@@ -1552,7 +3058,7 @@
   }
 
   // =========================
-  // Panel UI (Übersicht + ⚙ Einstellungen + X)
+  // Panel UI
   // =========================
 
   function initInDocument(doc) {
@@ -1599,7 +3105,7 @@
     btnOverview.id = 'tm-overview-btn';
     btnOverview.type = 'button';
     btnOverview.textContent = 'Übersicht';
-    btnOverview.title = 'Systempartner-Übersicht (Hintergrundabfrage)';
+    btnOverview.title = 'Systempartner-Übersicht inkl. Direkt-Kopie';
     panel.appendChild(btnOverview);
 
     const btnSettings = doc.createElement('button');
@@ -1647,7 +3153,6 @@
     bubblesContainer.id = 'tm-sp-bubbles';
     panel.appendChild(bubblesContainer);
 
-    // Mehrfachauswahl + Buttons
     const multiDiv = doc.createElement('div');
     multiDiv.style.margin = '4px 0';
 
@@ -1678,7 +3183,6 @@
     multiDiv.appendChild(btnNone);
     multiDiv.appendChild(multiShowBtn);
 
-    // >>> wie dein Screenshot: Kopie unter der Zeile
     multiDiv.appendChild(doc.createElement('br'));
     const copyRow = doc.createElement('div');
     copyRow.id = 'tm-copy-row';
@@ -1688,7 +3192,6 @@
 
     panel.appendChild(multiDiv);
 
-    // Einstellungen Panel (aus 5.7)
     const settingsPanel = doc.createElement('div');
     settingsPanel.id = 'tm-settings-panel';
     panel.appendChild(settingsPanel);
@@ -1893,7 +3396,6 @@
         tbody.appendChild(tr);
       });
 
-      // Neue Zeile
       const trNew = doc.createElement('tr');
 
       const tdNewName = doc.createElement('td');
@@ -1954,7 +3456,6 @@
       table.appendChild(tbody);
       settingsPanel.appendChild(table);
 
-      // Excel Import (2 Spalten: Systempartner, Tour)
       const importTitle = doc.createElement('div');
       importTitle.textContent = 'Import aus Excel-Liste (2 Spalten: Systempartner, Tour):';
       importTitle.style.marginTop = '8px';
@@ -2028,7 +3529,6 @@
       });
     }
 
-    // Settings (⚙) toggle
     btnSettings.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
