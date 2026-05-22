@@ -7,6 +7,12 @@
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/report_inbound_ofd\.cgi.*$/
+// @connect      scanserver-d0010195.ssw.dpdit.de
+// @connect      scanserver-d0010107.ssw.dpdit.de
+// @connect      scanserver-d0010295.ssw.dpdit.de
+// @connect      scanserver-d001*
+// @connect      barcodeapi.org
+// @connect      *
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
