@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.25
+// @version      6.26
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -2980,6 +2980,112 @@ btn2.addEventListener('click', () => {
     return y;
   }
 
+  function showQrPopupFromLoadedUrl(doc, tour, imgUrl) {
+    const overlay = doc.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      background: 'rgba(0,0,0,0.6)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: '1000005'
+    });
+
+    const box = doc.createElement('div');
+    Object.assign(box.style, {
+      background: '#fff',
+      padding: '12px',
+      borderRadius: '4px',
+      textAlign: 'center',
+      minWidth: '320px',
+      boxShadow: '0 0 15px rgba(0,0,0,0.5)',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '12px'
+    });
+
+    const title = doc.createElement('div');
+    title.textContent = 'MDE Freigabe PIN (Zustellung) – Tour ' + tour;
+    title.style.marginBottom = '6px';
+    box.appendChild(title);
+
+    const img = doc.createElement('img');
+    img.src = imgUrl;
+    Object.assign(img.style, {
+      maxWidth: '360px',
+      maxHeight: '360px',
+      marginBottom: '6px'
+    });
+    box.appendChild(img);
+
+    const info = doc.createElement('div');
+    info.textContent = 'Tour: ' + tour + ' | Depot: ' + DEPOT;
+    info.style.marginBottom = '6px';
+    box.appendChild(info);
+
+    const btnClose = doc.createElement('button');
+    btnClose.textContent = 'Schließen';
+    btnClose.style.margin = '4px';
+    btnClose.onclick = () => overlay.remove();
+    box.appendChild(btnClose);
+
+    const btnPrint = doc.createElement('button');
+    btnPrint.textContent = 'Drucken';
+    btnPrint.style.margin = '4px';
+    btnPrint.onclick = () => {
+      const w = window.open('', '_blank');
+      if (!w) return;
+      w.document.write(
+        '<html><head><title>Tour ' + tour + '</title></head>' +
+        '<body style="text-align:center;font-family:Arial, sans-serif;">' +
+        '<h3>MDE Freigabe PIN (Zustellung)</h3>' +
+        '<img src="' + imgUrl + '"><br>' +
+        'Tour: ' + tour + ' | Depot: ' + DEPOT +
+        '</body></html>'
+      );
+      w.document.close();
+      w.focus();
+      w.print();
+    };
+    box.appendChild(btnPrint);
+
+    const btnCopy = doc.createElement('button');
+    btnCopy.textContent = 'Kopieren';
+    btnCopy.style.margin = '4px';
+    btnCopy.onclick = async () => {
+      btnCopy.disabled = true;
+      const old = btnCopy.textContent;
+      btnCopy.textContent = 'Kopiere...';
+      try {
+        const canvas = await buildSingleCanvas(tour, imgUrl);
+        const ok = await copyCanvas(canvas);
+        btnCopy.textContent = ok ? 'Kopiert ✓' : old;
+        setTimeout(() => {
+          btnCopy.textContent = old;
+          btnCopy.disabled = false;
+        }, 1200);
+        if (!ok) alert('Kopieren nicht möglich.');
+      } catch {
+        btnCopy.textContent = old;
+        btnCopy.disabled = false;
+        alert('Kopieren fehlgeschlagen.');
+      }
+    };
+    box.appendChild(btnCopy);
+
+    overlay.appendChild(box);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    doc.body.appendChild(overlay);
+  }
+
   async function showQrPopup(doc, tour) {
     try {
       const content = await fetchQrContentForTour(tour);
@@ -2993,7 +3099,7 @@ btn2.addEventListener('click', () => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: '1000002'
+        zIndex: '1000005'
       });
 
       const box = doc.createElement('div');
@@ -3179,8 +3285,10 @@ box.addEventListener('click', (e) => {
       borderRadius: '4px',
       padding: '4px',
       textAlign: 'center',
-      minWidth: '150px'
+      minWidth: '150px',
+      cursor: 'pointer'
     });
+    card.title = 'Einzelnen QR-Code öffnen';
 
     const h = doc.createElement('div');
     h.textContent = 'Tour ' + oneTour;
@@ -3204,6 +3312,13 @@ box.addEventListener('click', (e) => {
       const img = doc.createElement('img');
       img.src = url;
       Object.assign(img.style, { maxWidth: '160px', maxHeight: '160px' });
+      img.title = 'Tour ' + oneTour + ' einzeln öffnen';
+
+      card.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showQrPopupFromLoadedUrl(doc, oneTour, url);
+      };
 
       card.replaceChild(img, status);
     } catch (e) {
