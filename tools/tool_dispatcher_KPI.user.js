@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.1.8
+// @version      2.2.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @description  Dispatcher KPI Monitor
@@ -277,54 +277,100 @@ function mountUI(){
 function makeTableSortable(root){
   const table = (root?.tagName === 'TABLE') ? root : root.querySelector('table');
   if(!table) return;
+
   const thead = table.querySelector('thead');
   const tbody = table.querySelector('tbody');
   if(!thead || !tbody) return;
 
-  Array.from(tbody.querySelectorAll('tr')).forEach(tr=>tr.setAttribute('data-row','1'));
+  Array.from(tbody.querySelectorAll('tr')).forEach(tr => tr.setAttribute('data-row', '1'));
+
   const ths = Array.from(thead.querySelectorAll('th'));
 
-  const parseVal=(txt)=>{
-    const t=String(txt||'').trim();
-    const clean=t.replace(/\./g,'').replace(',', '.').replace(/[^\d.\-]/g,'').trim();
-    if(clean!=='' && !isNaN(clean)) return parseFloat(clean);
-    return t.toLowerCase();
-  };
-  const updateIndicators=(col,dir)=>{
-    ths.forEach((th,i)=>{
-      th.querySelector(`span.${NS}sort-ind`)?.remove();
-      th.dataset.sortDir='0';
-      if(i===col){
-        const sp=document.createElement('span');
-        sp.className=`${NS}sort-ind`;
-        sp.textContent = dir>0 ? '▲' : '▼';
+  function parseCellValue(text){
+    const raw = String(text || '').trim();
+
+    // Für Zahlen, Prozent, kg, "Ø 12,3", "1.234", usw.
+    const cleaned = raw
+      .replace(/^Ø\s*/i, '')
+      .replace(/\s*Std\s*/i, ':')
+      .replace(/\s*Min\s*/i, '')
+      .replace(/\./g, '')
+      .replace(',', '.')
+      .replace(/[^\d:\-\.]/g, '')
+      .trim();
+
+    // Zeitformat "H:MM"
+    if (/^\d{1,2}:\d{2}$/.test(cleaned)) {
+      const [h, m] = cleaned.split(':').map(Number);
+      return h * 60 + m;
+    }
+
+    // Normale Zahl
+    if (cleaned !== '' && !isNaN(cleaned)) {
+      return parseFloat(cleaned);
+    }
+
+    // Text
+    return raw.toLowerCase();
+  }
+
+  function updateIndicators(activeCol, dir){
+    ths.forEach((th, i) => {
+      th.querySelector(`.${NS}sort-ind`)?.remove();
+      if(i === activeCol){
+        const sp = document.createElement('span');
+        sp.className = `${NS}sort-ind`;
+        sp.textContent = dir === 1 ? '▲' : '▼';
         th.appendChild(sp);
-        th.dataset.sortDir=String(dir);
       }
     });
-  };
+  }
 
-  ths.forEach((th,colIndex)=>{
-    th.addEventListener('click', ()=>{
-      LAST_USER_SORT_TS=Date.now();
-      const asc = (Number(th.dataset.sortDir||'0') !== 1);
-      const dir = asc ? 1 : -1;
+  ths.forEach((th, colIndex) => {
+    th.style.cursor = 'pointer';
+
+    th.addEventListener('click', () => {
+      LAST_USER_SORT_TS = Date.now();
+
+      const currentCol = Number(table.dataset.sortCol ?? -1);
+      const currentDir = Number(table.dataset.sortDir ?? 0);
+
+      let dir;
+
+      // gleiche Spalte => Richtung wechseln
+      if (currentCol === colIndex) {
+        dir = currentDir === 1 ? -1 : 1;
+      } else {
+        // neue Spalte => zuerst aufsteigend
+        dir = 1;
+      }
 
       const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]'));
-      rows.sort((a,b)=>{
-        const aText=a.children[colIndex]?.textContent ?? '';
-        const bText=b.children[colIndex]?.textContent ?? '';
-        const av=parseVal(aText), bv=parseVal(bText);
-        if(typeof av==='number' && typeof bv==='number') return (av-bv)*dir;
-        return aText.localeCompare(bText,'de',{numeric:true})*dir;
+
+      rows.sort((a, b) => {
+        const aText = a.children[colIndex]?.textContent ?? '';
+        const bText = b.children[colIndex]?.textContent ?? '';
+
+        const av = parseCellValue(aText);
+        const bv = parseCellValue(bText);
+
+        if (typeof av === 'number' && typeof bv === 'number') {
+          return (av - bv) * dir;
+        }
+
+        return String(av).localeCompare(String(bv), 'de', { numeric: true, sensitivity: 'base' }) * dir;
       });
-      rows.forEach(r=>tbody.appendChild(r));
-      updateIndicators(colIndex,dir);
-      LAST_USER_SORT_TS=Date.now();
-    },{passive:true});
+
+      rows.forEach(row => tbody.appendChild(row));
+
+      table.dataset.sortCol = String(colIndex);
+      table.dataset.sortDir = String(dir);
+
+      updateIndicators(colIndex, dir);
+      LAST_USER_SORT_TS = Date.now();
+    }, { passive: true });
   });
 }
-
 function modalCreate(html){
   const ov=document.createElement('div');
   ov.className=NS+'modal';
@@ -1038,7 +1084,7 @@ function summarizeToursForModal(toursArr){
   };
 }
 
-function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
+function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null, showPartnerCol=false){
   const C=baseCopyCssTable();
 
   const head = `
@@ -1057,6 +1103,7 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
       <th style="${C.thL}">PLZ</th>
       <th style="${C.th}">Gewicht</th>
       <th style="${C.th}">Lieferquote</th>
+      ${showPartnerCol ? `<th style="${C.thL}">SP</th>` : ''}
     </tr></thead>`;
 
   const rows = (onlyRowObj ? [onlyRowObj] : toursArr);
@@ -1079,6 +1126,7 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
         <td style="${C.tdL}">${esc(plz||'')}</td>
         <td style="${C.td}">${fmtKg(t.gewichtKg)}</td>
         <td style="${C.td}">${fmtPct(t.lieferquote)}</td>
+        ${showPartnerCol ? `<td style="${C.tdL}">${esc((t.partner || '').substring(0,8).trim())}</td>` : ''}
       </tr>`;
   }).join('');
 
@@ -1098,6 +1146,7 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null){
       <td style="${C.tfL}">${fmtInt(footerSum.plzCount)}</td>
       <td style="${C.tf}">Ø ${fmtKg(footerSum.avgKg)}</td>
       <td style="${C.tf}">Ø ${fmtPct(footerSum.lqAvg)}</td>
+      ${showPartnerCol ? `<td style="${C.tfL}">—</td>` : ''}
     </tr></tfoot>`;
 
   return `
@@ -1125,7 +1174,7 @@ async function copyHtmlToClipboard(html){
   }catch(e){ console.error('[fvkpi] copyHtmlToClipboard', e); return false; }
 }
 
-/* ====== BLOCK 09/11 – Aggregates Master (HÄNGER-SICHER + TIMEOUTS) ====== */
+/* ====== BLOCK 09/11 – Fahrzeugübersicht aktivieren + Aggregates Master ====== */
 
 let AGG_CACHE=null; // {ts, data}
 const AGG_TTL=20_000;
@@ -1141,6 +1190,202 @@ function withTimeout(promise, ms, label){
   return Promise.race([promise, timeout]).finally(()=>{ if(t) clearTimeout(t); });
 }
 
+function findFahrzeuguebersichtTrigger() {
+  const selectors = [
+    '[role="tab"]',
+    '.mat-mdc-tab',
+    '.mat-tab-label',
+    '.mat-mdc-tab-link',
+    '.mat-tab-link',
+    'button',
+    'a',
+    'div'
+  ];
+
+  for (const sel of selectors) {
+    const nodes = Array.from(document.querySelectorAll(sel)).filter(el => !el.closest(PANEL_ID));
+
+    for (const el of nodes) {
+      const txt = norm(el.textContent || '');
+      if (!/^fahrzeugübersicht$/i.test(txt) && !/fahrzeugübersicht/i.test(txt)) continue;
+
+      const clickable =
+        el.closest('[role="tab"]') ||
+        el.closest('.mat-mdc-tab') ||
+        el.closest('.mat-tab-label') ||
+        el.closest('.mat-mdc-tab-link') ||
+        el.closest('.mat-tab-link') ||
+        el.closest('button') ||
+        el.closest('a') ||
+        el;
+
+      if (clickable) return clickable;
+    }
+  }
+
+  return null;
+}
+
+function findFirstTopTabLikeElement() {
+  const selectors = [
+    '[role="tab"]',
+    '.mat-mdc-tab',
+    '.mat-tab-label',
+    '.mat-mdc-tab-link',
+    '.mat-tab-link'
+  ];
+
+  for (const sel of selectors) {
+    const nodes = Array.from(document.querySelectorAll(sel)).filter(el => !el.closest(PANEL_ID));
+    if (!nodes.length) continue;
+
+    const visible = nodes.filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 40 && r.height > 20 && r.top >= 0 && r.top < 250;
+    });
+
+    if (visible.length) {
+      visible.sort((a,b)=>a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      return visible[0];
+    }
+  }
+
+  return null;
+}
+
+function isLikelyActiveTab(el) {
+  if (!el) return false;
+
+  const aria = String(el.getAttribute?.('aria-selected') || '').toLowerCase();
+  const cls = String(el.className || '');
+  if (aria === 'true') return true;
+  if (/active|selected|mdc-tab--active|mat-mdc-tab-active|mat-tab-label-active/i.test(cls)) return true;
+
+  try{
+    const cs = window.getComputedStyle(el);
+    const bg = String(cs.backgroundColor || '');
+    const color = String(cs.color || '');
+    if (
+      bg === 'rgb(225, 6, 50)' ||
+      bg === 'rgb(229, 0, 54)' ||
+      bg === 'rgb(230, 0, 50)' ||
+      color === 'rgb(255, 255, 255)'
+    ) return true;
+  }catch{}
+
+  return false;
+}
+
+function isFahrzeuguebersichtActive() {
+  const trigger = findFahrzeuguebersichtTrigger();
+  if (trigger && isLikelyActiveTab(trigger)) return true;
+
+  const firstTab = findFirstTopTabLikeElement();
+  if (firstTab) {
+    const txt = norm(firstTab.textContent || '');
+    if (/fahrzeugübersicht/i.test(txt) && isLikelyActiveTab(firstTab)) return true;
+  }
+
+  return false;
+}
+
+function isFahrzeuguebersichtReady() {
+  const cols = findColumnsOverviewDatagrid();
+  if (!cols) return false;
+
+  const rows = qsaMain('tbody tr,[role="row"]').filter(tr => {
+    const cells = tr.querySelectorAll('td,[role="gridcell"]');
+    const maxNeed = Math.max(
+      cols.systempartner,
+      cols.tour,
+      cols.tourstart,
+      cols.tourende,
+      cols.zusteller,
+      cols.stopps,
+      cols.offen,
+      cols.lieferquote
+    );
+    return cells && cells.length > maxNeed;
+  });
+
+  return rows.length > 0;
+}
+
+async function waitForOverviewReady(timeoutMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (isFahrzeuguebersichtReady()) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
+function fireRealClick(el){
+  if(!el) return false;
+
+  const target =
+    el.closest?.('[role="tab"]') ||
+    el.closest?.('.mat-mdc-tab') ||
+    el.closest?.('.mat-tab-label') ||
+    el.closest?.('.mat-mdc-tab-link') ||
+    el.closest?.('.mat-tab-link') ||
+    el;
+
+  try { target.scrollIntoView({ block:'center', inline:'center' }); } catch {}
+
+  const evOpts = { bubbles:true, cancelable:true, view:window };
+  try { target.dispatchEvent(new PointerEvent('pointerdown', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('mousedown', evOpts)); } catch {}
+  try { target.dispatchEvent(new PointerEvent('pointerup', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('mouseup', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('click', evOpts)); } catch {}
+
+  try {
+    if (typeof target.click === 'function') {
+      target.click();
+      return true;
+    }
+  } catch {}
+
+  return true;
+}
+
+async function ensureFahrzeuguebersichtActive() {
+  if (isFahrzeuguebersichtActive() && isFahrzeuguebersichtReady()) return true;
+
+  let trigger = findFahrzeuguebersichtTrigger();
+
+  if (!trigger) {
+    const firstTab = findFirstTopTabLikeElement();
+    if (firstTab) {
+      const txt = norm(firstTab.textContent || '');
+      if (/fahrzeugübersicht/i.test(txt)) trigger = firstTab;
+    }
+  }
+
+  if (!trigger) {
+    console.warn('[fvkpi] Fahrzeugübersicht-Tab nicht gefunden');
+    return false;
+  }
+
+  fireRealClick(trigger);
+  await sleep(1000);
+
+  if (!isFahrzeuguebersichtActive()) {
+    const firstTab = findFirstTopTabLikeElement();
+    if (firstTab) {
+      fireRealClick(firstTab);
+      await sleep(1000);
+    }
+  }
+
+  const ok = await waitForOverviewReady(15000);
+  if (!ok) {
+    console.warn('[fvkpi] Fahrzeugübersicht wurde nicht rechtzeitig geladen');
+  }
+  return ok;
+}
+
 async function getAggregates(){
   const now=Date.now();
   if(AGG_CACHE && (now-AGG_CACHE.ts)<AGG_TTL) return AGG_CACHE.data;
@@ -1149,32 +1394,49 @@ async function getAggregates(){
   AGG_INFLIGHT = (async () => {
     let didLoadingOn=false;
     try{
-      const ov=readOverviewAll();
-      if(!ov.ok || !ov.rows.length) return null;
-
-      loadingOn('Daten werden geladen…');
+      loadingOn('Fahrzeugübersicht wird geöffnet…');
       didLoadingOn=true;
 
-      let pdItems=[];
-      try{
-        pdItems = await withTimeout(loadPickupDeliveryAllPages(), 25000, 'pickup-delivery');
-      }catch(e){
-        console.error('[fvkpi] PD timeout/error', e);
-        toast('pickup-delivery: Timeout/Fehler (Console).', false);
-        pdItems=[];
+      const tabReady = await ensureFahrzeuguebersichtActive();
+      if(!tabReady){
+        toast('Fahrzeugübersicht konnte nicht geladen werden.', false);
+        return null;
       }
 
-      let wMap=new Map();
-      try{
-        wMap = await withTimeout(loadWeights(), 25000, 'Gewicht (scanserver)');
-      }catch(e){
-        console.error('[fvkpi] WEIGHT timeout/error', e);
+      const ov=readOverviewAll();
+      if(!ov.ok || !ov.rows.length){
+        toast('Keine Daten in der Fahrzeugübersicht gefunden.', false);
+        return null;
+      }
+
+      const scanHostEl = PANEL?.querySelector?.('#'+NS+'scanHost');
+      if(scanHostEl) scanHostEl.textContent = getScanHost();
+
+      loadingOn('Daten werden geladen…');
+
+      const [pdRes, weightRes] = await Promise.allSettled([
+        withTimeout(loadPickupDeliveryAllPages(), 30000, 'pickup-delivery'),
+        withTimeout(loadWeights(), 30000, 'Gewicht (scanserver)')
+      ]);
+
+      let pdItems = [];
+      if(pdRes.status === 'fulfilled'){
+        pdItems = pdRes.value || [];
+      }else{
+        console.error('[fvkpi] PD timeout/error', pdRes.reason);
+        toast('pickup-delivery: Timeout/Fehler (Console).', false);
+      }
+
+      let wMap = new Map();
+      if(weightRes.status === 'fulfilled'){
+        wMap = weightRes.value || new Map();
+      }else{
+        console.error('[fvkpi] WEIGHT timeout/error', weightRes.reason);
         toast('Gewicht: Timeout/Fehler (Console).', false);
-        wMap=new Map();
       }
 
       const P = groupByPartnerTour(ov.rows);
-      if(pdItems && pdItems.length) applyPickupDeliveryToMap(P, pdItems);
+      if(pdItems.length) applyPickupDeliveryToMap(P, pdItems);
       if(wMap) applyWeightsToMap(P, wMap);
 
       const sum = summarizePartner(P);
@@ -1189,19 +1451,14 @@ async function getAggregates(){
       return null;
     } finally {
       AGG_INFLIGHT = null;
-      if(didLoadingOn) loadingOff();
+      if(didLoadingOn){
+        LOADING_COUNT = 0;
+        loadingOff();
+      }
     }
   })();
 
-  try{
-    return await withTimeout(AGG_INFLIGHT, 35000, 'Aggregates gesamt');
-  }catch(e){
-    console.error('[fvkpi] Aggregates overall timeout', e);
-    toast('KPI: Laden hängt (Timeout).', false);
-    try{ loadingOff(); }catch{}
-    AGG_INFLIGHT = null;
-    return null;
-  }
+  return AGG_INFLIGHT;
 }
 
 /* ====== BLOCK 10/11 – Render + Copy + Drilldown ====== */
@@ -1342,6 +1599,8 @@ async function openPartnerModal(partner){
       toursArr = Array.from(T.values());
     }
 
+    const showPartnerCol = (partner === '__TOTAL__');
+
     toursArr.sort((a,b)=>String(a.tour).localeCompare(String(b.tour),'de',{numeric:true}));
     const sum = summarizeToursForModal(toursArr);
 
@@ -1361,6 +1620,7 @@ async function openPartnerModal(partner){
         <th style="padding:8px;border:1px solid #e5e7eb;">PLZ</th>
         <th style="padding:8px;border:1px solid #e5e7eb;">Gewicht</th>
         <th style="padding:8px;border:1px solid #e5e7eb;">Lieferquote</th>
+        ${showPartnerCol ? '<th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">SP</th>' : ''}
         <th style="padding:8px;border:1px solid #e5e7eb;">Aktion</th>
       </tr></thead>`;
 
@@ -1383,6 +1643,7 @@ async function openPartnerModal(partner){
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;white-space:normal;max-width:560px;">${esc(plz||'')}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtKg(t.gewichtKg)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(t.lieferquote)}</td>
+          ${showPartnerCol ? `<td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${esc((t.partner || '').substring(0,8).trim())}</td>` : ''}
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:center;">
             <button class="${NS}iconbtn" title="Zeile kopieren" data-copy-tourrow="${esc(rowKey)}">⧉</button>
           </td>
@@ -1406,6 +1667,7 @@ async function openPartnerModal(partner){
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${fmtInt(sum.plzCount)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtKg(sum.avgKg)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtPct(sum.lqAvg)}</td>
+          ${showPartnerCol ? '<td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">—</td>' : ''}
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:center;">—</td>
         </tr>
       </tfoot>`;
@@ -1431,7 +1693,7 @@ async function openPartnerModal(partner){
       if(b){
         if(b.dataset.act==='close'){ ov.remove(); return; }
         if(b.dataset.act==='copy-table'){
-          const html = buildToursTableHtmlCOPY(toursArr, sum, null);
+          const html = buildToursTableHtmlCOPY(toursArr, sum, null, showPartnerCol);
           const ok=await copyHtmlToClipboard(html);
           toast(ok?'Tabelle kopiert':'Kopieren fehlgeschlagen', ok);
           return;
@@ -1447,7 +1709,7 @@ async function openPartnerModal(partner){
         const obj = toursArr.find(t => norm(t.tour)===norm(tourKey) && norm(t.zusteller||'')===norm(zustKey||''));
         if(!obj){ toast('Zeile nicht gefunden', false); return; }
 
-        const html = buildToursTableHtmlCOPY(toursArr, sum, obj);
+        const html = buildToursTableHtmlCOPY(toursArr, sum, obj, showPartnerCol);
         const ok = await copyHtmlToClipboard(html);
         toast(ok?'Zeile kopiert':'Kopieren fehlgeschlagen', ok);
         return;
@@ -1462,13 +1724,21 @@ async function openPartnerModal(partner){
 
 /* ====== BLOCK 11/11 – Boot + Loader-Button oben ====== */
 
-function openPanel(){
+async function openPanel(){
   ensureStyles();
   mountUI();
   const p=document.querySelector(PANEL_ID);
   if(p) p.style.display='';
-  render(true);
+
+  try{
+    await ensureFahrzeuguebersichtActive();
+  }catch(e){
+    console.error('[fvkpi] openPanel ensure overview', e);
+  }
+
+  await render(true);
 }
+
 function closePanel(){
   const p=document.querySelector(PANEL_ID);
   if(p) p.style.display='none';
@@ -1479,10 +1749,13 @@ function registerWithLoader(){
     id: 'kpi-monitor',
     label: 'KPI Monitor',
     panels: [PANEL_ID],
-    run: () => {
+    run: async () => {
       const el=document.querySelector(PANEL_ID);
-      if(el && getComputedStyle(el).display!=='none') closePanel();
-      else openPanel();
+      if(el && getComputedStyle(el).display!=='none') {
+        closePanel();
+      } else {
+        await openPanel();
+      }
     }
   };
 
@@ -1510,6 +1783,35 @@ function registerWithLoader(){
   return false;
 }
 
-try{ registerWithLoader(); }catch(e){ console.error('[fvkpi] boot', e); }
 
+/* ===== Auto-Close bei Klick außerhalb – nur aktuelles Fenster ===== */
+document.addEventListener('mousedown', function(e){
+
+  // 1) Wenn ein Modal/Detailfenster offen ist, wird NUR dieses behandelt.
+  //    Das Hauptfenster bleibt offen.
+  const modals = Array.from(document.querySelectorAll('.fvkpi-modal'));
+  const modal = modals.length ? modals[modals.length - 1] : null;
+  const box = modal?.querySelector('.fvkpi-modal-box');
+
+  if (modal && box) {
+    if (!box.contains(e.target)) {
+      modal.remove();
+    }
+    return;
+  }
+
+  // 2) Nur wenn KEIN Modal offen ist, darf das Hauptfenster geschlossen werden.
+  const panel = document.querySelector('#fvkpi-panel');
+
+  if (
+    panel &&
+    getComputedStyle(panel).display !== 'none' &&
+    !panel.contains(e.target)
+  ) {
+    closePanel();
+  }
+
+}, true);
+
+try{ registerWithLoader(); }catch(e){ console.error('[fvkpi] boot', e); }
 })();
