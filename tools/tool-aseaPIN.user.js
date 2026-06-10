@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.22
+// @version      6.25
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -689,13 +689,19 @@ async function buildScreenshotCanvas(rows, { withBarcode } = { withBarcode: fals
 
       const drawCell = (text, w) => {
         const lines = wrapTextLines(ctx, String(text || ''), w, 2);
+        ctx.fillStyle = '#000';
         ctx.fillText(lines[0] || '', x, baseY);
         if (lines[1]) ctx.fillText(lines[1], x, baseY + lineH);
         x += w + gap;
       };
 
+      const drawSoCell = (so, w) => {
+        drawCanvasSoBadge(ctx, so, x, baseY, w);
+        x += w + gap;
+      };
+
       drawCell(r.psn, col.psn);
-      drawCell(r.so, col.so);
+      drawSoCell(r.so, col.so);
       drawCell(r.zc, col.zc);
       drawCell(plzort, col.plzort);
       drawCell(r.str, col.str);
@@ -1108,6 +1114,31 @@ ctx.fillText(
     th1.style.borderBottom = '1px solid #ddd';
     th1.style.padding = '6px 6px';
 
+    function makeTh(label, width, align) {
+      const th = doc.createElement('th');
+      th.textContent = label;
+      th.style.textAlign = align || 'center';
+      th.style.borderBottom = '1px solid #ddd';
+      th.style.padding = '6px 6px';
+      if (width) th.style.width = width;
+      return th;
+    }
+
+    const thExpress = makeTh('Express', '80px', 'center');
+    thExpress.style.background = SO_GROUPS.express.bg;
+    thExpress.style.color = SO_GROUPS.express.fg;
+    thExpress.style.borderRadius = '4px';
+
+    const thGefahrgut = makeTh('Gefahrgut', '90px', 'center');
+    thGefahrgut.style.background = SO_GROUPS.gefahrgut.bg;
+    thGefahrgut.style.color = SO_GROUPS.gefahrgut.fg;
+    thGefahrgut.style.borderRadius = '4px';
+
+    const thPrio = makeTh('Prio', '70px', 'center');
+    thPrio.style.background = SO_GROUPS.prio.bg;
+    thPrio.style.color = SO_GROUPS.prio.fg;
+    thPrio.style.borderRadius = '4px';
+
     const th2 = doc.createElement('th');
     th2.textContent = 'Anzahl';
     th2.style.textAlign = 'right';
@@ -1124,6 +1155,9 @@ ctx.fillText(
 
     thr.appendChild(th0);
     thr.appendChild(th1);
+    thr.appendChild(thExpress);
+    thr.appendChild(thGefahrgut);
+    thr.appendChild(thPrio);
     thr.appendChild(th2);
     thr.appendChild(th3);
     thead.appendChild(thr);
@@ -1142,7 +1176,7 @@ ctx.fillText(
       borderTop: '2px solid #ddd',
       padding: '8px 12px',
       display: 'grid',
-      gridTemplateColumns: '48px 1fr 120px 110px',
+      gridTemplateColumns: '48px 1fr 80px 90px 70px 120px 110px',
       alignItems: 'center',
       columnGap: '0',
       fontWeight: 'bold',
@@ -1153,6 +1187,13 @@ ctx.fillText(
 
     const sumLabel = doc.createElement('div');
     sumLabel.textContent = 'Summe';
+
+    const sumExpressCell = doc.createElement('div');
+    sumExpressCell.style.textAlign = 'center';
+    const sumGefahrgutCell = doc.createElement('div');
+    sumGefahrgutCell.style.textAlign = 'center';
+    const sumPrioCell = doc.createElement('div');
+    sumPrioCell.style.textAlign = 'center';
 
     const sumCell = doc.createElement('div');
     sumCell.textContent = '0';
@@ -1168,6 +1209,9 @@ ctx.fillText(
 
     sticky.appendChild(sumQr);
     sticky.appendChild(sumLabel);
+    sticky.appendChild(sumExpressCell);
+    sticky.appendChild(sumGefahrgutCell);
+    sticky.appendChild(sumPrioCell);
     sticky.appendChild(sumCell);
     sticky.appendChild(btnCopyAll);
 
@@ -1218,7 +1262,7 @@ ctx.fillText(
       e.stopPropagation();
     }, true);
 
-    return { overlay, sub, tbody, sumCell, btnCopyAll, btnRefresh, close, sortHeaders: { th1, th2 } };
+    return { overlay, sub, tbody, sumCell, sumExpressCell, sumGefahrgutCell, sumPrioCell, btnCopyAll, btnRefresh, close, sortHeaders: { th1, th2 } };
   }
   function createTinyActionButton(doc, label, title) {
     const btn = doc.createElement('button');
@@ -1320,6 +1364,104 @@ ctx.fillText(
     const canvas = await buildScreenshotCanvas(rows, { withBarcode });
     const ok = await copyCanvas(canvas);
     if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
+  }
+
+  const SO_GROUPS = {
+    express: { label: 'Express', codes: new Set(['225','228','379','350','530','811','378','155','799']), bg: '#e73545', fg: '#fff' },
+    gefahrgut: { label: 'Gefahrgut', codes: new Set(['102','301']), bg: '#fff200', fg: '#000' },
+    prio: { label: 'Prio', codes: new Set(['384','387']), bg: '#8e2aa8', fg: '#fff' }
+  };
+
+  function cleanSoCode(v) {
+    return String(v || '').replace(/\D/g, '').trim();
+  }
+
+  function getSoGroupKey(v) {
+    const code = cleanSoCode(v);
+    if (!code) return '';
+    for (const [key, cfg] of Object.entries(SO_GROUPS)) {
+      if (cfg.codes.has(code)) return key;
+    }
+    return '';
+  }
+
+  function countSoGroups(rows) {
+    const out = { express: 0, gefahrgut: 0, prio: 0 };
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      const k = getSoGroupKey(r && r.so);
+      if (k && Object.prototype.hasOwnProperty.call(out, k)) out[k]++;
+    }
+    return out;
+  }
+
+  function filterRowsBySoGroup(rows, groupKey) {
+    if (!groupKey) return Array.isArray(rows) ? rows.slice() : [];
+    return (Array.isArray(rows) ? rows : []).filter(r => getSoGroupKey(r && r.so) === groupKey);
+  }
+
+  function drawCanvasSoBadge(ctx, so, x, baselineY, maxWidth) {
+    const code = cleanSoCode(so);
+    const groupKey = getSoGroupKey(code);
+
+    if (!groupKey || !SO_GROUPS[groupKey]) {
+      ctx.fillStyle = '#000';
+      ctx.fillText(String(so || ''), x, baselineY);
+      return;
+    }
+
+    const cfg = SO_GROUPS[groupKey];
+    const text = String(code);
+    const padX = 6;
+    const h = 18;
+    const w = Math.min(Math.max(24, Math.ceil(ctx.measureText(text).width + padX * 2)), Math.max(24, maxWidth || 9999));
+    const y = baselineY - 13;
+
+    ctx.save();
+    ctx.fillStyle = cfg.bg;
+
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 4);
+      ctx.fill();
+    } else {
+      ctx.fillRect(x, y, w, h);
+    }
+
+    ctx.fillStyle = cfg.fg;
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText(text, x + padX, baselineY);
+    ctx.restore();
+  }
+
+  function makeSoBadge(doc, text, groupKey, title) {
+    const span = doc.createElement('span');
+    span.textContent = String(text ?? '');
+    const cfg = SO_GROUPS[groupKey] || null;
+    Object.assign(span.style, {
+      display: 'inline-block',
+      minWidth: '20px',
+      padding: '2px 6px',
+      borderRadius: '4px',
+      fontWeight: 'bold',
+      lineHeight: '16px',
+      textAlign: 'center',
+      fontVariantNumeric: 'tabular-nums',
+      background: cfg ? cfg.bg : 'transparent',
+      color: cfg ? cfg.fg : 'inherit',
+      boxShadow: cfg ? '0 1px 2px rgba(0,0,0,0.18)' : 'none'
+    });
+    if (title) span.title = title;
+    return span;
+  }
+
+  function makeOverviewSoBadge(doc, groupKey, count) {
+    const cfg = SO_GROUPS[groupKey];
+    const span = makeSoBadge(doc, String(count || 0), groupKey, (cfg ? cfg.label : '') + ' anzeigen');
+    Object.assign(span.style, {
+      cursor: (count || 0) > 0 ? 'pointer' : 'default',
+      opacity: (count || 0) > 0 ? '1' : '0.35'
+    });
+    return span;
   }
 
   function normalizeName(name) {
@@ -1841,6 +1983,10 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
             openDepotportalTracking(val);
           });
           td.appendChild(psnLink);
+        } else if (i === 1) {
+          const g = getSoGroupKey(val);
+          if (g) td.appendChild(makeSoBadge(doc, val, g, SO_GROUPS[g].label));
+          else td.textContent = val;
         } else {
           td.textContent = val;
         }
@@ -2215,7 +2361,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         if (!sortedItems.length) {
           const tr = doc.createElement('tr');
           const td = doc.createElement('td');
-          td.colSpan = 4;
+          td.colSpan = 7;
           td.textContent = 'Keine Treffer (alle 0).';
           td.style.padding = '8px 6px';
           td.style.color = '#666';
@@ -2226,15 +2372,36 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         }
 
         let sum = 0;
+        let sumExpress = 0;
+        let sumGefahrgut = 0;
+        let sumPrio = 0;
+
         for (const it of sortedItems) {
           const rowUi = rowMap.get(it.label);
           if (!rowUi) continue;
 
+          const counts = rowUi.soCounts || { express: 0, gefahrgut: 0, prio: 0 };
+          rowUi.tdExpress.innerHTML = '';
+          rowUi.tdGefahrgut.innerHTML = '';
+          rowUi.tdPrio.innerHTML = '';
+          rowUi.tdExpress.appendChild(makeOverviewSoBadge(doc, 'express', counts.express));
+          rowUi.tdGefahrgut.appendChild(makeOverviewSoBadge(doc, 'gefahrgut', counts.gefahrgut));
+          rowUi.tdPrio.appendChild(makeOverviewSoBadge(doc, 'prio', counts.prio));
+
           rowUi.td2.textContent = String(it.count);
           ui.tbody.appendChild(rowUi.tr);
           sum += it.count;
+          sumExpress += counts.express || 0;
+          sumGefahrgut += counts.gefahrgut || 0;
+          sumPrio += counts.prio || 0;
         }
 
+        ui.sumExpressCell.innerHTML = '';
+        ui.sumGefahrgutCell.innerHTML = '';
+        ui.sumPrioCell.innerHTML = '';
+        ui.sumExpressCell.appendChild(makeOverviewSoBadge(doc, 'express', sumExpress));
+        ui.sumGefahrgutCell.appendChild(makeOverviewSoBadge(doc, 'gefahrgut', sumGefahrgut));
+        ui.sumPrioCell.appendChild(makeOverviewSoBadge(doc, 'prio', sumPrio));
         ui.sumCell.textContent = String(sum);
       }
 
@@ -2260,6 +2427,19 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         td1.style.cursor = 'pointer';
         td1.style.textDecoration = 'underline';
 
+        function makeSoCountTd() {
+          const td = doc.createElement('td');
+          td.style.padding = '4px 6px';
+          td.style.borderBottom = '1px solid #f0f0f0';
+          td.style.textAlign = 'center';
+          td.style.fontVariantNumeric = 'tabular-nums';
+          return td;
+        }
+
+        const tdExpress = makeSoCountTd();
+        const tdGefahrgut = makeSoCountTd();
+        const tdPrio = makeSoCountTd();
+
         const td2 = doc.createElement('td');
         td2.textContent = '…';
         td2.style.padding = '6px 6px';
@@ -2280,12 +2460,15 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
 
         tr.appendChild(td0);
         tr.appendChild(td1);
+        tr.appendChild(tdExpress);
+        tr.appendChild(tdGefahrgut);
+        tr.appendChild(tdPrio);
         tr.appendChild(td2);
         tr.appendChild(td3);
 
         rowMap.set(o.label, {
-          tr, td2, td1, td3, btnQr, btnCopyImg, option: o,
-          rows: null,
+          tr, td2, td1, td3, tdExpress, tdGefahrgut, tdPrio, btnQr, btnCopyImg, option: o,
+          rows: null, soCounts: { express: 0, gefahrgut: 0, prio: 0 },
           configuredTours: getConfiguredToursForPartner(o.label)
         });
       }
@@ -2370,12 +2553,14 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
           try {
             const { rows } = await fetchReportRowsForSystempartner(baseUrl, baseParams, opt);
             const count = Array.isArray(rows) ? rows.length : 0;
+            const soCounts = countSoGroups(rows);
 
-            results.push({ label: opt.label, count, rows });
+            results.push({ label: opt.label, count, rows, soCounts });
 
             const rowUi = rowMap.get(opt.label);
             if (rowUi) {
               rowUi.rows = rows;
+              rowUi.soCounts = soCounts;
               rowUi.td2.textContent = String(count);
             }
 
@@ -2407,6 +2592,23 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         if (!rowUi) continue;
 
         rowUi.td2.textContent = String(it.count || 0);
+        rowUi.soCounts = it.soCounts || countSoGroups(rowUi.rows || []);
+
+        function bindSoCell(td, groupKey) {
+          td.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const rows = filterRowsBySoGroup(rowUi.rows || [], groupKey);
+            if (!rows.length) {
+              alert('Keine Treffer für ' + SO_GROUPS[groupKey].label + ' bei "' + rowUi.option.label + '".');
+              return;
+            }
+            showRowsPreviewPopup(doc, rowUi.option.label + ' – ' + SO_GROUPS[groupKey].label, rows);
+          };
+        }
+        bindSoCell(rowUi.tdExpress, 'express');
+        bindSoCell(rowUi.tdGefahrgut, 'gefahrgut');
+        bindSoCell(rowUi.tdPrio, 'prio');
 
         rowUi.btnQr.onclick = (e) => {
           e.preventDefault();
@@ -2460,6 +2662,32 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
           alert('Fehler beim Öffnen der Gesamtliste:\n' + (err?.message || String(err)));
         }
       };
+
+      function bindTotalSoCell(cell, groupKey) {
+        cell.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            const allRows = [];
+            for (const entry of rowMap.values()) {
+              if (entry && Array.isArray(entry.rows) && entry.rows.length) {
+                allRows.push(...filterRowsBySoGroup(entry.rows, groupKey));
+              }
+            }
+            if (!allRows.length) {
+              alert('Keine Treffer für ' + SO_GROUPS[groupKey].label + '.');
+              return;
+            }
+            await showRowsPreviewPopup(doc, 'Alle Systempartner – ' + SO_GROUPS[groupKey].label, allRows);
+          } catch (err) {
+            console.error(err);
+            alert('Fehler beim Öffnen der Gesamtliste:\n' + (err?.message || String(err)));
+          }
+        };
+      }
+      bindTotalSoCell(ui.sumExpressCell, 'express');
+      bindTotalSoCell(ui.sumGefahrgutCell, 'gefahrgut');
+      bindTotalSoCell(ui.sumPrioCell, 'prio');
 
       ui.btnCopyAll.onclick = async (e) => {
         e.preventDefault();
