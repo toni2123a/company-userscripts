@@ -190,6 +190,19 @@
       "description": "PRIO/EXPRESS12: KPIs & Listen. Status/Servicecode direkt aus API, sortierbare Spalten, Predict-Zeitfenster, Zustellzeit, Button „EXPRESS12 >11:01“. Panel bleibt offen; PSN mit Auge-Button öffnet Scanserver. + Systempartner aus lokaler TourMap (IndexedDB)."
     },
     {
+      "id": "tool-tourenauswertung",
+      "name": "DPD Dispatcher – Tourenauswertung",
+      "version": "3.1.3",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js",
+      "match": [
+        "https://dispatcher2-de.geopost.com/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Tourenauswertung mit Datum von/bis, Systempartner/Touren, Fahrername, Stopps/Paketen, automatischen Fällen und Zustellhindernissen inkl. Klick-Details."
+    },
+    {
       "id": "tool.lem",
       "name": "DPD LEM",
       "version": "2.8",
