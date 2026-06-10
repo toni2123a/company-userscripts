@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.5.2
+// @version      5.6.0
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -512,6 +512,7 @@ const SUPPRESS_RENDER_MS = 4000;
 function makeTableSortable(root){
   const table = (root instanceof HTMLElement) ? root.querySelector('table') : root;
   if(!table) return;
+
   const thead = table.querySelector('thead');
   const tbody = table.querySelector('tbody');
   if(!thead || !tbody) return;
@@ -519,19 +520,76 @@ function makeTableSortable(root){
   Array.from(tbody.querySelectorAll('tr')).forEach(tr=>{ tr.setAttribute('data-row','1'); });
 
   const ths = Array.from(thead.querySelectorAll('th'));
+  if(!ths.length) return;
 
-  const parseVal=(txt)=>{ const t = String(txt||'').trim(); const clean = t.replace(/\./g,'').replace(',', '.').replace(/[^\d.\-]/g,'').trim(); if(clean!=='' && !isNaN(clean)) return parseFloat(clean); return t.toLowerCase(); };
+  const parseVal = (txt) => {
+    const t = String(txt || '').trim();
+    const clean = t.replace(/\./g, '').replace(',', '.').replace(/[^\d.\-]/g, '').trim();
+    if (clean !== '' && !isNaN(clean)) return parseFloat(clean);
+    return t.toLowerCase();
+  };
 
-  const updateIndicators=(col,dir)=>{ ths.forEach((th,i)=>{ th.querySelector(`span.${NS}sort-ind`)?.remove(); th.dataset.sortDir = '0'; if(i===col){ const sp=document.createElement('span'); sp.className=`${NS}sort-ind`; sp.textContent = dir>0 ? '▲' : '▼'; th.appendChild(sp); th.dataset.sortDir = String(dir); } }); };
+  const updateIndicators = (col, dir) => {
+    ths.forEach((th, i) => {
+      th.querySelector(`span.${NS}sort-ind`)?.remove();
+      if (i === col) {
+        const sp = document.createElement('span');
+        sp.className = `${NS}sort-ind`;
+        sp.textContent = dir === 1 ? '▲' : '▼';
+        th.appendChild(sp);
+      }
+    });
+    table.dataset.sortCol = String(col);
+    table.dataset.sortDir = String(dir);
+  };
 
-  ths.forEach((th, colIndex)=>{ th.style.cursor='pointer'; th.addEventListener('click', ()=>{ LAST_USER_SORT_TS = Date.now(); const asc = (Number(th.dataset.sortDir||'0') !== 1); const dir = asc ? 1 : -1; const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]')); rows.sort((a,b)=>{ const aText = a.children[colIndex]?.textContent ?? ''; const bText = b.children[colIndex]?.textContent ?? ''; const aVal = parseVal(aText); const bVal = parseVal(bText); if(typeof aVal==='number' && typeof bVal==='number'){ return (aVal - bVal)*dir; } return aText.localeCompare(bText,'de',{numeric:true})*dir; }); rows.forEach(r=>tbody.appendChild(r)); updateIndicators(colIndex, dir); LAST_USER_SORT_TS = Date.now(); },{passive:true}); });
+  const doSort = (colIndex) => {
+    const currentCol = Number(table.dataset.sortCol ?? -1);
+    const currentDir = Number(table.dataset.sortDir ?? 0);
+
+    let dir = 1;
+    if (currentCol === colIndex) {
+      dir = currentDir === 1 ? -1 : 1;
+    }
+
+    const rows = Array.from(tbody.querySelectorAll('tr[data-row="1"]'));
+
+    rows.sort((a, b) => {
+      const aText = a.children[colIndex]?.textContent ?? '';
+      const bText = b.children[colIndex]?.textContent ?? '';
+
+      const aVal = parseVal(aText);
+      const bVal = parseVal(bText);
+
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return (aVal - bVal) * dir;
+      }
+
+      return String(aVal).localeCompare(String(bVal), 'de', { numeric: true }) * dir;
+    });
+
+    rows.forEach(r => tbody.appendChild(r));
+    updateIndicators(colIndex, dir);
+    LAST_USER_SORT_TS = Date.now();
+  };
+
+  ths.forEach((th, colIndex) => {
+    if (th.dataset.fvprSortBound === '1') return;
+    th.dataset.fvprSortBound = '1';
+    th.style.cursor = 'pointer';
+
+    th.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      doSort(colIndex);
+    }, false);
+  });
 }
 
 function mountUI(forLoader=false){
   DIAG("mount", "mountUI aufgerufen", { forLoader, alreadyExists: !!document.getElementById(NS+"panel") });
   if (document.getElementById(NS+'panel')) return;
 
-  // — PANEL immer erstellen (für Loader geschlossen starten)
   PANEL=document.createElement('div');
   PANEL.className=NS+'panel';
   PANEL.style.display = forLoader ? 'none' : '';
@@ -545,7 +603,6 @@ function mountUI(forLoader=false){
         <button class="${NS}btn-sm" data-act="send-partner-and-total">✉ Pro Partner und gesamt an uns</button>
         <button class="${NS}btn-sm" data-act="send-total-only">✉ Gesamt</button>
         <button class="${NS}btn-sm" data-act="settings">Einstellungen</button>
-        <button class="${NS}btn-sm" data-act="diag-toggle" style="background:#ffe066;font-size:11px">🔍 Diagnose</button>
       </div>
     </div>
     <div id="${NS}content"></div>
@@ -558,24 +615,12 @@ function mountUI(forLoader=false){
       <button class="${NS}btn-sm" data-act="import">Import</button>
     </div>
     <div class="${NS}note">Pro Partner wird nur versendet, wenn im Partner-Eintrag eine gültige Adresse hinterlegt ist. Die Gesamt-Mail geht an den Eintrag mit Name = "gesamt".</div>
-    <div id="${NS}diagbox" style="display:none;border-top:1px solid rgba(0,0,0,.08);padding:10px;background:#1e1e2e">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <h4 style="margin:0;font:700 13px monospace;color:#cdd6f4">Diagnose-Log</h4>
-        <div>
-          <button class="${NS}btn-sm" data-act="diag-copy" style="font-size:11px">Kopieren</button>
-          <button class="${NS}btn-sm" data-act="diag-clear" style="font-size:11px">Leeren</button>
-          <button class="${NS}btn-sm" data-act="diag-hide" style="font-size:11px">Schließen</button>
-        </div>
-      </div>
-      <pre style="max-height:260px;overflow:auto;font:11px/1.5 monospace;color:#a6e3a1;background:#11111b;padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
-    </div>
     <input type="file" id="${NS}impfile" accept="application/json" style="display:none">
   `;
   document.body.appendChild(PANEL);
   CONTENT=PANEL.querySelector('#'+NS+'content');
   CFGBOX=PANEL.querySelector('#'+NS+'cfgbox');
 
-  // — Standalone-Fallback: eigenen Button nur erstellen, wenn KEIN Loader aktiv
   if (!forLoader && ENABLE_STANDALONE){
     if (!document.getElementById(NS+'wrap')){
       const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'wrap';
@@ -585,7 +630,6 @@ function mountUI(forLoader=false){
     }
   }
 
-  // Actions
   PANEL.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
     if(b.dataset.act==='refresh') render(true);
@@ -596,14 +640,6 @@ function mountUI(forLoader=false){
     if(b.dataset.act==='cfg-save') await saveCfgFromUI();
     if(b.dataset.act==='export') await exportDb();
     if(b.dataset.act==='import') document.getElementById(NS+'impfile').click();
-    // Diagnose-Bereich
-    if(b.dataset.act==='diag-toggle'){
-      const db=document.getElementById(NS+'diagbox');
-      if(db){ db.style.display=db.style.display==='none'?'':'none'; if(db.style.display!=='none'){ DIAG('diag','Diagnose-Panel geöffnet',{ua:navigator.userAgent,url:location.href,screen:screen.width+'x'+screen.height,dpr:devicePixelRatio,edge:/Edg/.test(navigator.userAgent)}); db.querySelector('pre').textContent=_diagFormat(); }}
-    }
-    if(b.dataset.act==='diag-hide'){ const db=document.getElementById(NS+'diagbox'); if(db) db.style.display='none'; }
-    if(b.dataset.act==='diag-clear'){ _diagEntries.length=0; const db=document.getElementById(NS+'diagbox'); if(db) db.querySelector('pre').textContent='(leer)'; }
-    if(b.dataset.act==='diag-copy'){ try{ await navigator.clipboard.writeText(_diagFormat()); toast('Log kopiert'); }catch{ toast('Kopieren fehlgeschlagen',false); }}
   },{passive:false});
 
   PANEL.querySelector('#'+NS+'impfile').addEventListener('change', async (ev)=>{
@@ -626,15 +662,72 @@ function mountUI(forLoader=false){
     }catch(e){ console.error(e); alert('Import fehlgeschlagen (ungültiges JSON).'); }
   },{passive:true});
 
-  // Delegation: ✉ / 👁 / ⧉ in Zeilen + Gesamtleiste
   PANEL.addEventListener('click', e=>{
     try {
-      const sendBtn=e.target.closest('button[data-sp]'); if(sendBtn){ e.preventDefault(); sendSinglePartnerConfirm(sendBtn.dataset.sp); return; }
-      const eyeBtn=e.target.closest('button[data-eye]'); if(eyeBtn){ e.preventDefault(); DIAG('click','👁-Button geklickt',{partner:eyeBtn.dataset.eye}); openPreview(eyeBtn.dataset.eye).catch(err=>{ DIAG('error','openPreview fehlgeschlagen',{err:String(err)}); toast('Fehler: '+err.message,false); }); return; }
-      const copyBtn=e.target.closest('button[data-copy]'); if(copyBtn){ e.preventDefault(); copyPartnerHtml(copyBtn.dataset.copy); return; }
-      const totalEye=e.target.closest('button[data-total-eye]'); if(totalEye){ e.preventDefault(); openTotalPreview(); return; }
-      const totalCopy=e.target.closest('button[data-total-copy]'); if(totalCopy){ e.preventDefault(); copyTotalHtml(); return; }
-      const totalBtn=e.target.closest('button[data-total-send]'); if(totalBtn){ e.preventDefault(); sendTotalOnlyConfirm(); return; }
+      const sendBtn=e.target.closest('button[data-sp]');
+      if(sendBtn){
+        e.preventDefault();
+        sendSinglePartnerConfirm(sendBtn.dataset.sp);
+        return;
+      }
+
+      const eyeBtn=e.target.closest('button[data-eye]');
+      if(eyeBtn){
+        e.preventDefault();
+        DIAG('click','👁-Button geklickt',{partner:eyeBtn.dataset.eye});
+        openPreview(eyeBtn.dataset.eye).catch(err=>{
+          DIAG('error','openPreview fehlgeschlagen',{err:String(err)});
+          toast('Fehler: '+err.message,false);
+        });
+        return;
+      }
+
+      const copyBtn=e.target.closest('button[data-copy]');
+      if(copyBtn){
+        e.preventDefault();
+        copyPartnerHtml(copyBtn.dataset.copy);
+        return;
+      }
+
+      const totalEye=e.target.closest('button[data-total-eye]');
+      if(totalEye){
+        e.preventDefault();
+        openTotalPreview().catch(err=>{
+          DIAG('error','openTotalPreview fehlgeschlagen',{err:String(err)});
+          toast('Fehler: '+err.message,false);
+        });
+        return;
+      }
+
+      const totalCopy=e.target.closest('button[data-total-copy]');
+      if(totalCopy){
+        e.preventDefault();
+        copyTotalHtml();
+        return;
+      }
+
+      const totalBtn=e.target.closest('button[data-total-send]');
+      if(totalBtn){
+        e.preventDefault();
+        sendTotalOnlyConfirm();
+        return;
+      }
+
+      const totalRow=e.target.closest('tr[data-total-row="1"]');
+      if(totalRow && !e.target.closest('button')){
+        e.preventDefault();
+        DIAG('click','Gesamtzeile geklickt',{ tagName: e.target.tagName });
+        toast('Lade Gesamtübersicht…', true);
+        openTotalPreview().catch(err=>{
+          DIAG('error','openTotalPreview Zeilen-Klick fehlgeschlagen',{
+            err: String(err),
+            stack: err?.stack?.slice?.(0,300)
+          });
+          toast('Gesamt-Fehler: '+err.message, false);
+        });
+        return;
+      }
+
       const row=e.target.closest('tr[data-partner]');
       if(row && !e.target.closest('button')){
         e.preventDefault();
@@ -642,31 +735,227 @@ function mountUI(forLoader=false){
         DIAG('click','Zeile geklickt',{ partner, tagName: e.target.tagName });
         toast('Lade Detail: '+partner+'…', true);
         openPreview(partner).catch(err=>{
-          DIAG('error','openPreview Zeilen-Klick fehlgeschlagen',{ err: String(err), stack: err?.stack?.slice?.(0,300) });
+          DIAG('error','openPreview Zeilen-Klick fehlgeschlagen',{
+            err: String(err),
+            stack: err?.stack?.slice?.(0,300)
+          });
           toast('Detail-Fehler: '+err.message, false);
         });
       }
     } catch(err) {
-      DIAG('error','Klick-Handler Exception',{ err: String(err), stack: err?.stack?.slice?.(0,300) });
+      DIAG('error','Klick-Handler Exception',{
+        err: String(err),
+        stack: err?.stack?.slice?.(0,300)
+      });
       toast('Klick-Fehler: '+err.message, false);
     }
   },{passive:false});
 }
 
-/* ====== TEIL 9/12 – Modale, Vorschau, Partner-Dialog ====== */
 function removeStandaloneButton(){
   const wrap = document.getElementById(NS+'wrap');
   if (wrap) wrap.remove();
 }
+
+function findFahrzeuguebersichtTrigger(){
+  const selectors = [
+    '[role="tab"]',
+    '.mat-mdc-tab',
+    '.mat-tab-label',
+    '.mat-mdc-tab-link',
+    '.mat-tab-link',
+    'button',
+    'a',
+    'div'
+  ];
+
+  for(const sel of selectors){
+    const nodes = Array.from(document.querySelectorAll(sel)).filter(el=>!el.closest(PANEL_ID));
+    for(const el of nodes){
+      const txt = norm(el.textContent || '');
+      if(!/^fahrzeugübersicht$/i.test(txt) && !/fahrzeugübersicht/i.test(txt)) continue;
+
+      const clickable =
+        el.closest('[role="tab"]') ||
+        el.closest('.mat-mdc-tab') ||
+        el.closest('.mat-tab-label') ||
+        el.closest('.mat-mdc-tab-link') ||
+        el.closest('.mat-tab-link') ||
+        el.closest('button') ||
+        el.closest('a') ||
+        el;
+
+      if(clickable) return clickable;
+    }
+  }
+  return null;
+}
+
+function findFirstTopTabLikeElement(){
+  const selectors = [
+    '[role="tab"]',
+    '.mat-mdc-tab',
+    '.mat-tab-label',
+    '.mat-mdc-tab-link',
+    '.mat-tab-link'
+  ];
+
+  for(const sel of selectors){
+    const nodes = Array.from(document.querySelectorAll(sel)).filter(el=>!el.closest(PANEL_ID));
+    if(!nodes.length) continue;
+
+    const visible = nodes.filter(el=>{
+      const r = el.getBoundingClientRect();
+      return r.width > 40 && r.height > 20 && r.top >= 0 && r.top < 250;
+    });
+
+    if(visible.length){
+      visible.sort((a,b)=>a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      return visible[0];
+    }
+  }
+  return null;
+}
+
+function isLikelyActiveTab(el){
+  if(!el) return false;
+
+  const aria = String(el.getAttribute?.('aria-selected') || '').toLowerCase();
+  const cls = String(el.className || '');
+  if(aria === 'true') return true;
+  if(/active|selected|mdc-tab--active|mat-mdc-tab-active|mat-tab-label-active/i.test(cls)) return true;
+
+  try{
+    const cs = window.getComputedStyle(el);
+    const bg = String(cs.backgroundColor || '');
+    const color = String(cs.color || '');
+    if(
+      bg === 'rgb(225, 6, 50)' ||
+      bg === 'rgb(229, 0, 54)' ||
+      bg === 'rgb(230, 0, 50)' ||
+      color === 'rgb(255, 255, 255)'
+    ) return true;
+  }catch{}
+
+  return false;
+}
+
+function isFahrzeuguebersichtActive(){
+  const trigger = findFahrzeuguebersichtTrigger();
+  if(trigger && isLikelyActiveTab(trigger)) return true;
+
+  const firstTab = findFirstTopTabLikeElement();
+  if(firstTab){
+    const txt = norm(firstTab.textContent || '');
+    if(/fahrzeugübersicht/i.test(txt) && isLikelyActiveTab(firstTab)) return true;
+  }
+
+  return false;
+}
+
+function isFahrzeuguebersichtReady(){
+  const tryA = findColumnsDatagrid();
+  if(tryA){
+    const rows = qsaMain('tbody tr,[role="row"]').filter(tr=>{
+      const cells = tr.querySelectorAll('td,[role="gridcell"]');
+      const needed = Math.max(...Object.values(tryA).filter(v=>typeof v==='number'&&v>=0));
+      return cells && cells.length > needed;
+    });
+    if(rows.length > 0) return true;
+  }
+
+  const tryB = getAnyTable();
+  if(tryB){
+    const trs = Array.from(tryB.querySelectorAll('tbody tr'));
+    if(trs.length > 0) return true;
+  }
+
+  return false;
+}
+
+async function waitForOverviewReady(timeoutMs = 15000){
+  const start = Date.now();
+  while(Date.now() - start < timeoutMs){
+    if(isFahrzeuguebersichtReady()) return true;
+    await new Promise(r=>setTimeout(r,250));
+  }
+  return false;
+}
+
+function fireRealClick(el){
+  if(!el) return false;
+
+  const target =
+    el.closest?.('[role="tab"]') ||
+    el.closest?.('.mat-mdc-tab') ||
+    el.closest?.('.mat-tab-label') ||
+    el.closest?.('.mat-mdc-tab-link') ||
+    el.closest?.('.mat-tab-link') ||
+    el;
+
+  try { target.scrollIntoView({ block:'center', inline:'center' }); } catch {}
+
+  const evOpts = { bubbles:true, cancelable:true, view:window };
+  try { target.dispatchEvent(new PointerEvent('pointerdown', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('mousedown', evOpts)); } catch {}
+  try { target.dispatchEvent(new PointerEvent('pointerup', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('mouseup', evOpts)); } catch {}
+  try { target.dispatchEvent(new MouseEvent('click', evOpts)); } catch {}
+  try { if(typeof target.click === 'function') target.click(); } catch {}
+
+  return true;
+}
+
+async function ensureFahrzeuguebersichtActive(){
+  if(isFahrzeuguebersichtActive() && isFahrzeuguebersichtReady()) return true;
+
+  let trigger = findFahrzeuguebersichtTrigger();
+
+  if(!trigger){
+    const firstTab = findFirstTopTabLikeElement();
+    if(firstTab){
+      const txt = norm(firstTab.textContent || '');
+      if(/fahrzeugübersicht/i.test(txt)) trigger = firstTab;
+    }
+  }
+
+  if(!trigger){
+    console.warn('[fvpr] Fahrzeugübersicht-Tab nicht gefunden');
+    return false;
+  }
+
+  fireRealClick(trigger);
+  await new Promise(r=>setTimeout(r,1000));
+
+  if(!isFahrzeuguebersichtActive()){
+    const firstTab = findFirstTopTabLikeElement();
+    if(firstTab){
+      fireRealClick(firstTab);
+      await new Promise(r=>setTimeout(r,1000));
+    }
+  }
+
+  const ok = await waitForOverviewReady(15000);
+  if(!ok) console.warn('[fvpr] Fahrzeugübersicht wurde nicht rechtzeitig geladen');
+  return ok;
+}
+
 function modal(html){
   DIAG("modal", "Modal wird erstellt", { htmlSnippet: (html||"").slice(0,100) });
   const ov=document.createElement('div');
   ov.className=NS+'modal';
   ov.innerHTML=`<div class="${NS}modal-box">${html}</div>`;
+
+  // Klick auf den dunklen Bereich außerhalb des aktuellen Fensters schließt nur dieses Fenster.
+  ov.addEventListener('mousedown', e=>{
+    if(e.target === ov) ov.remove();
+  }, {passive:true});
+
   document.body.appendChild(ov);
   DIAG("modal", "Modal ins DOM eingefügt", { display: getComputedStyle(ov).display, zIndex: getComputedStyle(ov).zIndex, rect: JSON.stringify(ov.getBoundingClientRect()) });
   return ov;
 }
+
 function softenColor(rgb, alpha=0.18){
   if(!rgb) return '';
   const m = rgb.match(/rgba?\s*\(\s*(\d+)[, ]\s*(\d+)[, ]\s*(\d+)/i);
@@ -674,6 +963,7 @@ function softenColor(rgb, alpha=0.18){
   const [_,r,g,b]=m;
   return `rgba(${r},${g},${b},${alpha})`;
 }
+
 function etaBg(v){
   if(v==null) return '';
   if(v>=100) return 'rgba(22,163,74,0.18)';
@@ -801,6 +1091,7 @@ function partnerHtml(partner,list,signature){
     ${signatureHtml}
   </div>`;
 }
+
 function summaryHtml(per,totals,signature){
   const head=`
     <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
@@ -814,6 +1105,7 @@ function summaryHtml(per,totals,signature){
       <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
       <th style="padding:6px 8px;border:1px solid #e5e7eb;">Aktion</th>
     </tr></thead>`;
+
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
     return `
@@ -833,23 +1125,28 @@ function summaryHtml(per,totals,signature){
         </td>
       </tr>`;
   }).join('');
+
   const foot=`
-    <tfoot><tr>
-      <td>Gesamt (alle)</td>
-      <td>${fmtInt(totals.tours)}</td>
-      <td>${fmtPct(totals.etaAvg)}</td>
-      <td>${fmtInt(totals.stops)}</td>
-      <td>${fmtInt(totals.open)}</td>
-      <td>${fmtInt(totals.pkgs)}</td>
-      <td>${fmtInt(totals.obstacles)}</td>
-      <td>${fmtInt(totals.pOpen)}</td>
-      <td class="${NS}act">
-        <button class="${NS}iconbtn" title="Gesamtübersicht an „gesamt“ (Bestätigung)" data-total-send="1">✉︎</button>
-        <button class="${NS}iconbtn" title="Gesamt-Vorschau öffnen" data-total-eye="1">👁</button>
-        <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
-      </td>
-    </tr></tfoot>`;
+    <tfoot>
+      <tr data-total-row="1" style="cursor:pointer;">
+        <td>Gesamt (alle)</td>
+        <td>${fmtInt(totals.tours)}</td>
+        <td>${fmtPct(totals.etaAvg)}</td>
+        <td>${fmtInt(totals.stops)}</td>
+        <td>${fmtInt(totals.open)}</td>
+        <td>${fmtInt(totals.pkgs)}</td>
+        <td>${fmtInt(totals.obstacles)}</td>
+        <td>${fmtInt(totals.pOpen)}</td>
+        <td class="${NS}act">
+          <button class="${NS}iconbtn" title="Gesamtübersicht an „gesamt“ (Bestätigung)" data-total-send="1">✉︎</button>
+          <button class="${NS}iconbtn" title="Gesamt-Vorschau öffnen" data-total-eye="1">👁</button>
+          <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
+        </td>
+      </tr>
+    </tfoot>`;
+
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
+
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
@@ -859,6 +1156,7 @@ function summaryHtml(per,totals,signature){
     ${signatureHtml}
   </div>`;
 }
+
 function mailPartnerHtml(partner,list,signature){
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
@@ -919,6 +1217,7 @@ function mailPartnerHtml(partner,list,signature){
     ${signatureHtml}
   </div>`;
 }
+
 function mailSummaryHtml(per,totals,signature){
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
@@ -971,13 +1270,90 @@ function mailSummaryHtml(per,totals,signature){
   </div>`;
 }
 
+function totalToursHtml(rows, signature){
+  const sorted = [...(rows || [])].sort((a,b)=>{
+    const pa = String(a.partner || '').localeCompare(String(b.partner || ''), 'de');
+    if (pa !== 0) return pa;
+    return String(a.tour || '').localeCompare(String(b.tour || ''), 'de', { numeric:true });
+  });
+
+  const body = sorted.map(r=>{
+    const etaStyle = `background:${etaBg(r.eta)};`;
+    return `
+      <tr data-row="1">
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">${r.partner || '—'}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;">${r.tour || '—'}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">${r.driver || '—'}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.stops)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pkgs)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.open)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.obstacles)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;${etaStyle}">${fmtPct(r.eta)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
+      </tr>`;
+  }).join('');
+
+  const totals = {
+    tours: sorted.length,
+    etaAvg: avg(sorted, r=>r.eta),
+    stops: sum(sorted, r=>r.stops),
+    pkgs: sum(sorted, r=>r.pkgs),
+    open: sum(sorted, r=>r.open),
+    obstacles: sum(sorted, r=>r.obstacles),
+    pOpen: sum(sorted, r=>r.pOpen)
+  };
+
+  const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
+
+  return `
+  <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
+    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
+      <thead>
+        <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Systempartner</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Tour</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Fahrername</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">offen</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">offene Abholstops</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+      <tfoot>
+        <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;"></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
+        </tr>
+      </tfoot>
+    </table>
+    ${signatureHtml}
+  </div>`;
+}
+
 /* ---------- Aggregation + Flows ---------- */
 async function getAggregates(){
   DIAG('agg', 'getAggregates gestartet');
+
+  const tabReady = await ensureFahrzeuguebersichtActive();
+  DIAG('agg', 'ensureFahrzeuguebersichtActive', { tabReady });
+
   const {ok,rows}=await readAllRows();
   DIAG('agg', 'readAllRows Ergebnis', { ok, rowCount: rows.length });
   if(!ok||rows.length===0) return null;
-    cacheTourPartner(rows);
+
+  cacheTourPartner(rows);
+
   const groups=groupByPartner(rows);
   const per=[];
   for(const [partner,list] of groups){
@@ -1004,6 +1380,7 @@ async function getAggregates(){
   };
   return {per, totals};
 }
+
 async function copyPartnerHtml(partner){
   const agg=await getAggregates(); if(!agg) return;
   const g=await ensureSettingsRecord();
@@ -1012,34 +1389,58 @@ async function copyPartnerHtml(partner){
   const ok=await copyHtmlToClipboard(html);
   toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
 }
+
 async function openTotalPreview(){
   DIAG("detail", "openTotalPreview aufgerufen");
-  const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ov=modal(`
-    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt</h3>
+  const agg = await getAggregates();
+  if(!agg){
+    alert('Keine Daten gefunden.');
+    return;
+  }
+
+  const g = await ensureSettingsRecord();
+  const allRows = agg.per.flatMap(p => p.list || []);
+  const html = totalToursHtml(allRows, g.signature || '');
+
+  const ov = modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt (alle Touren)</h3>
     <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${html}</div>
     <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="copy">Kopieren</button>
       <button class="${NS}btn-sm" data-act="close">Schließen</button>
     </div>
   `);
+
   const innerTable = ov.querySelector('table');
   if(innerTable) makeTableSortable(innerTable.parentElement);
-  ov.addEventListener('click', e=>{ if(e.target.closest('button[data-act="close"]')) ov.remove(); },{passive:false});
+
+  ov.addEventListener('click', async e=>{
+    const btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+
+    if(btn.dataset.act === 'copy'){
+      const ok = await copyHtmlToClipboard(html);
+      toast(ok ? 'Gesamt kopiert' : 'Kopieren fehlgeschlagen', ok);
+    }
+
+    if(btn.dataset.act === 'close') ov.remove();
+  }, {passive:false});
 }
+
 async function copyTotalHtml(){
-  const agg=await getAggregates(); if(!agg) return;
-  const g=await ensureSettingsRecord();
-  const html=summaryHtml(agg.per, agg.totals, g.signature||'');
-  const ok=await copyHtmlToClipboard(html);
-  toast(ok?'Gesamt in Zwischenablage':'Kopieren fehlgeschlagen', ok);
+  const agg = await getAggregates(); if(!agg) return;
+  const g = await ensureSettingsRecord();
+  const allRows = agg.per.flatMap(p => p.list || []);
+  const html = totalToursHtml(allRows, g.signature || '');
+  const ok = await copyHtmlToClipboard(html);
+  toast(ok ? 'Gesamt in Zwischenablage' : 'Kopieren fehlgeschlagen', ok);
 }
 async function fillCfg(){
   const g=await ensureSettingsRecord();
   const el=PANEL.querySelector('#'+NS+'cfg-subj');
   if(el) el.value=g.subjectPrefix||'Aktueller Tour.Report';
 }
+
 async function saveCfgFromUI(){
   try{
     const cur=await ensureSettingsRecord();
@@ -1055,6 +1456,7 @@ async function saveCfgFromUI(){
     console.error(e); toast('Fehler beim Speichern',false);
   }
 }
+
 async function openPreview(partner){
   DIAG("detail", "openPreview aufgerufen", { partner });
   try {
@@ -1070,11 +1472,11 @@ async function openPreview(partner){
       <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
       <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${content}</div>
       <div class="${NS}modal-actions">
+        <button class="${NS}btn-sm" data-act="copy">Kopieren</button>
         <button class="${NS}btn-sm" data-act="edit">Einstellungen</button>
         <button class="${NS}btn-sm" data-act="close">Schließen</button>
       </div>
     `);
-    // Prüfen ob Modal wirklich sichtbar ist
     const ovRect = ov.getBoundingClientRect();
     const ovStyle = getComputedStyle(ov);
     DIAG("detail", "Modal nach Erstellung", {
@@ -1093,8 +1495,12 @@ async function openPreview(partner){
     }
     const innerTable = ov.querySelector('table');
     if(innerTable) makeTableSortable(innerTable.parentElement);
-    ov.addEventListener('click', e=>{
+    ov.addEventListener('click', async e=>{
       const btn=e.target.closest('button[data-act]'); if(!btn) return;
+      if(btn.dataset.act==='copy'){
+        const ok=await copyHtmlToClipboard(content);
+        toast(ok?'Vorschau kopiert':'Kopieren fehlgeschlagen', ok);
+      }
       if(btn.dataset.act==='close') ov.remove();
       if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
     },{passive:false});
@@ -1104,7 +1510,8 @@ async function openPreview(partner){
     toast('Detail-Fehler: '+err.message, false);
   }
 }
-function openConfirm({title, subject, to, cc, saveKey, onOk}){
+
+function openConfirm({title, subject, to, cc, saveKey, onOk, htmlToCopy=''}){
   const ov=modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${title||'Bestätigen'}</h3>
     <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
@@ -1113,6 +1520,7 @@ function openConfirm({title, subject, to, cc, saveKey, onOk}){
       <label>CC</label><input id="${NS}cf-cc" type="text" value="${cc||''}">
     </div>
     <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="copy">Kopieren</button>
       <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
       <button class="${NS}btn-sm" data-act="ok">OK</button>
       <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
@@ -1124,6 +1532,12 @@ function openConfirm({title, subject, to, cc, saveKey, onOk}){
     const toV =ov.querySelector('#'+NS+'cf-to').value.trim();
     const ccV =ov.querySelector('#'+NS+'cf-cc').value.trim();
     if(b.dataset.act==='cancel'){ ov.remove(); return; }
+    if(b.dataset.act==='copy'){
+      if(!htmlToCopy){ toast('Nichts zum Kopieren', false); return; }
+      const ok=await copyHtmlToClipboard(htmlToCopy);
+      toast(ok?'HTML kopiert':'Kopieren fehlgeschlagen', ok);
+      return;
+    }
     if(b.dataset.act==='save'){
       const key = saveKey || 'gesamt';
       const cur = await idbGet('partners', key) || {name:key, alias:''};
@@ -1134,6 +1548,7 @@ function openConfirm({title, subject, to, cc, saveKey, onOk}){
     if(b.dataset.act==='ok'){ onOk({subject:subj, to:toV, cc:ccV}); ov.remove(); }
   },{passive:false});
 }
+
 async function openPartnerDialog(partner){
   const key=(partner==='gesamt')?'gesamt':partner;
   const cur=await idbGet('partners',key)||{name:key,to:'',cc:'',alias:''};
@@ -1143,6 +1558,7 @@ async function openPartnerDialog(partner){
     <div class="${NS}row"><label>An</label><input id="${NS}pd-to" type="text" value="${cur.to||''}" placeholder="a@b.de, c@d.de"></div>
     <div class="${NS}row"><label>CC</label><input id="${NS}pd-cc" type="text" value="${cur.cc||''}" placeholder="optional"></div>
     <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="copy-mails">Adressen kopieren</button>
       <button class="${NS}btn-sm" data-act="save">Speichern</button>
       <button class="${NS}btn-sm" data-act="clear">Löschen</button>
       <button class="${NS}btn-sm" data-act="close">Schließen</button>
@@ -1152,6 +1568,17 @@ async function openPartnerDialog(partner){
     const btn=e.target.closest('button[data-act]'); if(!btn) return;
     if(btn.dataset.act==='close'){ ov.remove(); return; }
     if(btn.dataset.act==='clear'){ await idbDel('partners',key); ov.remove(); return; }
+    if(btn.dataset.act==='copy-mails'){
+      const to=ov.querySelector('#'+NS+'pd-to').value.trim();
+      const cc=ov.querySelector('#'+NS+'pd-cc').value.trim();
+      try{
+        await navigator.clipboard.writeText(`An: ${to}\nCC: ${cc}`);
+        toast('Adressen kopiert');
+      }catch{
+        toast('Kopieren fehlgeschlagen', false);
+      }
+      return;
+    }
     if(btn.dataset.act==='save'){
       const to=ov.querySelector('#'+NS+'pd-to').value.trim();
       const cc=ov.querySelector('#'+NS+'pd-cc').value.trim();
@@ -1174,10 +1601,11 @@ async function sendSinglePartnerConfirm(partner){
   const html=mailPartnerHtml(partner, p.list, g.signature||'');
   openConfirm({
     title:`Senden an ${alias}?`,
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:partner,
+    subject, to:rec.to||'', cc:rec.cc||'', saveKey:partner, htmlToCopy:html,
     onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
   });
 }
+
 async function sendTotalOnlyConfirm(){
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
@@ -1186,10 +1614,11 @@ async function sendTotalOnlyConfirm(){
   const html=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
   openConfirm({
     title:'Gesamtübersicht senden?',
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:'gesamt',
+    subject, to:rec.to||'', cc:rec.cc||'', saveKey:'gesamt', htmlToCopy:html,
     onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
   });
 }
+
 async function sendPartnerAndTotalConfirm(){
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
@@ -1200,6 +1629,8 @@ async function sendPartnerAndTotalConfirm(){
   }
   const rec=await idbGet('partners','gesamt')||{};
   const subjectTotal=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
+  const htmlTot=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
+
   const ov=modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Sammelversand bestätigen</h3>
     <div style="font:13px;margin-bottom:10px">Es werden <b>${ready.length}</b> Partner-Mails gesendet (nur mit gültiger Adresse) und <b>1</b> Gesamt-Mail an „gesamt“.</div>
@@ -1209,6 +1640,7 @@ async function sendPartnerAndTotalConfirm(){
       <label>Gesamt – CC</label><input id="${NS}sammel-cc" type="text" value="${rec.cc||''}">
     </div>
     <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="copy-total">Gesamt kopieren</button>
       <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
       <button class="${NS}btn-sm" data-act="ok">Senden</button>
       <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
@@ -1220,6 +1652,11 @@ async function sendPartnerAndTotalConfirm(){
     const to  =ov.querySelector('#'+NS+'sammel-to').value.trim();
     const cc  =ov.querySelector('#'+NS+'sammel-cc').value.trim();
     if(b.dataset.act==='cancel'){ ov.remove(); return; }
+    if(b.dataset.act==='copy-total'){
+      const ok=await copyHtmlToClipboard(htmlTot);
+      toast(ok?'Gesamt kopiert':'Kopieren fehlgeschlagen', ok);
+      return;
+    }
     if(b.dataset.act==='save'){
       const cur=await idbGet('partners','gesamt')||{name:'gesamt',alias:''};
       await idbPut('partners',{name:'gesamt', to, cc, alias:cur.alias||''});
@@ -1233,7 +1670,6 @@ async function sendPartnerAndTotalConfirm(){
         const subjP=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${(ovRec.alias||pname)} – ${todayStr()}`;
         await deliverMail({subject:subjP, html, to:ovRec.to||'', cc:ovRec.cc||''});
       }
-      const htmlTot=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
       await deliverMail({subject:subj, html:htmlTot, to, cc});
       ov.remove();
     }
@@ -1265,15 +1701,17 @@ async function render(force=false){
 
 /* ====== TEIL 12/12 – Boot + Loader-Integration ====== */
 
-function openPanel(){
+async function openPanel(){
   DIAG("boot", "openPanel() aufgerufen");
   try { ensureStyles(); } catch {}
   try { if (!document.querySelector(PANEL_ID)) mountUI(true); } catch {}
   const p = document.querySelector(PANEL_ID);
   DIAG("boot", "Panel-Element", { found: !!p, display: p?.style?.display, id: p?.id, parentTag: p?.parentElement?.tagName });
   if (p) p.style.removeProperty('display');
+
+  try { await ensureFahrzeuguebersichtActive(); } catch(e) { console.error('[fvpr] ensureFahrzeuguebersichtActive', e); }
   try { fillCfg(); } catch {}
-  try { render(true); } catch {}
+  try { await render(true); } catch {}
   DIAG("boot", "openPanel() abgeschlossen", { panelVisible: p ? getComputedStyle(p).display !== 'none' : false });
 }
 
@@ -1282,9 +1720,29 @@ function closePanel(){
   if (p) p.style.setProperty('display', 'none', 'important');
 }
 
+function installOutsideClickClose(){
+  if (window.__FVPR_OUTSIDE_CLOSE_INSTALLED) return;
+  window.__FVPR_OUTSIDE_CLOSE_INSTALLED = true;
+
+  document.addEventListener('mousedown', e=>{
+    const panel = document.querySelector(PANEL_ID);
+    if(!panel) return;
+    if(getComputedStyle(panel).display === 'none') return;
+
+    // Wenn ein Vorschau-/Einstellungsfenster offen ist, kümmert sich dieses selbst ums Schließen.
+    // Dadurch wird beim Klick auf den dunklen Bereich nicht zusätzlich das Hauptfenster geschlossen.
+    if(e.target.closest && e.target.closest('.' + NS + 'modal')) return;
+
+    // Klick im Hauptfenster: offen lassen. Klick irgendwo daneben: Hauptfenster schließen.
+    if(e.target.closest && e.target.closest(PANEL_ID)) return;
+
+    closePanel();
+  }, true);
+}
+
 async function bootStandalone(){
   DIAG("boot", "bootStandalone()");
-  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await render(true); }
+  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await ensureFahrzeuguebersichtActive(); await render(true); }
   catch(e){ console.error('[fvpr] init', e); }
   let mo = null, refreshInterval = null;
   if (!mo){
@@ -1297,15 +1755,17 @@ async function bootStandalone(){
 }
 
 // ====== Start ======
+installOutsideClickClose();
+
 function registerWithLoader(){
   const def = {
     id: 'partner-report',
     label: 'Partner-Report',
     panels: [PANEL_ID],
-    run: () => {
+    run: async () => {
       const el = document.querySelector(PANEL_ID);
       if (el && getComputedStyle(el).display !== 'none') closePanel();
-      else openPanel();
+      else await openPanel();
     },
     close: () => closePanel(),
     isOpen: () => {
@@ -1316,17 +1776,16 @@ function registerWithLoader(){
   const G = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   if (G.TM && typeof G.TM.register === 'function'){
     G.TM.register(def);
-    removeStandaloneButton();        // <- Button sicher entfernen
+    removeStandaloneButton();
   } else {
     const KEY='__tmQueue';
     G[KEY] = Array.isArray(G[KEY]) ? G[KEY] : [];
-    G[KEY].push(def);                // <- nur vormerken, KEIN bootStandalone()
+    G[KEY].push(def);
   }
   G.fvpr_open = openPanel;
   G.fvpr_close = closePanel;
 }
 
-// Umgebungsinfo beim Start loggen
 DIAG('boot', 'Script initialisiert', {
   ua: navigator.userAgent,
   isEdge: /Edg\//.test(navigator.userAgent),
@@ -1338,18 +1797,15 @@ DIAG('boot', 'Script initialisiert', {
   tmLoaderAvail: !!(window.TM && typeof window.TM.register === 'function'),
 });
 
-// Loader vorhanden → nur registrieren; sonst kurz warten ob Loader noch kommt
 const G_BOOT = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
   registerWithLoader();
 } else if (Array.isArray(G_BOOT.__tmQueue)) {
-  registerWithLoader();          // Loader kommt noch → in Queue einreihen
+  registerWithLoader();
 } else {
-  // Loader noch nicht da → Queue selbst anlegen und kurz warten
   G_BOOT['__tmQueue'] = G_BOOT['__tmQueue'] || [];
-  registerWithLoader();          // pushed in die Queue
+  registerWithLoader();
 
-  // Fallback: wenn nach 3 s kein Loader kam → standalone starten
   setTimeout(() => {
     if (!(G_BOOT.TM && typeof G_BOOT.TM.register === 'function')) {
       LOG('Loader nicht erschienen – starte standalone');
@@ -1357,7 +1813,6 @@ if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
     }
   }, 3000);
 }
-
 
 
 
