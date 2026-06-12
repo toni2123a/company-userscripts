@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Tourenauswertung
 // @namespace    bodo.dpd.custom
-// @version      3.1.3
+// @version      3.1.4
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js
 // @description  Tourenauswertung mit Datum von/bis, Systempartner/Touren, Fahrername, Stopps/Paketen, automatischen Fällen und Zustellhindernissen inkl. Klick-Details.
@@ -3019,11 +3019,14 @@ async function handleMainTableClick(el) {
     });
   }
 
-  function bindAllSortableTables(root = document) {
+  function bindAllSortableTables() {
+    // WICHTIG:
+    // Nur Tabellen im eigenen Tourenauswertung-Panel / Modal sortierbar machen.
+    // Nicht auf document/root anwenden, sonst werden die Original-Filter
+    // der Dispatcher-Seite abgefangen und funktionieren nicht mehr.
     const scopes = [
       document.getElementById(NS + 'panel'),
-      document.getElementById(NS + 'modal'),
-      root
+      document.getElementById(NS + 'modal')
     ].filter(Boolean);
 
     for (const scope of scopes) {
@@ -3032,20 +3035,38 @@ async function handleMainTableClick(el) {
     }
   }
 
-  (function installGlobalTableSorting() {
+  (function installPanelTableSorting() {
     if (window.__spx_sorting_installed) return;
     window.__spx_sorting_installed = true;
 
     const observer = new MutationObserver(() => {
-      bindAllSortableTables(document);
+      bindAllSortableTables();
     });
 
-    const start = () => {
-      bindAllSortableTables(document);
-      observer.observe(document.documentElement || document.body, {
+    const observeOwnContainer = (el) => {
+      if (!el || el.dataset.spxSortingObserved === '1') return;
+      el.dataset.spxSortingObserved = '1';
+      observer.observe(el, {
         childList: true,
         subtree: true
       });
+    };
+
+    const start = () => {
+      bindAllSortableTables();
+
+      // Nur eigene Script-Container beobachten, niemals document/documentElement.
+      observeOwnContainer(document.getElementById(NS + 'panel'));
+      observeOwnContainer(document.getElementById(NS + 'modal'));
+
+      // Falls Panel/Modal erst später erstellt werden, kurz nachfassen.
+      const retryUntil = Date.now() + 10000;
+      const timer = setInterval(() => {
+        bindAllSortableTables();
+        observeOwnContainer(document.getElementById(NS + 'panel'));
+        observeOwnContainer(document.getElementById(NS + 'modal'));
+        if (Date.now() > retryUntil) clearInterval(timer);
+      }, 500);
     };
 
     if (document.readyState === 'loading') {
