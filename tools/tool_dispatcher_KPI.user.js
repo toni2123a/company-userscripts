@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.2.0
+// @version      2.2.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @description  Dispatcher KPI Monitor
@@ -898,6 +898,28 @@ function buildPartnerTableHtmlUI(per, totals){
     <th style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">Aktion</th>
   </tr></thead>`;
 
+  const totalTop=`
+  <table class="${NS}tbl" data-kind="partner-total" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:13px/1.4 system-ui,Segoe UI,Arial,sans-serif;margin-bottom:0;">
+    <tbody>
+      <tr data-partner="__TOTAL__" style="background:#e0f2ff;color:#003366;font-weight:700;cursor:pointer;">
+        <td style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);">Gesamt (${fmtInt(totals.tours)})</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.tours)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">Ø ${fmtDec1(totals.avgStops)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">Ø ${fmtDurMin(totals.avgDur)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.prio)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.express)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.other)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.gesamtpakete)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.abholstopps)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.geplAbholpakete)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">${fmtInt(totals.plzCount)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">Ø ${fmtKg(totals.gewichtAvg)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:right;">Ø ${fmtPct(totals.lieferquoteAvg)}</td>
+        <td class="${NS}act" style="padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);text-align:center;">—</td>
+      </tr>
+    </tbody>
+  </table>`;
+
   const body = per.map(p=>`
     <tr data-partner="${esc(p.partner)}" data-row="1">
       <td style="text-align:left;">${esc(p.partner)}</td>
@@ -918,34 +940,17 @@ function buildPartnerTableHtmlUI(per, totals){
       </td>
     </tr>`).join('');
 
-  const foot=`
-  <tfoot><tr data-partner="__TOTAL__" data-row="1">
-    <td>Gesamt</td>
-    <td>${fmtInt(totals.tours)}</td>
-    <td>Ø ${fmtDec1(totals.avgStops)}</td>
-    <td>Ø ${fmtDurMin(totals.avgDur)}</td>
-    <td>${fmtInt(totals.prio)}</td>
-    <td>${fmtInt(totals.express)}</td>
-    <td>${fmtInt(totals.other)}</td>
-    <td>${fmtInt(totals.gesamtpakete)}</td>
-    <td>${fmtInt(totals.abholstopps)}</td>
-    <td>${fmtInt(totals.geplAbholpakete)}</td>
-    <td>${fmtInt(totals.plzCount)}</td>
-    <td>Ø ${fmtKg(totals.gewichtAvg)}</td>
-    <td>Ø ${fmtPct(totals.lieferquoteAvg)}</td>
-    <td class="${NS}act">—</td>
-  </tr></tfoot>`;
-
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayDE()} ${timeHM()}</div>
+    ${totalTop}
     <table class="${NS}tbl" data-kind="partner" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:13px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-      ${head}<tbody>${body}</tbody>${foot}
+      ${head}<tbody>${body}</tbody>
     </table>
   </div>`;
 }
 
-/* ====== BLOCK 08.1/11 – COPY Builder (INLINE-STYLES, ohne Aktion/Buttons) ====== */
+/* ====== BLOCK 08.1/11/* ====== BLOCK 08.1/11 – COPY Builder (INLINE-STYLES, ohne Aktion/Buttons) ====== */
 
 function baseCopyCssTable(){
   const border = 'border:1px solid #e5e7eb;';
@@ -982,6 +987,25 @@ function buildPartnerTableHtmlCOPY(per, totals){
       <th style="${C.th}">Lieferquote Ø</th>
     </tr></thead>`;
 
+  const totalTop = `
+    <table cellpadding="0" cellspacing="0" style="${C.table}">
+      <tbody><tr>
+        <td style="${C.tfL}">Gesamt</td>
+        <td style="${C.tf}">${fmtInt(totals.tours)}</td>
+        <td style="${C.tf}">Ø ${fmtDec1(totals.avgStops)}</td>
+        <td style="${C.tf}">Ø ${fmtDurMin(totals.avgDur)}</td>
+        <td style="${C.tf}">${fmtInt(totals.prio)}</td>
+        <td style="${C.tf}">${fmtInt(totals.express)}</td>
+        <td style="${C.tf}">${fmtInt(totals.other)}</td>
+        <td style="${C.tf}">${fmtInt(totals.gesamtpakete)}</td>
+        <td style="${C.tf}">${fmtInt(totals.abholstopps)}</td>
+        <td style="${C.tf}">${fmtInt(totals.geplAbholpakete)}</td>
+        <td style="${C.tf}">${fmtInt(totals.plzCount)}</td>
+        <td style="${C.tf}">Ø ${fmtKg(totals.gewichtAvg)}</td>
+        <td style="${C.tf}">Ø ${fmtPct(totals.lieferquoteAvg)}</td>
+      </tr></tbody>
+    </table>`;
+
   const body = per.map(p=>`
     <tr>
       <td style="${C.tdL}">${esc(p.partner)}</td>
@@ -999,33 +1023,17 @@ function buildPartnerTableHtmlCOPY(per, totals){
       <td style="${C.td}">Ø ${fmtPct(p.lieferquoteAvg)}</td>
     </tr>`).join('');
 
-  const foot = `
-    <tfoot><tr>
-      <td style="${C.tfL}">Gesamt</td>
-      <td style="${C.tf}">${fmtInt(totals.tours)}</td>
-      <td style="${C.tf}">Ø ${fmtDec1(totals.avgStops)}</td>
-      <td style="${C.tf}">Ø ${fmtDurMin(totals.avgDur)}</td>
-      <td style="${C.tf}">${fmtInt(totals.prio)}</td>
-      <td style="${C.tf}">${fmtInt(totals.express)}</td>
-      <td style="${C.tf}">${fmtInt(totals.other)}</td>
-      <td style="${C.tf}">${fmtInt(totals.gesamtpakete)}</td>
-      <td style="${C.tf}">${fmtInt(totals.abholstopps)}</td>
-      <td style="${C.tf}">${fmtInt(totals.geplAbholpakete)}</td>
-      <td style="${C.tf}">${fmtInt(totals.plzCount)}</td>
-      <td style="${C.tf}">Ø ${fmtKg(totals.gewichtAvg)}</td>
-      <td style="${C.tf}">Ø ${fmtPct(totals.lieferquoteAvg)}</td>
-    </tr></tfoot>`;
-
   return `
     <div style="${C.wrap}">
       <div style="${C.stand}">Stand: ${todayDE()} ${timeHM()}</div>
+      ${totalTop}
       <table cellpadding="0" cellspacing="0" style="${C.table}">
-        ${head}<tbody>${body}</tbody>${foot}
+        ${head}<tbody>${body}</tbody>
       </table>
     </div>`;
 }
 
-/* ====== Modal Daten + COPY Builder ===== */
+/* ====== Modal Daten/* ====== Modal Daten + COPY Builder ===== */
 
 function summarizeToursForModal(toursArr){
   const tourCount = toursArr.length;
@@ -1106,6 +1114,27 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null, showPartn
       ${showPartnerCol ? `<th style="${C.thL}">SP</th>` : ''}
     </tr></thead>`;
 
+  const totalTop = onlyRowObj ? '' : `
+    <table cellpadding="0" cellspacing="0" style="${C.table}">
+      <tbody><tr>
+        <td style="${C.tfL}">Gesamt (${fmtInt(footerSum.tourCount)})</td>
+        <td style="${C.tfL}">${fmtInt(footerSum.zustCount)}</td>
+        <td style="${C.tf}">Ø ${fmtDec1(footerSum.avgStopps)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumOffen)}</td>
+        <td style="${C.tf}">Ø ${fmtDurMin(footerSum.avgDur)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumPrio)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumExpress)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumOther)}</td>
+        <td style="${C.tf}">Ø ${fmtDec1(footerSum.avgGesamtpakete)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumAbholstopps)}</td>
+        <td style="${C.tf}">${fmtInt(footerSum.sumGeplAbholp)}</td>
+        <td style="${C.tfL}">${fmtInt(footerSum.plzCount)}</td>
+        <td style="${C.tf}">Ø ${fmtKg(footerSum.avgKg)}</td>
+        <td style="${C.tf}">Ø ${fmtPct(footerSum.lqAvg)}</td>
+        ${showPartnerCol ? `<td style="${C.tfL}">—</td>` : ''}
+      </tr></tbody>
+    </table>`;
+
   const rows = (onlyRowObj ? [onlyRowObj] : toursArr);
 
   const body = rows.map(t=>{
@@ -1130,35 +1159,17 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null, showPartn
       </tr>`;
   }).join('');
 
-  const foot = onlyRowObj ? '' : `
-    <tfoot><tr>
-      <td style="${C.tfL}">Gesamt (${fmtInt(footerSum.tourCount)})</td>
-      <td style="${C.tfL}">${fmtInt(footerSum.zustCount)}</td>
-      <td style="${C.tf}">Ø ${fmtDec1(footerSum.avgStopps)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumOffen)}</td>
-      <td style="${C.tf}">Ø ${fmtDurMin(footerSum.avgDur)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumPrio)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumExpress)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumOther)}</td>
-      <td style="${C.tf}">Ø ${fmtDec1(footerSum.avgGesamtpakete)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumAbholstopps)}</td>
-      <td style="${C.tf}">${fmtInt(footerSum.sumGeplAbholp)}</td>
-      <td style="${C.tfL}">${fmtInt(footerSum.plzCount)}</td>
-      <td style="${C.tf}">Ø ${fmtKg(footerSum.avgKg)}</td>
-      <td style="${C.tf}">Ø ${fmtPct(footerSum.lqAvg)}</td>
-      ${showPartnerCol ? `<td style="${C.tfL}">—</td>` : ''}
-    </tr></tfoot>`;
-
   return `
     <div style="${C.wrap}">
       <div style="${C.stand}">Stand: ${todayDE()} ${timeHM()}</div>
+      ${totalTop}
       <table cellpadding="0" cellspacing="0" style="${C.table}">
-        ${head}<tbody>${body}</tbody>${foot}
+        ${head}<tbody>${body}</tbody>
       </table>
     </div>`;
 }
 
-/* ====== Clipboard Helper ====== */
+/* ====== Clipboard Helper/* ====== Clipboard Helper ====== */
 async function copyHtmlToClipboard(html){
   try{
     if(navigator.clipboard && window.ClipboardItem){
@@ -1624,6 +1635,30 @@ async function openPartnerModal(partner){
         <th style="padding:8px;border:1px solid #e5e7eb;">Aktion</th>
       </tr></thead>`;
 
+    const uiTop = `
+      <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font:12px/1.4 system-ui,Segoe UI,Arial,sans-serif;margin-bottom:0;">
+        <tbody>
+          <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (${fmtInt(sum.tourCount)})</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${fmtInt(sum.zustCount)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDec1(sum.avgStopps)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumOffen)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDurMin(sum.avgDur)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumPrio)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumExpress)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumOther)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDec1(sum.avgGesamtpakete)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumAbholstopps)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumGeplAbholp)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${fmtInt(sum.plzCount)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtKg(sum.avgKg)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtPct(sum.lqAvg)}</td>
+            ${showPartnerCol ? '<td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">—</td>' : ''}
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center;">—</td>
+          </tr>
+        </tbody>
+      </table>`;
+
     const uiBody = toursArr.map(t=>{
       const plz = Array.from(t.plzSet||[]).sort().join(', ');
       const rowKey = `${t.tour}||${t.zusteller||''}`;
@@ -1650,33 +1685,12 @@ async function openPartnerModal(partner){
         </tr>`;
     }).join('');
 
-    const uiFoot = `
-      <tfoot>
-        <tr data-row="0" style="background:#e0f2ff;color:#003366;font-weight:700;">
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (${fmtInt(sum.tourCount)})</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${fmtInt(sum.zustCount)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDec1(sum.avgStopps)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumOffen)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDurMin(sum.avgDur)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumPrio)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumExpress)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumOther)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtDec1(sum.avgGesamtpakete)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumAbholstopps)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(sum.sumGeplAbholp)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">${fmtInt(sum.plzCount)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtKg(sum.avgKg)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Ø ${fmtPct(sum.lqAvg)}</td>
-          ${showPartnerCol ? '<td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">—</td>' : ''}
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:center;">—</td>
-        </tr>
-      </tfoot>`;
-
     modalSet(ov, `
       <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Touren – ${esc(displayPartner)} (Touren: ${fmtInt(sum.tourCount)})</h3>
       <div class="${NS}wrap">
+        ${uiTop}
         <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font:12px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-          ${uiTableHead}<tbody>${uiBody}</tbody>${uiFoot}
+          ${uiTableHead}<tbody>${uiBody}</tbody>
         </table>
       </div>
       <div class="${NS}modal-actions">
