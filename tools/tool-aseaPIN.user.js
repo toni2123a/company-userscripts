@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.26
+// @version      6.33
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -1348,6 +1348,19 @@ ctx.fillText(
   }
 
 
+  function sortRowsByStreetThenOrt(rows) {
+    // Standardsortierung für Systempartner-Details und Übersicht-Kopie:
+    // zuerst Ort, danach Straße, danach Paketscheinnummer.
+    return (Array.isArray(rows) ? rows.slice() : []).sort((a, b) => {
+      const ortCmp = compareSmartValues(a && a.ort, b && b.ort);
+      if (ortCmp !== 0) return ortCmp;
+      const strCmp = compareSmartValues(a && a.str, b && b.str);
+      if (strCmp !== 0) return strCmp;
+      return compareSmartValues(a && a.psn, b && b.psn);
+    });
+  }
+
+
   async function fetchReportRowsForSystempartner(baseUrl, baseParams, option) {
     const p = new URLSearchParams(baseParams.toString());
     const sp = option.value || option.label;
@@ -1537,13 +1550,31 @@ function createBarcodeOverlayForDoc(doc) {
   overlay.appendChild(box);
   doc.body.appendChild(overlay);
 
-  overlay.addEventListener('click', (e) => {
+  // QR/Barcode-Popup komplett vom Systempartner-Fenster trennen:
+  // Klick neben den QR schließt nur dieses Popup und darf nicht bis zum Detailfenster durchlaufen.
+  overlay.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
     if (e.target === overlay) overlay.style.display = 'none';
-  });
+  }, true);
+
+  overlay.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    if (e.target === overlay) overlay.style.display = 'none';
+  }, true);
+
+  box.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  }, true);
 
   box.addEventListener('click', (e) => {
     e.stopPropagation();
-  });
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  }, true);
 
   btnClose.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1622,7 +1653,7 @@ function openBarcodeOverlay(doc, row) {
 }
 
 function createRowsPreviewOverlay(doc, partnerLabel, rows) {
-  const sourceRows = Array.isArray(rows) ? rows.slice() : [];
+  const sourceRows = sortRowsByStreetThenOrt(Array.isArray(rows) ? rows.slice() : []);
   let displayRows = sourceRows.slice();
   const sortState = { key: '', dir: 'asc' };
   const headerCells = [];
@@ -1669,18 +1700,72 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
   });
 
   const left = doc.createElement('div');
+  Object.assign(left.style, {
+    flex: '1 1 auto',
+    minWidth: '0',
+    overflow: 'hidden'
+  });
 
   const title = doc.createElement('div');
   title.textContent = 'Details – ' + partnerLabel;
   title.style.fontWeight = 'bold';
   title.style.fontSize = '13px';
   title.style.lineHeight = '16px';
+  title.style.whiteSpace = 'nowrap';
+  title.style.overflow = 'hidden';
+  title.style.textOverflow = 'ellipsis';
 
   const sub = doc.createElement('div');
-  sub.textContent = 'Zeilen: ' + displayRows.length;
-  sub.style.color = '#666';
-  sub.style.marginTop = '2px';
-  sub.style.fontSize = '11px';
+  Object.assign(sub.style, {
+    color: '#666',
+    marginTop: '2px',
+    fontSize: '11px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexWrap: 'wrap',
+    maxHeight: '38px',
+    overflow: 'hidden',
+    lineHeight: '17px'
+  });
+
+  const subText = doc.createElement('span');
+  subText.textContent = 'Zeilen: ' + displayRows.length;
+  subText.style.whiteSpace = 'nowrap';
+  sub.appendChild(subText);
+
+  const configuredToursForDetails = getConfiguredToursForPartner(partnerLabel);
+  if (configuredToursForDetails.length) {
+    const tourLabel = doc.createElement('span');
+    tourLabel.textContent = 'Touren:';
+    tourLabel.style.whiteSpace = 'nowrap';
+    tourLabel.style.marginLeft = '6px';
+    sub.appendChild(tourLabel);
+
+    configuredToursForDetails.forEach((tour) => {
+      const tourBtn = doc.createElement('button');
+      tourBtn.type = 'button';
+      tourBtn.textContent = String(tour);
+      tourBtn.title = 'QR-Code für Tour ' + tour + ' anzeigen';
+      Object.assign(tourBtn.style, {
+        padding: '0 5px',
+        height: '17px',
+        lineHeight: '15px',
+        fontSize: '10px',
+        cursor: 'pointer',
+        border: '1px solid #bbb',
+        borderRadius: '3px',
+        background: '#f7f7f7',
+        color: '#000'
+      });
+      tourBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showQrPopup(doc, tour);
+      });
+      sub.appendChild(tourBtn);
+    });
+  }
 
   left.appendChild(title);
   left.appendChild(sub);
@@ -1890,7 +1975,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
     sortDisplayRows();
     updateSortableHeaderLabels(headerCells.filter(h => h.dataset && h.dataset.sortKey), sortState);
     tbody.innerHTML = '';
-    sub.textContent = 'Zeilen: ' + displayRows.length + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
+    subText.textContent = 'Zeilen: ' + displayRows.length + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
 
     displayRows.forEach((r, idx) => {
       const tr = doc.createElement('tr');
@@ -2048,8 +2133,17 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
 
   const outsideClickCapture = (e) => {
     if (!overlay.isConnected) return;
+
     const barcodeOverlay = doc.getElementById('tm-barcode-overlay');
-    if (barcodeOverlay && barcodeOverlay.style.display !== 'none') return;
+    if ((barcodeOverlay && barcodeOverlay.style.display !== 'none') || isAnyQrOverlayOpen(doc)) {
+      // Solange ein QR/Barcode offen ist, darf kein Klick das Systempartner-Fenster schließen.
+      return;
+    }
+
+    if (e.target && typeof e.target.closest === 'function' && (e.target.closest('#tm-barcode-overlay') || e.target.closest('.tm-qr-popup-overlay'))) {
+      return;
+    }
+
     if (!box.contains(e.target)) close();
   };
 
@@ -2066,6 +2160,11 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
   });
 
   overlay.addEventListener('click', (e) => {
+    const barcodeOverlay = doc.getElementById('tm-barcode-overlay');
+    if ((barcodeOverlay && barcodeOverlay.style.display !== 'none') || isAnyQrOverlayOpen(doc)) {
+      e.stopPropagation();
+      return;
+    }
     if (e.target === overlay) close();
   });
 
@@ -2497,7 +2596,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
             entry.rows = rows;
           }
 
-          await copyRowsAsImage(rows, false);
+          await copyRowsAsImage(sortRowsByStreetThenOrt(rows), false);
 
           button.textContent = '✓';
           setTimeout(() => {
@@ -2723,7 +2822,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
             return;
           }
 
-          await copyRowsAsImage(allRows, false);
+          await copyRowsAsImage(sortRowsByStreetThenOrt(allRows), false);
           ui.btnCopyAll.textContent = 'Kopiert ✓';
           setTimeout(() => {
             ui.btnCopyAll.textContent = old;
@@ -2980,8 +3079,26 @@ btn2.addEventListener('click', () => {
     return y;
   }
 
+  function isAnyQrOverlayOpen(doc) {
+    return !!(doc && doc.querySelector('.tm-qr-popup-overlay'));
+  }
+
+  function markQrPopupOverlay(overlay) {
+    if (!overlay) return;
+    overlay.classList.add('tm-qr-popup-overlay');
+    overlay.setAttribute('data-tm-qr-popup', '1');
+  }
+
+  function stopQrPopupEvent(e) {
+    if (!e) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  }
+
   function showQrPopupFromLoadedUrl(doc, tour, imgUrl) {
     const overlay = doc.createElement('div');
+    markQrPopupOverlay(overlay);
     Object.assign(overlay.style, {
       position: 'fixed',
       inset: '0',
@@ -3075,13 +3192,22 @@ btn2.addEventListener('click', () => {
 
     overlay.appendChild(box);
 
+    overlay.addEventListener('mousedown', (e) => {
+      stopQrPopupEvent(e);
+    }, true);
+
     overlay.addEventListener('click', (e) => {
+      stopQrPopupEvent(e);
       if (e.target === overlay) overlay.remove();
-    });
+    }, true);
+
+    box.addEventListener('mousedown', (e) => {
+      stopQrPopupEvent(e);
+    }, true);
 
     box.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
+      stopQrPopupEvent(e);
+    }, true);
 
     doc.body.appendChild(overlay);
   }
@@ -3092,6 +3218,7 @@ btn2.addEventListener('click', () => {
       const imgUrl = buildQrImageUrl(content);
 
       const overlay = doc.createElement('div');
+      markQrPopupOverlay(overlay);
       Object.assign(overlay.style, {
         position: 'fixed',
         inset: '0',
@@ -3185,13 +3312,22 @@ btn2.addEventListener('click', () => {
 
       overlay.appendChild(box);
 
-     overlay.addEventListener('click', (e) => {
-  if (e.target === overlay) overlay.remove();
-});
+      overlay.addEventListener('mousedown', (e) => {
+        stopQrPopupEvent(e);
+      }, true);
 
-box.addEventListener('click', (e) => {
-  e.stopPropagation();
-});
+      overlay.addEventListener('click', (e) => {
+        stopQrPopupEvent(e);
+        if (e.target === overlay) overlay.remove();
+      }, true);
+
+      box.addEventListener('mousedown', (e) => {
+        stopQrPopupEvent(e);
+      }, true);
+
+      box.addEventListener('click', (e) => {
+        stopQrPopupEvent(e);
+      }, true);
 
       doc.body.appendChild(overlay);
     } catch (e) {
@@ -3203,6 +3339,7 @@ box.addEventListener('click', (e) => {
   if (!tours || !tours.length) return;
 
   const overlay = doc.createElement('div');
+  markQrPopupOverlay(overlay);
   Object.assign(overlay.style, {
     position: 'fixed',
     inset: '0',
@@ -3210,7 +3347,7 @@ box.addEventListener('click', (e) => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: '1000002'
+    zIndex: '1000005'
   });
 
   const box = doc.createElement('div');
@@ -3265,13 +3402,22 @@ box.addEventListener('click', (e) => {
 
   overlay.appendChild(box);
 
+  overlay.addEventListener('mousedown', (e) => {
+    stopQrPopupEvent(e);
+  }, true);
+
   overlay.addEventListener('click', (e) => {
+    stopQrPopupEvent(e);
     if (e.target === overlay) overlay.remove();
-  });
+  }, true);
+
+  box.addEventListener('mousedown', (e) => {
+    stopQrPopupEvent(e);
+  }, true);
 
   box.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
+    stopQrPopupEvent(e);
+  }, true);
 
   doc.body.appendChild(overlay);
 
