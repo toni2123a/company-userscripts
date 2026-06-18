@@ -3,7 +3,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.6.0
+// @version      5.6.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
@@ -481,7 +481,7 @@ function ensureStyles(){
 .${NS}btn-sm{border:1px solid rgba(0,0,0,.12);background:#f7f7f7;padding:6px 10px;border-radius:8px;font:600 12px system-ui;cursor:pointer;margin-left:6px}
 .${NS}tbl{width:100%;border-collapse:collapse}
 .${NS}tbl thead th{position:sticky;top:0;z-index:1;padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.12);font:700 12px system-ui;text-align:right;white-space:nowrap;background:#ffe2e2;color:#8b0000;cursor:pointer;user-select:none}
-.${NS}tbl thead th:first-child,.${NS}tbl tbody td:first-child{text-align:left}
+.${NS}tbl thead th:first-child,.${NS}tbl thead td:first-child,.${NS}tbl tbody td:first-child{text-align:left}
 .${NS}tbl tbody tr{cursor:pointer}
 .${NS}tbl tbody tr:hover{background:#f8fafc}
 .${NS}tbl tbody td{padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);font:500 12px system-ui;text-align:right;white-space:nowrap}
@@ -510,7 +510,7 @@ let LAST_USER_SORT_TS = 0;
 const SUPPRESS_RENDER_MS = 4000;
 
 function makeTableSortable(root){
-  const table = (root instanceof HTMLElement) ? root.querySelector('table') : root;
+  const table = (root instanceof HTMLTableElement) ? root : ((root instanceof HTMLElement) ? root.querySelector('table') : root);
   if(!table) return;
 
   const thead = table.querySelector('thead');
@@ -544,8 +544,8 @@ function makeTableSortable(root){
   };
 
   const doSort = (colIndex) => {
-    const currentCol = Number(table.dataset.sortCol ?? -1);
-    const currentDir = Number(table.dataset.sortDir ?? 0);
+    const currentCol = parseInt(table.dataset.sortCol || '-1', 10);
+    const currentDir = parseInt(table.dataset.sortDir || '0', 10);
 
     let dir = 1;
     if (currentCol === colIndex) {
@@ -1063,21 +1063,10 @@ function partnerHtml(partner,list,signature){
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-      <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Tour</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Fahrername</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">offen</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA</th>
-        <th style="padding:6px 8px;border:1px solid #e5e7eb;">offene Abholstops</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
-          <td style="padding:8px;border:1px solid #e5e7eb;"></td>
+    <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
+      <thead>
+        <tr data-total-row="1" style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;cursor:pointer;">
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
@@ -1086,7 +1075,18 @@ function partnerHtml(partner,list,signature){
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
         </tr>
-      </tfoot>
+        <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Tour</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Fahrername</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">offen</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA</th>
+          <th style="padding:6px 8px;border:1px solid #e5e7eb;">offene Abholstops</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
     </table>
     ${signatureHtml}
   </div>`;
@@ -1094,17 +1094,34 @@ function partnerHtml(partner,list,signature){
 
 function summaryHtml(per,totals,signature){
   const head=`
-    <thead><tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Systempartner</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Touren</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA % (Ø)</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps gesamt</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Stopps</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete gesamt</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
-      <th style="padding:6px 8px;border:1px solid #e5e7eb;">Aktion</th>
-    </tr></thead>`;
+    <thead>
+      <tr data-total-row="1" style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;cursor:pointer;">
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(totals.etaAvg)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
+        <td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
+        <td class="${NS}act" style="padding:8px 10px;border:1px solid #e5e7eb;text-align:center;">
+          <button class="${NS}iconbtn" title="Gesamtübersicht an „gesamt“ (Bestätigung)" data-total-send="1">✉︎</button>
+          <button class="${NS}iconbtn" title="Gesamt-Vorschau öffnen" data-total-eye="1">👁</button>
+          <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
+        </td>
+      </tr>
+      <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Systempartner</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Touren</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">ETA % (Ø)</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Stopps gesamt</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Stopps</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Pakete gesamt</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Offene Abholstops</th>
+        <th style="padding:6px 8px;border:1px solid #e5e7eb;">Aktion</th>
+      </tr>
+    </thead>`;
 
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
@@ -1126,32 +1143,13 @@ function summaryHtml(per,totals,signature){
       </tr>`;
   }).join('');
 
-  const foot=`
-    <tfoot>
-      <tr data-total-row="1" style="cursor:pointer;">
-        <td>Gesamt (alle)</td>
-        <td>${fmtInt(totals.tours)}</td>
-        <td>${fmtPct(totals.etaAvg)}</td>
-        <td>${fmtInt(totals.stops)}</td>
-        <td>${fmtInt(totals.open)}</td>
-        <td>${fmtInt(totals.pkgs)}</td>
-        <td>${fmtInt(totals.obstacles)}</td>
-        <td>${fmtInt(totals.pOpen)}</td>
-        <td class="${NS}act">
-          <button class="${NS}iconbtn" title="Gesamtübersicht an „gesamt“ (Bestätigung)" data-total-send="1">✉︎</button>
-          <button class="${NS}iconbtn" title="Gesamt-Vorschau öffnen" data-total-eye="1">👁</button>
-          <button class="${NS}iconbtn" title="Gesamt-HTML in Zwischenablage" data-total-copy="1">⧉</button>
-        </td>
-      </tr>
-    </tfoot>`;
-
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
 
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
     <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
-      ${head}<tbody>${body}</tbody>${foot}
+      ${head}<tbody>${body}</tbody>
     </table>
     ${signatureHtml}
   </div>`;
@@ -1188,20 +1186,7 @@ function mailPartnerHtml(partner,list,signature){
     <div style="max-width:100%; overflow-x:auto;">
       <table cellpadding="0" cellspacing="0" style="width:100%; min-width:560px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
         <thead>
-          <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-            <th align="center"style="padding:8px;border:1px solid #e5e7eb;">Tour</th>
-            <th align="left"  style="padding:8px;border:1px solid #e5e7eb;">Fahrername</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Stopps</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Pakete</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offen</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">ETA</th>
-            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offene Abholstops</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
+          <tr style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;">
             <td style="padding:8px;border:1px solid #e5e7eb;"></td>
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
@@ -1211,7 +1196,18 @@ function mailPartnerHtml(partner,list,signature){
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
             <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
           </tr>
-        </tfoot>
+          <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
+            <th align="center" style="padding:8px;border:1px solid #e5e7eb;">Tour</th>
+            <th align="left" style="padding:8px;border:1px solid #e5e7eb;">Fahrername</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Stopps</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Pakete</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offen</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Zustellhindernisse</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">ETA</th>
+            <th align="right" style="padding:8px;border:1px solid #e5e7eb;">offene Abholstops</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>
     ${signatureHtml}
@@ -1240,8 +1236,18 @@ function mailSummaryHtml(per,totals,signature){
     <div style="max-width:100%; overflow-x:auto;">
       <table cellpadding="0" cellspacing="0" style="width:100%; min-width:640px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
         <thead>
+          <tr style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;">
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(totals.etaAvg)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
+          </tr>
           <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
-            <th align="left"  style="padding:8px;border:1px solid #e5e7eb;">Systempartner</th>
+            <th align="left" style="padding:8px;border:1px solid #e5e7eb;">Systempartner</th>
             <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Touren</th>
             <th align="right" style="padding:8px;border:1px solid #e5e7eb;">ETA % (Ø)</th>
             <th align="right" style="padding:8px;border:1px solid #e5e7eb;">Stopps gesamt</th>
@@ -1252,18 +1258,6 @@ function mailSummaryHtml(per,totals,signature){
           </tr>
         </thead>
         <tbody>${body}</tbody>
-        <tfoot>
-          <tr style="background:#e0f2ff;color:#00366;font-weight:700;">
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtPct(totals.etaAvg)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
-          </tr>
-        </tfoot>
       </table>
     </div>
     ${signatureHtml}
@@ -1308,8 +1302,19 @@ function totalToursHtml(rows, signature){
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
     <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
-    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
+    <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
       <thead>
+        <tr data-total-row="1" style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;">
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.tours)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">—</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
+        </tr>
         <tr style="background:#ffe2e2;color:#8b0000;font-weight:700;">
           <th style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">Systempartner</th>
           <th style="padding:6px 8px;border:1px solid #e5e7eb;">Tour</th>
@@ -1323,19 +1328,6 @@ function totalToursHtml(rows, signature){
         </tr>
       </thead>
       <tbody>${body}</tbody>
-      <tfoot>
-        <tr style="background:#e0f2ff;color:#003366;font-weight:700;">
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Gesamt (alle)</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Touren: ${fmtInt(totals.tours)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;"></td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.stops)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pkgs)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.open)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.obstacles)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">ETA Ø: ${fmtPct(totals.etaAvg)}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(totals.pOpen)}</td>
-        </tr>
-      </tfoot>
     </table>
     ${signatureHtml}
   </div>`;
@@ -1693,7 +1685,7 @@ async function render(force=false){
     const {per, totals}=res;
     const html = summaryHtml(per, totals, '');
     CONTENT.innerHTML = html;
-    makeTableSortable(CONTENT);
+    makeTableSortable(CONTENT.querySelector('table'));
     DIAG('render', 'Panel-Inhalt gerendert', { htmlLen: html.length });
   };
   if(force) await run(); else renderTimer=setTimeout(run, RENDER_DEBOUNCE);
