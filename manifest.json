@@ -284,6 +284,22 @@
       "description": "Zeigt nur den kleinen ÜbEntl-Bubble und die Übersicht „Frühschicht – Übersicht Entladung“. Keine Roadnet-Zusammenfassung, keine LTS-Funktion, kein Bridge-Export."
     },
     {
+      "id": "tool-roadnettransporteinheit",
+      "name": "Roadnet Transporteinheiten",
+      "version": "2.2",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTRansporteinheit.user.js",
+      "match": [
+        "https://roadnet.dpdgroup.com/execution/transport_units*",
+        "https://roadnet.dpdgroup.com/execution/trips*",
+        "http://lts.dpdit.de/*",
+        "https://lts.dpdit.de/*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Roadnet transport_units: Zusammenfassung mit altem Design und neuen Funktionen"
+    },
+    {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360",
       "version": "1.3c",
