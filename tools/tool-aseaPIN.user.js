@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.33
+// @version      6.37
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -1550,31 +1550,25 @@ function createBarcodeOverlayForDoc(doc) {
   overlay.appendChild(box);
   doc.body.appendChild(overlay);
 
-  // QR/Barcode-Popup komplett vom Systempartner-Fenster trennen:
-  // Klick neben den QR schließt nur dieses Popup und darf nicht bis zum Detailfenster durchlaufen.
+  // QR/Barcode-Popup vom darunterliegenden Fenster trennen.
+  // Wichtig: Nicht schon bei mousedown schließen, sonst kann der folgende click
+  // auf das darunterliegende Systempartner-Fenster fallen und dieses schließen.
   overlay.addEventListener('mousedown', (e) => {
-    e.preventDefault();
     e.stopPropagation();
-    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    if (e.target === overlay) overlay.style.display = 'none';
-  }, true);
+  });
 
   overlay.addEventListener('click', (e) => {
-    e.preventDefault();
     e.stopPropagation();
-    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
     if (e.target === overlay) overlay.style.display = 'none';
-  }, true);
+  });
 
   box.addEventListener('mousedown', (e) => {
     e.stopPropagation();
-    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-  }, true);
+  });
 
   box.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-  }, true);
+  });
 
   btnClose.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1977,6 +1971,23 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
     tbody.innerHTML = '';
     subText.textContent = 'Zeilen: ' + displayRows.length + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
 
+    if (!displayRows.length) {
+      const emptyTr = doc.createElement('tr');
+      const emptyTd = doc.createElement('td');
+      emptyTd.colSpan = headers.length;
+      emptyTd.textContent = 'Keine offenen Pakete vorhanden. Die Touren-QR-Codes oben können trotzdem angeklickt werden.';
+      Object.assign(emptyTd.style, {
+        padding: '14px 10px',
+        color: '#666',
+        textAlign: 'left',
+        borderBottom: '1px solid #eee'
+      });
+      emptyTr.appendChild(emptyTd);
+      tbody.appendChild(emptyTr);
+      updateSelectionUi();
+      return;
+    }
+
     displayRows.forEach((r, idx) => {
       const tr = doc.createElement('tr');
       tr.style.background = idx % 2 === 1 ? '#fafafa' : '#fff';
@@ -2140,7 +2151,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
       return;
     }
 
-    if (e.target && typeof e.target.closest === 'function' && (e.target.closest('#tm-barcode-overlay') || e.target.closest('.tm-qr-popup-overlay'))) {
+    if (e.target && typeof e.target.closest === 'function' && (e.target.closest('#tm-barcode-overlay') || e.target.closest('.tm-qr-popup-overlay') || e.target.closest('.tm-barcode-preview-overlay'))) {
       return;
     }
 
@@ -2188,6 +2199,8 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
     }
 
     const previewOverlay = doc.createElement('div');
+    previewOverlay.classList.add('tm-barcode-preview-overlay');
+    previewOverlay.setAttribute('data-tm-barcode-preview', '1');
     Object.assign(previewOverlay.style, {
       position: 'fixed',
       inset: '0',
@@ -2284,13 +2297,30 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
       closePreview();
     });
 
+    // Klicks in dieser Barcode-Vorschau dürfen nicht bis zum Systempartner-Fenster durchlaufen.
+    // Sonst wird beim Klick neben den Strichcode das komplette Systempartner-Fenster geschlossen.
+    previewOverlay.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
+
     previewOverlay.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
       if (e.target === previewOverlay) closePreview();
-    });
+    }, true);
+
+    previewBox.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
 
     previewBox.addEventListener('click', (e) => {
       e.stopPropagation();
-    });
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
 
     doc.addEventListener('keydown', escPreviewClose, true);
 
@@ -2399,12 +2429,8 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
 }
 
   async function showRowsPreviewPopup(doc, partnerLabel, rows) {
-    if (!Array.isArray(rows) || !rows.length) {
-      alert('Keine Zeilen vorhanden.');
-      return;
-    }
-
-    const ui = createRowsPreviewOverlay(doc, partnerLabel, rows);
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const ui = createRowsPreviewOverlay(doc, partnerLabel, safeRows);
     doc.body.appendChild(ui.overlay);
   }
 
@@ -2445,7 +2471,6 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         updateSortableHeaderLabels([ui.sortHeaders.th1, ui.sortHeaders.th2], overviewSort);
 
         const sortedItems = overviewItems
-          .filter(it => (it.count || 0) > 0)
           .slice()
           .sort((a, b) => {
             const res = compareSmartValues(
@@ -2461,7 +2486,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
           const tr = doc.createElement('tr');
           const td = doc.createElement('td');
           td.colSpan = 7;
-          td.textContent = 'Keine Treffer (alle 0).';
+          td.textContent = 'Keine Systempartner gefunden.';
           td.style.padding = '8px 6px';
           td.style.color = '#666';
           tr.appendChild(td);
@@ -2665,10 +2690,12 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
 
             runningSum += count;
           } catch (e) {
-            results.push({ label: opt.label, count: 0, err: (e?.message || String(e)), rows: null });
+            results.push({ label: opt.label, count: 0, err: (e?.message || String(e)), rows: [], soCounts: { express: 0, gefahrgut: 0, prio: 0 } });
 
             const rowUi = rowMap.get(opt.label);
             if (rowUi) {
+              rowUi.rows = [];
+              rowUi.soCounts = { express: 0, gefahrgut: 0, prio: 0 };
               rowUi.td2.textContent = '0';
             }
           } finally {
@@ -3193,21 +3220,21 @@ btn2.addEventListener('click', () => {
     overlay.appendChild(box);
 
     overlay.addEventListener('mousedown', (e) => {
-      stopQrPopupEvent(e);
-    }, true);
+      e.stopPropagation();
+    });
 
     overlay.addEventListener('click', (e) => {
-      stopQrPopupEvent(e);
+      e.stopPropagation();
       if (e.target === overlay) overlay.remove();
-    }, true);
+    });
 
     box.addEventListener('mousedown', (e) => {
-      stopQrPopupEvent(e);
-    }, true);
+      e.stopPropagation();
+    });
 
     box.addEventListener('click', (e) => {
-      stopQrPopupEvent(e);
-    }, true);
+      e.stopPropagation();
+    });
 
     doc.body.appendChild(overlay);
   }
@@ -3313,21 +3340,21 @@ btn2.addEventListener('click', () => {
       overlay.appendChild(box);
 
       overlay.addEventListener('mousedown', (e) => {
-        stopQrPopupEvent(e);
-      }, true);
+        e.stopPropagation();
+      });
 
       overlay.addEventListener('click', (e) => {
-        stopQrPopupEvent(e);
+        e.stopPropagation();
         if (e.target === overlay) overlay.remove();
-      }, true);
+      });
 
       box.addEventListener('mousedown', (e) => {
-        stopQrPopupEvent(e);
-      }, true);
+        e.stopPropagation();
+      });
 
       box.addEventListener('click', (e) => {
-        stopQrPopupEvent(e);
-      }, true);
+        e.stopPropagation();
+      });
 
       doc.body.appendChild(overlay);
     } catch (e) {
@@ -3403,21 +3430,21 @@ btn2.addEventListener('click', () => {
   overlay.appendChild(box);
 
   overlay.addEventListener('mousedown', (e) => {
-    stopQrPopupEvent(e);
-  }, true);
+    e.stopPropagation();
+  });
 
   overlay.addEventListener('click', (e) => {
-    stopQrPopupEvent(e);
+    e.stopPropagation();
     if (e.target === overlay) overlay.remove();
-  }, true);
+  });
 
   box.addEventListener('mousedown', (e) => {
-    stopQrPopupEvent(e);
-  }, true);
+    e.stopPropagation();
+  });
 
   box.addEventListener('click', (e) => {
-    stopQrPopupEvent(e);
-  }, true);
+    e.stopPropagation();
+  });
 
   doc.body.appendChild(overlay);
 
