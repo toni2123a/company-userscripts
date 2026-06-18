@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.2.1
+// @version      2.2.2
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @description  Dispatcher KPI Monitor
@@ -332,8 +332,8 @@ function makeTableSortable(root){
     th.addEventListener('click', () => {
       LAST_USER_SORT_TS = Date.now();
 
-      const currentCol = Number(table.dataset.sortCol ?? -1);
-      const currentDir = Number(table.dataset.sortDir ?? 0);
+      const currentCol = parseInt(table.dataset.sortCol || '-1', 10);
+      const currentDir = parseInt(table.dataset.sortDir || '0', 10);
 
       let dir;
 
@@ -1489,7 +1489,11 @@ async function render(force=false){
         return;
       }
       CONTENT.innerHTML = buildPartnerTableHtmlUI(agg.per, agg.totals);
-      makeTableSortable(CONTENT);
+
+      // Wichtig: Die Gesamtzeile steht als eigene Tabelle über der Überschrift.
+      // Sortierbar ist deshalb nur die eigentliche Haupttabelle mit data-kind="partner".
+      const mainTable = CONTENT.querySelector('table[data-kind="partner"]');
+      if(mainTable) makeTableSortable(mainTable);
     }catch(e){
       console.error('[fvkpi] render error', e);
       CONTENT.innerHTML=`<div class="${NS}empty">Fehler beim Rendern. (F12 → Console)</div>`;
@@ -1699,7 +1703,7 @@ async function openPartnerModal(partner){
       </div>
     `);
 
-    const table = ov.querySelector('table');
+    const table = Array.from(ov.querySelectorAll('table')).find(t => t.querySelector('thead') && t.querySelector('tbody'));
     if(table) makeTableSortable(table);
 
     ov.addEventListener('click', async (e)=>{
