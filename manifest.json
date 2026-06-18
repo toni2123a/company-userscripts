@@ -151,7 +151,7 @@
     {
       "id": "tool_dispatcher_kpi",
       "name": "DPD Dispatcher – KPI Monitor (Depot flexibel)",
-      "version": "2.2.1",
+      "version": "2.2.2",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
