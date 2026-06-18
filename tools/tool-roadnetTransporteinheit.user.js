@@ -5,8 +5,8 @@
 // @description  Roadnet transport_units: Zusammenfassung mit altem Design und neuen Funktionen
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @match        https://roadnet.dpdgroup.com/execution/trips*
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTRansporteinheit.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTRansporteinheit.user.js
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTransporteinheit.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTransporteinheit.user.js
 // @match        http://lts.dpdit.de/*
 // @match        https://lts.dpdit.de/*
 // @run-at       document-idle
