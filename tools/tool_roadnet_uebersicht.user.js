@@ -4,6 +4,8 @@
 // @version      1.0.2
 // @description  Zeigt nur den kleinen ÜbEntl-Bubble und die Übersicht „Frühschicht – Übersicht Entladung“. Keine Roadnet-Zusammenfassung, keine LTS-Funktion, kein Bridge-Export.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
