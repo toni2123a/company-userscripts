@@ -287,7 +287,7 @@
       "id": "tool-roadnettransporteinheit",
       "name": "Roadnet Transporteinheiten",
       "version": "2.2",
-      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTRansporteinheit.user.js",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-roadnetTransporteinheit.user.js",
       "match": [
         "https://roadnet.dpdgroup.com/execution/transport_units*",
         "https://roadnet.dpdgroup.com/execution/trips*",
