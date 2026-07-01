@@ -7,6 +7,8 @@
 // @match        https://dpd.shop.wto-werbung.de/index.php?*controller=category*
 // @match        https://dpd.shop.wto-werbung.de/*id_category=*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
+// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_WTO_Export.user.js
+// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_WTO_Export.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
