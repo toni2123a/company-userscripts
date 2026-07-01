@@ -300,6 +300,20 @@
       "description": "Roadnet transport_units: Zusammenfassung mit altem Design und neuen Funktionen"
     },
     {
+      "id": "tool_wto_export",
+      "name": "WTO Shop – Artikel-Export (XLSX)",
+      "version": "1.5.0",
+      "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_WTO_Export.user.js",
+      "match": [
+        "https://dpd.shop.wto-werbung.de/index.php?*controller=category*",
+        "https://dpd.shop.wto-werbung.de/*id_category=*"
+      ],
+      "grants": [
+        "none"
+      ],
+      "description": "Exportiert alle Artikel einer Kategorie inkl. aller Unterkategorien in festem Spaltenformat (Artikel-Nr., Artikel, Gruppe, Groessen, Laenge, Bereich, Preis (EUR), Materialnummer, Bestandspflege) als Excel- oder CSV-Datei"
+    },
+    {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360",
       "version": "1.3c",
