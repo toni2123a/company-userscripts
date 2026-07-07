@@ -3,10 +3,10 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.6.1
+// @version      5.6.3
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
+// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: robuste Spalten-Erkennung je Header-Reihenfolge + ETA-Prozentspalte statt ETA-Zeit + Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -233,13 +233,24 @@ const includesAll=(s,arr)=>arr.every(w=>new RegExp(w,'i').test(s||''));
 function findColumnsDatagrid(){
   const ths=qsaMain('thead th,[role="columnheader"]');
   if(!ths.length) return null;
-  if (CACHED_COLS && CACHED_COLS._hdrCount===ths.length) return CACHED_COLS;
 
   const normTxt = el => (el?.textContent||'').replace(/\s+/g,' ').trim().toLowerCase();
   const titleOf = el => (el?.querySelector('input[title], [title]')?.getAttribute('title')||'').trim().toLowerCase();
   const H = Array.from({length: ths.length}, (_,i)=>({ i, text: normTxt(ths[i]), title: titleOf(ths[i]) }));
 
+  // Wichtig: Cache nicht nur nach Spaltenanzahl, sondern nach kompletter Header-Signatur.
+  // Sonst können bei Kollegen mit anderer Dispatcher-Spaltenreihenfolge falsche Spalten wiederverwendet werden.
+  const headerSig = H.map(h => `${h.text}|${h.title}`).join('||');
+  if (CACHED_COLS && CACHED_COLS._headerSig === headerSig) return CACHED_COLS;
+
   const byEither = fn => { for(const h of H){ if(fn(h.text)||fn(h.title)) return h.i; } return -1; };
+  const pickHeader = (must=[], any=[], not=[]) => byEither(s => {
+    if(!s) return false;
+    if(must.length && !must.every(re => re.test(s))) return false;
+    if(any.length && !any.some(re => re.test(s))) return false;
+    if(not.length && not.some(re => re.test(s))) return false;
+    return true;
+  });
 
   function pickTourIndex(){
     const cand = H.map(h=>h.i).filter(i=>/\btour\b/.test(H[i].text) || /\btour\b/.test(H[i].title));
@@ -269,15 +280,75 @@ function findColumnsDatagrid(){
   const sys = byEither(s=>/\bsystempartner\b/.test(s));
   const tour = pickTourIndex();
   const driver = byEither(s=>/(zustellername|fahrername|fahrer|driver)/.test(s));
-  const eta = byEither(s=>/(^eta\b|eta\s*%)/.test(s));
-  const status = byEither(s=>/\bstatus\b/.test(s));
-  const stopsTotal = byEither(s=>includesAll(s, [/zustell?stopps?/, /gesamt/]));
-  const stopsOpen  = byEither(s=>includesAll(s, [/offen/, /zustell?stopps?/]));
-  const pkgsTotal  = byEither(s=>includesAll(s, [/pakete|geplante/, /(gesamt|zustell)/]));
-  const obstacles  = byEither(s=>/\bzustellhindernisse\b/.test(s)||/\bhinderniss?e?\b/.test(s));
-  const pickupOpen = (()=>{ const i1=byEither(s=>includesAll(s, [/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/])); if (i1>=0) return i1; return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s)); })();
+  function pickEtaIndex(){
+    // Es gibt im Dispatcher mehrere ETA-Spalten, z. B. ETA % und ETA-Zeit.
+    // Deshalb nicht nur nach Header-Text gehen, sondern die sichtbaren Zellwerte prüfen.
+    // Gewünscht ist die Prozent-ETA-Spalte: Zellen enthalten überwiegend "100 %", "94 %" usw.
+    // Die Zeit-ETA-Spalte enthält Werte wie "-00:02" oder "00:38" und wird negativ bewertet.
+    const cand = H.map(h=>h.i).filter(i=>{
+      const s = `${H[i].text} ${H[i].title}`;
+      return /\beta\b/.test(s) && !/tour|route|zeitfenster|ankunft/.test(s);
+    });
+    if(!cand.length) return -1;
 
-  const cols={sys,tour,driver,eta,status,stopsTotal,stopsOpen,pkgsTotal,obstacles,pickupOpen,_hdrCount:ths.length};
+    const rows = qsaMain('tbody tr,[role="row"]');
+    const score = i => {
+      let sc = 0, seen = 0;
+      const hs = `${H[i].text} ${H[i].title}`;
+      if (/%|prozent|percent/.test(hs)) sc += 20;
+      if (/zeit|time|hh:mm|ankunft/.test(hs)) sc -= 20;
+
+      for (const tr of rows.slice(0, 60)){
+        const tds = tr.querySelectorAll('td,[role="gridcell"]');
+        if(!tds || !tds[i]) continue;
+        const v = (tds[i].textContent || '').trim();
+        if(!v) continue;
+        seen++;
+        if (/%/.test(v)) sc += 8;
+        if (/^-?\d{1,2}:\d{2}$/.test(v) || /^-?\d{2}:\d{2}$/.test(v)) sc -= 10;
+        const n = parsePct(v);
+        if (Number.isFinite(n) && n >= 0 && n <= 130 && !/:/.test(v)) sc += 3;
+        if (Number.isFinite(n) && n < 0) sc -= 5;
+      }
+      return sc + seen * 0.05;
+    };
+
+    let best = cand[0], bestScore = -1e9;
+    for(const i of cand){
+      const s = score(i);
+      if(s > bestScore){ best = i; bestScore = s; }
+    }
+    DIAG('cols', 'ETA-Kandidaten bewertet', cand.map(i=>({i, header:H[i].text, title:H[i].title, score:score(i)})));
+    return best;
+  }
+
+  const eta = pickEtaIndex();
+  const status = byEither(s=>/\bstatus\b/.test(s));
+
+  // Streng getrennte Erkennung: Zustellstopps gesamt darf nicht mit offenen Stopps oder Abholstopps verwechselt werden.
+  const stopsTotal = (() => {
+    const i = pickHeader([/(zustell)?stopps?/, /(gesamt|total)/], [], [/offen|open|abhol|pickup|hindern/]);
+    if(i >= 0) return i;
+    return pickHeader([/stopps?/, /(gesamt|total)/], [], [/offen|open|abhol|pickup|hindern/]);
+  })();
+  const stopsOpen  = (() => {
+    const i = pickHeader([/(offen|open)/, /(zustell)?stopps?/], [], [/abhol|pickup|gesamt|total|hindern/]);
+    if(i >= 0) return i;
+    return pickHeader([/(offen|open)/, /stopps?/], [], [/abhol|pickup|gesamt|total|hindern/]);
+  })();
+  const pkgsTotal  = (() => {
+    const i = pickHeader([/pakete|geplante/, /(gesamt|zustell|total)/], [], [/offen|open|abhol|pickup|hindern/]);
+    if(i >= 0) return i;
+    return byEither(s=>includesAll(s, [/pakete|geplante/, /(gesamt|zustell)/]));
+  })();
+  const obstacles  = byEither(s=>/\bzustellhindernisse\b/.test(s)||/\bhinderniss?e?\b/.test(s));
+  const pickupOpen = (()=>{
+    const i1 = pickHeader([/offen|open/, /abhol(stopp|stopps|ung|ungen)|pickup(s)?/], [], [/zustell/]);
+    if (i1>=0) return i1;
+    return byEither(s=>/abhol(stopp|stopps|ung|ungen)/.test(s));
+  })();
+
+  const cols={sys,tour,driver,eta,status,stopsTotal,stopsOpen,pkgsTotal,obstacles,pickupOpen,_headerSig:headerSig};
   DIAG('cols', 'findColumnsDatagrid', cols);
   if (cols.sys<0) return null;
   CACHED_COLS=cols;
@@ -365,6 +436,7 @@ function readRowsPlainTable(){
 
   const head = Array.from(table.querySelectorAll('thead th')).map(th=>norm(th.textContent).toLowerCase());
   const idx = (labelOpts)=>{ for(const l of labelOpts){ const i=head.findIndex(t=>t.includes(l)); if(i>=0) return i; } return -1; };
+  const idxStrict = (must=[], not=[]) => head.findIndex(t => must.every(x => t.includes(x)) && !not.some(x => t.includes(x)));
 
   function pickTourIdx(){
     let i = idx(['tour nr','tour-nr','tournr','tournummer']);
@@ -395,10 +467,39 @@ function readRowsPlainTable(){
     tour: pickTourIdx(),
     driver: idx(['zustellername','fahrername','fahrer','driver']),
     status: idx(['status']),
-    eta: idx(['eta']),
-    stopsTotal: idx(['stopps gesamt','zustellstopps gesamt','stopp gesamt']),
-    stopsOpen: idx(['offene stopps','offene zustellstopps']),
-    pkgsTotal: idx(['pakete gesamt','geplante zustellpakete']),
+    eta: (()=>{
+      // Auch in normalen Tabellen gibt es teilweise zwei ETA-Spalten.
+      // Wir wählen gezielt die Prozent-Spalte anhand Header und Zellwerten.
+      const cand = head.map((t,ix)=>({t,ix})).filter(x=>x.t.includes('eta') && !/tour|route|zeitfenster|ankunft/.test(x.t)).map(x=>x.ix);
+      if(!cand.length) return -1;
+      const rows = Array.from(table.querySelectorAll('tbody tr')).slice(0,60);
+      const score = ci => {
+        let sc=0, seen=0;
+        const h=head[ci]||'';
+        if (h.includes('%') || h.includes('prozent') || h.includes('percent')) sc += 20;
+        if (/zeit|time|hh:mm|ankunft/.test(h)) sc -= 20;
+        for(const tr of rows){
+          const tds=tr.querySelectorAll('td');
+          if(!tds[ci]) continue;
+          const v=(tds[ci].textContent||'').trim();
+          if(!v) continue;
+          seen++;
+          if (/%/.test(v)) sc += 8;
+          if (/^-?\d{1,2}:\d{2}$/.test(v) || /^-?\d{2}:\d{2}$/.test(v)) sc -= 10;
+          const n=parsePct(v);
+          if (Number.isFinite(n) && n>=0 && n<=130 && !/:/.test(v)) sc += 3;
+          if (Number.isFinite(n) && n<0) sc -= 5;
+        }
+        return sc + seen*0.05;
+      };
+      let best=cand[0], bestScore=-1e9;
+      for(const ci of cand){ const s=score(ci); if(s>bestScore){ best=ci; bestScore=s; } }
+      DIAG('cols','PlainTable ETA-Kandidaten bewertet', cand.map(i=>({i, header:head[i], score:score(i)})));
+      return best;
+    })(),
+    stopsTotal: (()=>{ const i=idxStrict(['stopps','gesamt'], ['offen','abhol','pickup','hindern']); if(i>=0) return i; return idx(['zustellstopps gesamt','stopps gesamt','stopp gesamt']); })(),
+    stopsOpen: (()=>{ const i=idxStrict(['offen','stopps'], ['abhol','pickup','gesamt','hindern']); if(i>=0) return i; return idx(['offene zustellstopps','offene stopps']); })(),
+    pkgsTotal: (()=>{ const i=idxStrict(['pakete','gesamt'], ['offen','abhol','pickup','hindern']); if(i>=0) return i; return idx(['pakete gesamt','geplante zustellpakete']); })(),
     obstacles: idx(['zustellhindernisse','hindernis']),
     pickupOpen: (()=>{ const i1=idx(['offene abholstops','offene abholstopps','abholungen offen','open pickups','pickup open']); if(i1>=0) return i1; return idx(['abholstops','abholstopps','abholung']); })()
   };
