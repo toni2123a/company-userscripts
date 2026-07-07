@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.37
+// @version      6.40
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -2291,36 +2291,26 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
       if (e.key === 'Escape') closePreview();
     };
 
-    previewClose.addEventListener('click', (e) => {
+    // Keine Capture-Listener auf dem Vorschaufenster: Sie würden die eigenen Buttons blockieren.
+    previewClose.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       closePreview();
-    });
+      return false;
+    };
 
-    // Klicks in dieser Barcode-Vorschau dürfen nicht bis zum Systempartner-Fenster durchlaufen.
-    // Sonst wird beim Klick neben den Strichcode das komplette Systempartner-Fenster geschlossen.
-    previewOverlay.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }, true);
+    previewOverlay.onclick = (e) => {
+      if (e.target === previewOverlay) {
+        e.preventDefault();
+        e.stopPropagation();
+        closePreview();
+        return false;
+      }
+    };
 
-    previewOverlay.addEventListener('click', (e) => {
-      e.preventDefault();
+    previewBox.onclick = (e) => {
       e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-      if (e.target === previewOverlay) closePreview();
-    }, true);
-
-    previewBox.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }, true);
-
-    previewBox.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }, true);
+    };
 
     doc.addEventListener('keydown', escPreviewClose, true);
 
@@ -2339,7 +2329,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
       previewBody.innerHTML = '';
       previewBody.appendChild(img);
 
-      previewCopy.addEventListener('click', async (e) => {
+      previewCopy.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
 
@@ -2347,6 +2337,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         previewCopy.disabled = true;
         previewCopy.textContent = 'Kopiere...';
         try {
+          // Ausschließlich den bereits erzeugten Barcode-Canvas kopieren.
           const ok = await copyCanvas(canvas);
           if (!ok) throw new Error('Browser blockiert Clipboard-Bild.');
           previewCopy.textContent = 'Kopiert ✓';
@@ -2360,7 +2351,8 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
           previewCopy.disabled = false;
           alert('Kopie fehlgeschlagen:\n' + (e2?.message || String(e2)));
         }
-      });
+        return false;
+      };
     } catch (e) {
       console.error(e);
       previewBody.innerHTML = '';
@@ -3604,9 +3596,10 @@ btn2.addEventListener('click', () => {
 #tm-settings-panel th{background:#eee;}
 #tm-settings-panel input[type="text"],#tm-excel-import{width:100%;box-sizing:border-box;font-size:11px;}
 #tm-excel-import{height:80px;resize:vertical;}
-#tm-sp-panel.tm-collapsed{width:28px;height:28px;padding:0;overflow:hidden;background:transparent;border:none;}
+#tm-sp-panel.tm-collapsed{width:78px;height:58px;padding:0;overflow:visible;background:transparent;border:none;}
 #tm-sp-panel.tm-collapsed *{display:none !important;}
-#tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;}
+#tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;position:absolute;top:0;right:0;left:auto;background:#f5f5f5;border:1px solid #999;}
+#tm-sp-panel.tm-collapsed #tm-overview-btn{display:block !important;position:absolute;top:32px;right:0;left:auto;width:78px;height:24px;padding:0 6px;margin:0;line-height:22px;text-align:center;font-weight:bold;background:#f5f5f5;border:1px solid #999;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.25);}
 `;
 
     const style = doc.createElement('style');
