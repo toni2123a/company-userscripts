@@ -3,10 +3,10 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.6.3
+// @version      5.7.3
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: robuste Spalten-Erkennung je Header-Reihenfolge + ETA-Prozentspalte statt ETA-Zeit + Abholstops robust + Status-Spalte in Partnerseiten. Loader-Integration (TM).
+// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: robuste Spalten-Erkennung je Header-Reihenfolge + ETA-Prozentspalte statt ETA-Zeit + Abholstops robust + Status-Spalte in Partnerseiten. Klick-Details Stopps/Pakete/offen bis Paket-Lebenslauf mit Prio/Express-Markierung. Loader-Integration (TM).
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -733,7 +733,7 @@ function mountUI(forLoader=false){
 
   PANEL.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
-    if(b.dataset.act==='refresh') render(true);
+    if(b.dataset.act==='refresh') { const hide=(typeof fvprShowBlockingLoader==='function')?fvprShowBlockingLoader('Auswertung wird aktualisiert …'):(()=>{}); try{ await render(true); } finally{ hide(); } }
     if(b.dataset.act==='send-partner-and-total') await sendPartnerAndTotalConfirm();
     if(b.dataset.act==='send-total-only') await sendTotalOnlyConfirm();
     if(b.dataset.act==='settings'){ CFGBOX.style.display=CFGBOX.style.display==='none'?'':''; if(CFGBOX.style.display!=='none') await fillCfg(); }
@@ -1140,15 +1140,15 @@ function partnerHtml(partner,list,signature){
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
     return `
-      <tr data-row="1">
+      <tr data-row="1" data-partner="${String(partner).replace(/"/g,'&quot;')}" data-tour="${String(r.tour||'').replace(/"/g,'&quot;')}">
         <td style="padding:6px 8px;border:1px solid #e5e7eb;">${r.tour||'—'}</td>
         <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:left;">${r.driver||'—'}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.stops)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pkgs)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.open)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.obstacles)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;"><span class="${NS}numlink">${fmtInt(r.stops)}</span></td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;"><span class="${NS}numlink">${fmtInt(r.pkgs)}</span></td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;"><span class="${NS}numlink">${fmtInt(r.open)}</span></td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;"><span class="${NS}numlink">${fmtInt(r.obstacles)}</span></td>
         <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;${etaStyle}">${fmtPct(r.eta)}</td>
-        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;">${fmtInt(r.pOpen)}</td>
+        <td style="padding:6px 8px;border:1px solid #e5e7eb;text-align:right;"><span class="${NS}numlink">${fmtInt(r.pOpen)}</span></td>
       </tr>`;
   }).join('');
   const totals={
@@ -1231,11 +1231,11 @@ function summaryHtml(per,totals,signature){
         <td style="text-align:left">${p.partner}</td>
         <td>${fmtInt(p.tours)}</td>
         <td style="${etaStyle}">${fmtPct(p.etaAvg)}</td>
-        <td>${fmtInt(p.stops)}</td>
-        <td>${fmtInt(p.open)}</td>
-        <td>${fmtInt(p.pkgs)}</td>
-        <td>${fmtInt(p.obstacles)}</td>
-        <td>${fmtInt(p.pOpen)}</td>
+        <td><span class="${NS}numlink">${fmtInt(p.stops)}</span></td>
+        <td><span class="${NS}numlink">${fmtInt(p.open)}</span></td>
+        <td><span class="${NS}numlink">${fmtInt(p.pkgs)}</span></td>
+        <td><span class="${NS}numlink">${fmtInt(p.obstacles)}</span></td>
+        <td><span class="${NS}numlink">${fmtInt(p.pOpen)}</span></td>
         <td class="${NS}act">
           <button class="${NS}iconbtn" title="Mail an Partner (Bestätigung)" data-sp="${p.partner}">✉︎</button>
           <button class="${NS}iconbtn" title="Vorschau öffnen" data-eye="${p.partner}">👁</button>
@@ -1485,13 +1485,15 @@ async function copyPartnerHtml(partner){
 
 async function openTotalPreview(){
   DIAG("detail", "openTotalPreview aufgerufen");
-  const agg = await getAggregates();
-  if(!agg){
-    alert('Keine Daten gefunden.');
-    return;
-  }
+  const hideLoader = (typeof fvprShowBlockingLoader === 'function') ? fvprShowBlockingLoader('Gesamt-Vorschau wird geladen …') : (()=>{});
+  try {
+    const agg = await getAggregates();
+    if(!agg){
+      alert('Keine Daten gefunden.');
+      return;
+    }
 
-  const g = await ensureSettingsRecord();
+    const g = await ensureSettingsRecord();
   const allRows = agg.per.flatMap(p => p.list || []);
   const html = totalToursHtml(allRows, g.signature || '');
 
@@ -1518,6 +1520,9 @@ async function openTotalPreview(){
 
     if(btn.dataset.act === 'close') ov.remove();
   }, {passive:false});
+  } finally {
+    hideLoader();
+  }
 }
 
 async function copyTotalHtml(){
@@ -1552,6 +1557,7 @@ async function saveCfgFromUI(){
 
 async function openPreview(partner){
   DIAG("detail", "openPreview aufgerufen", { partner });
+  const hideLoader = (typeof fvprShowBlockingLoader === 'function') ? fvprShowBlockingLoader(`Vorschau wird geladen – ${partner} …`) : (()=>{});
   try {
     const agg=await getAggregates();
     if(!agg){ DIAG("detail","getAggregates lieferte null"); alert('Keine Daten gefunden.'); return; }
@@ -1601,6 +1607,8 @@ async function openPreview(partner){
     DIAG("error", "openPreview EXCEPTION", { err: String(err), stack: err?.stack?.slice?.(0,400) });
     console.error('[fvpr] openPreview', err);
     toast('Detail-Fehler: '+err.message, false);
+  } finally {
+    hideLoader();
   }
 }
 
@@ -1907,6 +1915,372 @@ if (G_BOOT.TM && typeof G_BOOT.TM.register === 'function') {
   }, 3000);
 }
 
+
+
+/* ====== TEIL 13/13 – Klick-Details Stopps/Pakete/offen bis Paket-Lebenslauf ======
+   Übernommen/angepasst aus der Tourenauswertung: liest /dispatcher/api/pickup-delivery,
+   baut Tour-/Stopp-/Paketlisten und öffnet Paket-Lebenslauf per Paketnummer. */
+const FVPR_DETAIL_PAGE_SIZE = 500;
+const FVPR_DETAIL_HARD_MAX_PAGES = 300;
+const FVPR_DETAIL_CACHE_MS = 60_000;
+let FVPR_LAST_PD_REQUEST = null;
+let FVPR_DETAIL_CACHE = { key:'', ts:0, rows:[] };
+
+function escHtml(s){ return String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch])); }
+function fvprIsoToday(){ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function fvprStatusNorm(s){ return norm(s).toUpperCase().replace(/[_/\\|-]+/g,' ').replace(/\s+/g,' ').trim(); }
+function fvprTypeOf(r){
+  // Muss exakt zwischen Zustellung und Abholung trennen, sonst zeigt ein Klick auf offene Abholstopps falsche Daten.
+  const pickupVals = [r?.pickup_status,r?.pickupStatus,r?.pickup_type,r?.pickupType,r?.pickupTime,r?.pickedUpTime,r?.pickupDateTime,r?.pickupTimestamp,r?.pickup?.time,r?.pickup?.dateTime];
+  if(pickupVals.some(v=>norm(v))) return 'PICKUP';
+
+  const deliveryVals = [r?.delivery_status,r?.deliveryStatus,r?.deliveredTime,r?.delivered_time,r?.deliveryTime,r?.deliveryDateTime,r?.deliveryTimestamp,r?.delivery?.time,r?.delivery?.dateTime];
+  if(deliveryVals.some(v=>norm(v))) return 'DELIVERY';
+
+  const txt = [r?.order_type,r?.orderType,r?.type,r?.stopType,r?.jobType,r?.missionType,r?.deliveryOrPickup,r?.kind,r?.category,r?.serviceType,r?.service_type].map(x=>String(x||'').toUpperCase()).join(' | ');
+  if(/PICKUP|ABHOL/.test(txt)) return 'PICKUP';
+  return 'DELIVERY';
+}
+function fvprStatusOf(r){
+  const vals=[
+    r?.delivery_status,r?.pickup_status,r?.deliveryStatus,r?.pickupStatus,
+    r?.statusDisplay,r?.statusLabel,r?.statusDescription,r?.statusName,r?.statusText,r?.parcelStatus,
+    typeof r?.status==='string'?r.status:'',typeof r?.stopStatus==='string'?r.stopStatus:'',typeof r?.orderStatus==='string'?r.orderStatus:'',
+    r?.processingStatus,r?.scanStatus,r?.tourStatus,r?.reasonText,r?.statusReason,r?.problemReason,r?.problem_reason,
+    r?.delivery?.status,r?.pickup?.status,r?.order?.status,r?.stop?.status
+  ];
+  for(const v of vals){ const x=norm(v); if(x) return x; }
+  return '';
+}
+function fvprStatusDe(s){
+  const n=fvprStatusNorm(s);
+  const map={
+    'DELIVERED':'ZUGESTELLT','DELIVERED TO PUDO':'ZUGESTELLT PUDO','DELIVERED_TO_PUDO':'ZUGESTELLT PUDO','ZUGESTELLT':'ZUGESTELLT',
+    'PICKED UP':'ABGEHOLT','PICKED_UP':'ABGEHOLT','ABGEHOLT':'ABGEHOLT','COMPLETED':'ABGEHOLT',
+    'DELIVERY PROBLEM':'ZUSTELLUNG PROBLEM','DELIVERY_PROBLEM':'ZUSTELLUNG PROBLEM','NOT DELIVERED':'NICHT ZUGESTELLT','NICHT ZUGESTELLT':'NICHT ZUGESTELLT',
+    'DELIVERY CANCELLED AUTOMATICALLY':'ZUSTELLUNG STORNIERT (AUTOMATISCH)','PICKUP CANCELLED AUTOMATICALLY':'ABHOLUNG STORNIERT (AUTOMATISCH)','CANCELLED':'STORNIERT'
+  };
+  return map[n] || norm(s) || '—';
+}
+function fvprHasAnyRawValue(r, keys){
+  const raw=r?.__raw||r||{};
+  for(const k of keys){
+    try{
+      const v=k.split('.').reduce((a,p)=>a?.[p], raw);
+      if(norm(v)) return true;
+    }catch{}
+  }
+  return false;
+}
+function fvprIsDelivered(r){
+  const n=fvprStatusNorm(r.__statusRaw||r.__status);
+  return n==='DELIVERED'||n==='ZUGESTELLT'||n==='DELIVERED TO PUDO'||n==='DELIVERED_TO_PUDO'||n==='DELIVERED PUDO'||
+    fvprHasAnyRawValue(r,['deliveredTime','delivered_time','deliveryTime','deliveryDateTime','deliveryTimestamp','delivery.time','delivery.dateTime']);
+}
+function fvprIsPicked(r){
+  const n=fvprStatusNorm(r.__statusRaw||r.__status);
+  return n==='PICKED UP'||n==='PICKED_UP'||n==='ABGEHOLT'||n==='COMPLETED'||
+    fvprHasAnyRawValue(r,['pickupTime','pickedUpTime','pickupDateTime','pickupTimestamp','pickup.time','pickup.dateTime']);
+}
+function fvprIsCanceled(r){ const n=fvprStatusNorm(r.__statusRaw||r.__status); return /CANCEL|STORNI|AUTOMAT/.test(n); }
+function fvprIsProblemDelivery(r){
+  const n=fvprStatusNorm(r.__statusRaw||r.__status);
+  const hasCode=!!norm(r.__additionalCode||r.__raw?.additional_code||r.__raw?.additionalCode||r.__raw?.problemReason||r.__raw?.problem_reason);
+  return r.__type==='DELIVERY' && !fvprIsCanceled(r) && (/PROBLEM|HINDERN|NICHT|FAILED|REFUSED|NO ACCESS|ADDRESS|ADRESS|RETOUR|CLOSED|GESCHLOSSEN/.test(n) || hasCode);
+}
+function fvprIsOpenDelivery(r){
+  // Offen bedeutet hier wirklich nur noch offene Zustellstopps: Zustellung, nicht zugestellt, nicht storniert, kein Zustellhindernis.
+  return r.__type==='DELIVERY' && !fvprIsDelivered(r) && !fvprIsCanceled(r) && !fvprIsProblemDelivery(r);
+}
+function fvprIsOpenPickup(r){
+  // Offen bedeutet hier wirklich nur noch offene Abholstopps: Abholung, nicht abgeholt, nicht storniert.
+  return r.__type==='PICKUP' && !fvprIsPicked(r) && !fvprIsCanceled(r);
+}
+function fvprExtractTour(r){
+  const vals=[r?.tour,r?.round,r?.route,r?.tourNo,r?.tourNumber,r?.routeNumber,r?.routeNo,r?.roundNo,r?.tripNo,r?.tripNumber,r?.tour?.number,r?.tour?.tourNumber,r?.tour?.routeNumber,r?.tour?.name,r?.route?.number,r?.route?.name,r?.stop?.tour,r?.stop?.tourNumber];
+  for(const v of vals){ const x=norm(v); if(x) return x; }
+  return '';
+}
+function fvprRawPartner(r){
+  const vals=[r?.systemPartner,r?.systempartner,r?.systemPartnerName,r?.partner,r?.partnerName,r?.servicePartner,r?.servicePartnerName,r?.carrierName,r?.transportPartnerName,r?.contractorName,r?.subcontractor,r?.subcontractorName,r?.subcontractor_name,r?.tour?.partnerName,r?.tour?.systemPartner,r?.route?.partnerName];
+  for(const v of vals){ const x=norm(v); if(x) return x; }
+  return '';
+}
+function fvprDriverOf(r){
+  const vals=[r?.driverName,r?.driver,r?.courierName,r?.courier_name,r?.courier,r?.employeeName,r?.driverFullName,r?.courierFullName,r?.vehicleDriverName,r?.vehicle_driver_name,r?.chauffeurName,r?.deliveryDriverName,r?.pickupDriverName,r?.driver?.name,r?.courier?.name,r?.employee?.name,r?.vehicle?.driverName,r?.vehicle?.driver?.name,r?.tour?.driverName,r?.tour?.driver,r?.route?.driverName];
+  for(const v of vals){ const x=norm(v); if(x) return x; }
+  return '';
+}
+function fvprServiceCodeOf(r){
+  const out=new Set();
+  const add=v=>{ if(v==null) return; String(v).split(/[^\dA-Za-z]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>out.add(x)); };
+  const arr=a=>Array.isArray(a)&&a.forEach(add);
+  add(r?.serviceCode); add(r?.servicecode); add(r?.service_code); arr(r?.serviceCodes);
+  if(r?.service&&typeof r.service==='object'){ add(r.service.code); add(r.service.serviceCode); add(r.service.id); arr(r.service.serviceCodes); }
+  if(r?.product&&typeof r.product==='object'){ add(r.product.serviceCode); add(r.product.code); add(r.product.id); arr(r.product.serviceCodes); }
+  return Array.from(out).sort((a,b)=>String(a).localeCompare(String(b),'de',{numeric:true})).join(' ');
+}
+function fvprPriorityKind(r){
+  const txt=fvprStatusNorm([r.__serviceCode,r.__raw?.priority,r.__raw?.service_category,r.__raw?.serviceCategory,r.__raw?.service_type,r.__raw?.serviceType,r.__raw?.elements].join(' '));
+  if(txt.includes('EXPRESS')) return 'EXPRESS';
+  if(txt.includes('PRIO')) return 'PRIO';
+  return '';
+}
+function fvprParcelListOf(r){
+  const vals=[r?.parcel_number,r?.parcelNumber,r?.parcelNumbers,r?.parcels,r?.parcelNumberList,r?.parcelsList,r?.shipmentNumbers,r?.labels,r?.barcodes,r?.packages,r?.consignments,r?.shipments,r?.completed_parcel,r?.removed_parcel_numbers];
+  const out=[];
+  const push=v=>{
+    if(v==null||v==='') return;
+    if(typeof v==='string'||typeof v==='number'){
+      const t=String(v).trim();
+      if(/[;,|]/.test(t)){ t.split(/[;,|]/).forEach(push); return; }
+      let x=t.replace(/\D+/g,'');
+      if(!x) return; if(x.length===13) x='0'+x; if(x.length>=8) out.push(x); return;
+    }
+    if(Array.isArray(v)){ v.forEach(push); return; }
+    if(typeof v==='object') [v.parcelNumber,v.number,v.psn,v.shipmentNumber,v.barcode,v.labelNumber,v.consignmentNumber].forEach(push);
+  };
+  vals.forEach(push); return [...new Set(out)];
+}
+function fvprParcelCountOf(r){ const l=fvprParcelListOf(r); if(l.length) return l.length; for(const v of [r?.estimated_parcels,r?.completed_parcel,r?.parcelCount,r?.parcelsCount,r?.numberOfParcels,r?.numberOfPackages,r?.packageCount,r?.packagesCount,r?.shipmentCount,r?.quantity,r?.qty,r?.pieces,r?.pieceCount,r?.itemCount,r?.count,r?.totalParcels,r?.totalPackages]){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.trunc(n); } return 1; }
+function fvprAddrOf(r){
+  const street=norm(r?.street||r?.addressLine1||r?.address||r?.address?.street||r?.recipient?.street||'');
+  const house=norm(r?.houseno||r?.houseNo||r?.houseNumber||r?.address?.houseNumber||r?.recipient?.houseNumber||'');
+  const postal=norm(r?.postalCode||r?.zipCode||r?.zip||r?.postal_code||r?.address?.postalCode||r?.recipient?.postalCode||'');
+  const city=norm(r?.city||r?.town||r?.address?.city||r?.recipient?.city||'');
+  return [[street,house].filter(Boolean).join(' '),[postal,city].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || '—';
+}
+function fvprNameOf(r){ return norm(r?.name||r?.name1||r?.customer_name||r?.customerName||r?.recipient?.name||r?.consigneeName||r?.consignee_name||''); }
+function fvprStopOf(r,idx){ return norm(r?.stop||r?.stopNo||r?.stopNumber||r?.sequence||r?.sequenceNo||r?.stop?.number||'') || String(idx+1); }
+function fvprPickArray(payload){
+  if(Array.isArray(payload)) return payload;
+  if(payload&&Array.isArray(payload.items)) return payload.items;
+  if(payload&&Array.isArray(payload.content)) return payload.content;
+  if(payload&&payload.data){ if(Array.isArray(payload.data)) return payload.data; if(Array.isArray(payload.data.items)) return payload.data.items; if(Array.isArray(payload.data.content)) return payload.data.content; }
+  if(payload&&Array.isArray(payload.results)) return payload.results;
+  if(payload&&payload._embedded){ const v=Object.values(payload._embedded).find(Array.isArray); if(Array.isArray(v)) return v; }
+  return [];
+}
+function fvprBuildHeaders(h){
+  const H=new Headers();
+  try{ Object.entries(h||{}).forEach(([k,v])=>{ const key=String(k).toLowerCase(); if(['authorization','accept','x-xsrf-token','x-csrf-token'].includes(key)) H.set(key==='accept'?'Accept':key.replace(/(^.|-.)/g,s=>s.toUpperCase()),v); }); }catch{}
+  if(!H.has('Accept')) H.set('Accept','application/json, text/plain, */*');
+  if(!H.has('Authorization')){ const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/); if(m) H.set('Authorization','Bearer '+decodeURIComponent(m[1])); }
+  return H;
+}
+function fvprBuildPickupDeliveryUrl(page){
+  const base = FVPR_LAST_PD_REQUEST?.url ? new URL(FVPR_LAST_PD_REQUEST.url.href) : new URL('/dispatcher/api/pickup-delivery', location.origin);
+  base.pathname = '/dispatcher/api/pickup-delivery';
+  base.search = '';
+  base.searchParams.set('page', String(page));
+  base.searchParams.set('pageSize', String(FVPR_DETAIL_PAGE_SIZE));
+  base.searchParams.set('dateFrom', fvprIsoToday());
+  base.searchParams.set('dateTo', fvprIsoToday());
+  base.searchParams.set('_ts', String(Date.now()+page));
+  return base;
+}
+async function fvprFetchDetailRows(force=false){
+  const key=fvprIsoToday();
+  if(!force && FVPR_DETAIL_CACHE.key===key && Date.now()-FVPR_DETAIL_CACHE.ts < FVPR_DETAIL_CACHE_MS) return FVPR_DETAIL_CACHE.rows;
+  const headers=fvprBuildHeaders(FVPR_LAST_PD_REQUEST?.headers||{});
+  const raw=[]; const seen=new Set();
+  for(let page=1; page<=FVPR_DETAIL_HARD_MAX_PAGES; page++){
+    const url=fvprBuildPickupDeliveryUrl(page);
+    const res=await fetch(url.toString(), {credentials:'include', headers, cache:'no-store'});
+    if(!res.ok) throw new Error(`Detaildaten nicht geladen: HTTP ${res.status}`);
+    const arr=fvprPickArray(await res.json());
+    if(!arr.length) break;
+    for(const item of arr){ const k=String(item?.id ?? `${item?.tour||''}|${item?.parcel_number||item?.parcelNumber||''}|${page}|${raw.length}`); if(seen.has(k)) continue; seen.add(k); raw.push(item); }
+    if(arr.length < FVPR_DETAIL_PAGE_SIZE) break;
+  }
+  const tm=await idbAll('tourMap').catch(()=>[]);
+  const pMap=new Map(), dMap=new Map();
+  for(const r of tm){ const k=tourKey(r.tour); if(k&&r.partner&&!pMap.has(k)) pMap.set(k,norm(r.partner)); if(k&&(r.driver||r.driverName)&&!dMap.has(k)) dMap.set(k,norm(r.driver||r.driverName)); }
+  const rows=raw.map((r,idx)=>{
+    const tour=fvprExtractTour(r)||'—'; const tk=tourKey(tour);
+    const statusRaw=fvprStatusOf(r);
+    const o={ __raw:r, __idx:idx, __tour:tour, __partner:fvprRawPartner(r)||pMap.get(tk)||'Ohne Zuordnung', __driver:fvprDriverOf(r)||dMap.get(tk)||'', __type:fvprTypeOf(r), __statusRaw:statusRaw, __status:fvprStatusDe(statusRaw), __serviceCode:fvprServiceCodeOf(r), __additionalCode:norm(r?.additional_code||r?.additionalCode||r?.problemReason||r?.problem_reason||''), __parcelList:fvprParcelListOf(r), __pkgCount:fvprParcelCountOf(r), __addr:fvprAddrOf(r), __name:fvprNameOf(r), __stop:fvprStopOf(r,idx) };
+    return o;
+  });
+  FVPR_DETAIL_CACHE={key,ts:Date.now(),rows};
+  return rows;
+}
+function fvprOpenTracking(psn){ const id=String(psn||'').replace(/\D+/g,''); if(id) window.open(`https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${id}`,'_blank','noopener'); }
+function fvprPsnButtons(list){
+  const arr=(list&&list.length?list:['—']);
+  return `<div class="${NS}psn-wrap">${arr.map(psn=> psn==='—' ? '—' : `<button class="${NS}psn-btn" data-fvpr-psn="${escHtml(psn)}" title="Lebenslauf öffnen">${escHtml(psn)}</button>`).join('')}</div>`;
+}
+function fvprKindBadge(row){
+  const k=fvprPriorityKind(row);
+  if(k==='EXPRESS') return `<span class="${NS}svc-badge ${NS}svc-express">Express</span>`;
+  if(k==='PRIO') return `<span class="${NS}svc-badge ${NS}svc-prio">Prio</span>`;
+  return '';
+}
+function fvprStatusBadge(s){
+  const n=fvprStatusNorm(s); let cls='gray';
+  if(/ZUGESTELLT|DELIVERED|ABGEHOLT|PICKED/.test(n)) cls='green';
+  else if(/PROBLEM|HINDERN|NICHT|CANCEL|STORNI|FAILED|REFUSED/.test(n)) cls='red';
+  else if(/OPEN|OFFEN|PLANNED|GEPLANT/.test(n)) cls='yellow';
+  return `<span class="${NS}status ${cls}">${escHtml(s||'—')}</span>`;
+}
+function fvprMetricLabel(metric){ return ({stops:'Stopps',pkgs:'Pakete',open:'Offene Stopps',pOpen:'Offene Abholstopps',obstacles:'Zustellhindernisse'})[metric] || metric; }
+function fvprRowsForMetric(rows, metric){
+  // Jede Klickliste gibt nur den Inhalt der angeklickten Zahl zurück.
+  // Stopps = alle Zustellstopps, Pakete = alle Zustellpakete paketgenau,
+  // offen = nur offene Zustellstopps, pOpen = nur offene Abholstopps.
+  if(metric==='stops') return rows.filter(r=>r.__type==='DELIVERY');
+  if(metric==='open') return rows.filter(r=>fvprIsOpenDelivery(r));
+  if(metric==='pOpen') return rows.filter(r=>fvprIsOpenPickup(r));
+  if(metric==='obstacles') return rows.filter(r=>fvprIsProblemDelivery(r));
+  if(metric==='pkgs') return rows
+    .filter(r=>r.__type==='DELIVERY')
+    .flatMap(r=>{
+      const psns=r.__parcelList.length?r.__parcelList:['—'];
+      return psns.map(psn=>Object.assign({},r,{__singlePsn:psn,__parcelList: psn==='—'?[]:[psn],__pkgCount:1}));
+    });
+  return [];
+}
+async function fvprOpenDetailList({partner='', tour='', metric='stops'}){
+  let rows=await fvprFetchDetailRows(false);
+  if(partner) rows=rows.filter(r=>r.__partner===partner);
+  if(tour) rows=rows.filter(r=>String(r.__tour||'—')===String(tour||'—'));
+  rows=fvprRowsForMetric(rows, metric);
+  rows.sort((a,b)=>String(a.__tour).localeCompare(String(b.__tour),'de',{numeric:true}) || String(a.__stop).localeCompare(String(b.__stop),'de',{numeric:true}) || String(a.__addr).localeCompare(String(b.__addr),'de',{numeric:true}));
+  const title=[fvprMetricLabel(metric), partner, tour?`Tour ${tour}`:''].filter(Boolean).join(' – ');
+  const html=`
+    <div style="font:13px system-ui">
+      <div style="margin:0 0 8px 0;color:#334155;font-weight:700">${escHtml(title)} · ${fmtInt(rows.length)} Einträge · Stand ${todayStr()} ${timeHM()}</div>
+      <div style="max-height:62vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#fff">
+        <table class="${NS}tbl ${NS}detailtbl" style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th>SP</th><th>Tour</th><th>Fahrer</th><th>Stopp</th><th>Empfänger / Adresse</th><th>Service</th><th>Status</th><th>Pakete</th><th>Paketnummer / Lebenslauf</th>
+          </tr></thead>
+          <tbody>${rows.map(r=>`
+            <tr data-row="1">
+              <td style="text-align:left">${escHtml(r.__partner)}</td>
+              <td>${escHtml(r.__tour)}</td>
+              <td style="text-align:left">${escHtml(r.__driver||'—')}</td>
+              <td>${escHtml(r.__stop||'—')}</td>
+              <td style="text-align:left"><b>${escHtml(r.__name||'—')}</b><br><span style="opacity:.8">${escHtml(r.__addr||'—')}</span></td>
+              <td style="text-align:left">${fvprKindBadge(r)} <span>${escHtml(r.__serviceCode||'—')}</span></td>
+              <td>${fvprStatusBadge(r.__status)}</td>
+              <td>${fmtInt(r.__pkgCount)}</td>
+              <td style="text-align:left">${fvprPsnButtons(r.__parcelList)}</td>
+            </tr>`).join('') || `<tr><td colspan="9" class="${NS}empty">Keine passenden Detaildaten gefunden.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>`;
+  const ov=modal(`
+    <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${escHtml(title)}</h3>
+    ${html}
+    <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="copy-detail">Kopieren</button>
+      <button class="${NS}btn-sm" data-act="close">Schließen</button>
+    </div>`);
+  const table=ov.querySelector('table'); if(table) makeTableSortable(table);
+  ov.addEventListener('click', async e=>{
+    const psn=e.target.closest('[data-fvpr-psn]'); if(psn){ e.preventDefault(); fvprOpenTracking(psn.dataset.fvprPsn||''); return; }
+    const b=e.target.closest('button[data-act]'); if(!b) return;
+    if(b.dataset.act==='copy-detail'){ const ok=await copyHtmlToClipboard(html); toast(ok?'Detail kopiert':'Kopieren fehlgeschlagen',ok); }
+    if(b.dataset.act==='close') ov.remove();
+  }, {passive:false});
+}
+function fvprCellMetricByIndex(row, cell){
+  const cells=Array.from(row.children); const idx=cells.indexOf(cell); const total=row.dataset.totalRow==='1';
+  // Wichtig: Partner-Vorschau-Zeilen haben data-partner UND data-tour.
+  // Diese Zeilen sind anders aufgebaut als die Gesamtübersicht.
+  // Alt wurde hier die Gesamtübersicht-Zuordnung benutzt. Dadurch wurde bei Tour 524/offen
+  // nicht auf diese Tour gefiltert und es erschien die große Gesamtliste.
+  const isTourDetailRow = row.hasAttribute('data-tour') || (cells.length>=8 && !total && norm(cells[0]?.textContent||''));
+  if(total) return ({3:'stops',4:'open',5:'pkgs',6:'obstacles',7:'pOpen'})[idx] || '';
+  if(isTourDetailRow) return ({2:'stops',3:'pkgs',4:'open',5:'obstacles',7:'pOpen'})[idx] || '';
+  if(row.dataset.partner) return ({3:'stops',4:'open',5:'pkgs',6:'obstacles',7:'pOpen'})[idx] || '';
+  return '';
+}
+function fvprFindPartnerFromModalRow(row){
+  const h=row.closest(`.${NS}modal-box`)?.querySelector('h3')?.textContent||'';
+  const m=h.match(/Vorschau\s*[–-]\s*(.+)$/); return m?norm(m[1]):'';
+}
+
+function fvprShowBlockingLoader(text='Detaildaten werden geladen …'){
+  const ov=document.createElement('div');
+  ov.className=NS+'modal '+NS+'loading-modal';
+  ov.innerHTML=`<div class="${NS}modal-box" style="min-width:min(420px,92vw);text-align:center">
+    <div style="font:800 16px system-ui;margin-bottom:8px">Bitte warten</div>
+    <div style="font:600 13px system-ui;color:#334155;margin-bottom:10px">${escHtml(text)}</div>
+    <div style="height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden">
+      <div class="${NS}loadingbar"></div>
+    </div>
+    <div style="font:500 12px system-ui;color:#64748b;margin-top:10px">Nicht erneut klicken. Die Dispatcher-Daten werden noch abgefragt.</div>
+  </div>`;
+  document.body.appendChild(ov);
+  return ()=>{ try{ ov.remove(); }catch{} };
+}
+function fvprInstallDetailClickHandler(){
+  if(window.__fvpr_detail_click_installed) return; window.__fvpr_detail_click_installed=true;
+  document.addEventListener('click', async e=>{
+    const psn=e.target.closest('[data-fvpr-psn]'); if(psn){ e.preventDefault(); e.stopPropagation(); fvprOpenTracking(psn.dataset.fvprPsn||''); return; }
+    const cell=e.target.closest(`.${NS}tbl td`); if(!cell || e.target.closest('button')) return;
+    const row=cell.closest('tr'); if(!row) return;
+    const metric=fvprCellMetricByIndex(row, cell); if(!metric) return;
+    const txt=norm(cell.textContent); if(!txt || txt==='—' || txt==='0') return;
+    e.preventDefault(); e.stopPropagation();
+    const partner=row.dataset.partner || fvprFindPartnerFromModalRow(row) || '';
+    const tour = row.dataset.tour || (row.children.length>=8 && row.dataset.totalRow!=='1' ? norm(row.children[0]?.textContent||'') : '');
+    const hideLoader=fvprShowBlockingLoader(`Detaildaten werden geladen${partner?' – '+partner:''}${tour?' – Tour '+tour:''} …`);
+    try{ await fvprOpenDetailList({partner, tour, metric}); }
+    catch(err){ console.error('[fvpr] Detail-Liste', err); alert(String(err?.message||err) + '\n\nHinweis: Bitte ggf. einmal die normale Pickup-/Delivery-Liste im Dispatcher öffnen, damit der API-Zugriff sicher erkannt wird.'); }
+    finally{ hideLoader(); }
+  }, true);
+}
+function fvprInstallPickupDeliveryHook(){
+  if(!window.__fvpr_pd_fetch_hooked && window.fetch){
+    const orig=window.fetch;
+    window.fetch=async function(input, init={}){
+      const res=await orig(input, init);
+      try{
+        const urlStr=typeof input==='string'?input:(input&&input.url)||'';
+        if(urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
+          const u=new URL(urlStr, location.origin); const q=u.searchParams;
+          if(!q.get('parcelNumber') && !q.get('parcel_number')){
+            const headers={}; const src=(init&&init.headers)||(input&&input.headers);
+            if(src){ if(src.forEach) src.forEach((v,k)=>headers[String(k).toLowerCase()]=String(v)); else if(Array.isArray(src)) src.forEach(([k,v])=>headers[String(k).toLowerCase()]=String(v)); else Object.entries(src).forEach(([k,v])=>headers[String(k).toLowerCase()]=String(v)); }
+            FVPR_LAST_PD_REQUEST={url:u,headers};
+          }
+        }
+      }catch{}
+      return res;
+    };
+    window.__fvpr_pd_fetch_hooked=true;
+  }
+  if(!window.__fvpr_pd_xhr_hooked && window.XMLHttpRequest){
+    const X=window.XMLHttpRequest, open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
+    X.prototype.open=function(method,url){ this.__fvpr_pd_url=typeof url==='string'?new URL(url,location.origin):null; this.__fvpr_pd_headers={}; return open.apply(this, arguments); };
+    X.prototype.setRequestHeader=function(k,v){ try{ this.__fvpr_pd_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this, arguments); };
+    X.prototype.send=function(){ const onload=()=>{ try{ if(this.__fvpr_pd_url && this.__fvpr_pd_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){ const q=this.__fvpr_pd_url.searchParams; if(!q.get('parcelNumber')&&!q.get('parcel_number')) FVPR_LAST_PD_REQUEST={url:this.__fvpr_pd_url, headers:this.__fvpr_pd_headers}; } }catch{} this.removeEventListener('load', onload); }; this.addEventListener('load', onload); return send.apply(this, arguments); };
+    window.__fvpr_pd_xhr_hooked=true;
+  }
+}
+(function fvprDetailAddonStart(){
+  try{
+    fvprInstallPickupDeliveryHook();
+    fvprInstallDetailClickHandler();
+    const css=document.createElement('style'); css.id=NS+'detail-style'; css.textContent=`
+      .${NS}numlink{color:#0f3f75;text-decoration:none;cursor:pointer;font-weight:700}
+      .${NS}psn-wrap{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-start}
+      .${NS}psn-btn{border:1px solid rgba(0,0,0,.14);background:#f7f7f7;border-radius:6px;padding:2px 6px;cursor:pointer;font:600 11px system-ui;color:#0f3f75}
+      .${NS}psn-btn:hover{background:#efefef}
+      .${NS}svc-badge{display:inline-block;border-radius:999px;padding:2px 7px;margin-right:4px;font:800 11px system-ui;border:1px solid transparent}
+      .${NS}svc-prio{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+      .${NS}svc-express{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+      .${NS}status{display:inline-block;max-width:100%;padding:2px 8px;border-radius:999px;font:700 11px system-ui;border:1px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .${NS}status.gray{background:#f3f4f6;color:#374151;border-color:#d1d5db}.${NS}status.red{background:#fee2e2;color:#991b1b;border-color:#fca5a5}.${NS}status.green{background:#dcfce7;color:#166534;border-color:#86efac}.${NS}status.yellow{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+      .${NS}detailtbl th{position:sticky;top:0;z-index:2}
+      .${NS}loadingbar{height:10px;width:35%;border-radius:999px;background:#64748b;animation:${NS}loadmove 1.05s infinite ease-in-out}
+      @keyframes ${NS}loadmove{0%{transform:translateX(-110%)}50%{transform:translateX(120%)}100%{transform:translateX(310%)}}
+    `; if(!document.getElementById(css.id)) document.head.appendChild(css);
+  }catch(e){ console.warn('[fvpr] Detail-Addon konnte nicht gestartet werden', e); }
+})();
 
 
 })();
