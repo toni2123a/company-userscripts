@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Roadnet – Frühschicht Übersicht Entladung
 // @namespace    bodo.dpd.custom
-// @version      1.0.2
-// @description  Zeigt nur den kleinen ÜbEntl-Bubble und die Übersicht „Frühschicht – Übersicht Entladung“. Keine Roadnet-Zusammenfassung, keine LTS-Funktion, kein Bridge-Export.
+// @version      1.0.3
+// @description  Frühschicht-Übersicht Entladung mit fester Roadnet-Spalten-ID-Zuordnung.
 // @match        https://roadnet.dpdgroup.com/execution/transport_units*
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_roadnet_uebersicht.user.js
@@ -193,12 +193,36 @@ function ensureEntladungShortcutButton() {
     return map;
   }
 
+  function headerIdMap(root) {
+    const heads = Array.from(root.querySelectorAll('.ui-datatable-scrollable-header thead th')).filter(isVisibleEl);
+    const h = heads.length ? heads : Array.from(root.querySelectorAll('thead th'));
+    const map = new Map();
+
+    h.forEach((th, idx) => {
+      const id = String(th.id || '');
+      const m = id.match(/:([^:]+)$/);
+      const shortId = m ? m[1] : id;
+
+      if (shortId && !map.has(shortId)) map.set(shortId, idx);
+      if (id && !map.has(id)) map.set(id, idx);
+    });
+
+    return map;
+  }
+
+  function pickId(idMap, ids) {
+    for (const id of ids) {
+      if (idMap.has(id)) return idMap.get(id);
+    }
+    return null;
+  }
+
   function pickIdx(hm, keys) {
     for (const k of keys) {
       const key = nk(k);
       if (hm.has(key)) return hm.get(key);
       for (const [hk, idx] of hm.entries()) {
-        if (hk.includes(key)) return idx;
+        if (hk === key) return idx;
       }
     }
     return null;
@@ -223,15 +247,19 @@ function ensureEntladungShortcutButton() {
     if (!root) return [];
 
     const hm = headerMap(root);
+    const hid = headerIdMap(root);
+
+    // Primär über eindeutige Roadnet-Spalten-IDs.
+    // Dadurch bleibt die Zuordnung stabil, auch wenn Kollegen die Spalten anders sortieren.
     const idx = {
-      status: pickIdx(hm, ['status']),
-      carrier: pickIdx(hm, ['frachtführer', 'frachtfuehrer', 'carrier', 'dienstleister', 'transporteur', 'unternehmer', 'spedition']),
-      from: pickIdx(hm, ['herkunft', 'abgangsort', 'abgang', 'von', 'name abgangsstandort', 'code abgangsstation']),
-      wb: pickIdx(hm, ['wb nr', 'nummer transporteinheit', 'lts #', 'lts', 'nummer transporte', 'transporteinheit']),
-      fuel: pickIdx(hm, ['auslastung', 'auslastung (%)', 'fuellstand', 'füllstand']),
-      unlBeg: pickIdx(hm, ['entladung beginn', 'entladebeginn']),
-      unlEnd: pickIdx(hm, ['entladung ende', 'entladeende']),
-      traffic: pickIdx(hm, ['verkehrsart', 'art', 'transportart'])
+      status: pickId(hid, ['col_status']) ?? pickIdx(hm, ['status']),
+      carrier: pickId(hid, ['col_shipmentCarrierName']) ?? pickIdx(hm, ['bezeichnung frachtführer', 'bezeichnung frachtfuehrer', 'frachtführer', 'frachtfuehrer', 'carrier']),
+      from: pickId(hid, ['col_originName', 'col_routeLegAddressBeginName']) ?? pickIdx(hm, ['abgangsort', 'name abgangsstandort', 'name beladestandort', 'herkunft']),
+      wb: pickId(hid, ['col_unitNumber']) ?? pickIdx(hm, ['nummer transporteinheit', 'wb nr', 'lts #', 'lts', 'nummer transporte', 'transporteinheit']),
+      fuel: pickId(hid, ['col_utilization']) ?? pickIdx(hm, ['auslastung', 'auslastung (%)', 'fuellstand', 'füllstand']),
+      unlBeg: pickId(hid, ['col_timeStartUnloading']) ?? pickIdx(hm, ['entladung beginn', 'entladebeginn']),
+      unlEnd: pickId(hid, ['col_timeEndUnloading']) ?? pickIdx(hm, ['entladung ende', 'entladeende']),
+      traffic: pickId(hid, ['col_routeLegType']) ?? pickIdx(hm, ['verkehrsart', 'transportart'])
     };
 
     const rowsA = Array.from(root.querySelectorAll('.ui-datatable-scrollable-body tbody tr')).filter((tr) => tr.querySelectorAll('td').length);
