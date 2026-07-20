@@ -179,15 +179,23 @@
     {
       "id": "tool-dispatcher2am2",
       "name": "DPD Dispatcher – Prio / Express",
-      "version": "7.3.0",
+      "version": "9.12.2",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js",
       "match": [
-        "https://dispatcher2-de.geopost.com/*"
+        "https://dispatcher2-de.geopost.com/*",
+        "https://2use-prod.dpdit.de/Report/*",
+        "https://2use-render-prod.dpdit.de/*",
+        "https://bipvmssrs1.dpdit.de/*",
+        "https://dpd360.dpd.de/ops/express_ticker.aspx*"
       ],
       "grants": [
-        "none"
+        "GM_xmlhttpRequest",
+        "unsafeWindow",
+        "GM_getValue",
+        "GM_setValue",
+        "GM_openInTab"
       ],
-      "description": "PRIO / EXPRESS: automatische Abholung-und-Zustellung-Erkennung, direkte API-Auswertung, sortierbare Listen, Predict-Zeitfenster, EXPRESS12 >11:01, Fahrer aus Fahrzeugübersicht, Systempartner aus lokaler TourMap."
+      "description": "PRIO / EXPRESS auf einen Blick – inklusive fehlendem Eingang aus 2Use (konfiguriertes Depot und anpassbarer Zeitraum)."
     },
     {
       "id": "tool-tourenauswertung",
