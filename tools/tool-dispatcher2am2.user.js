@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio / Express
 // @namespace    bodo.dpd.custom
-// @version      9.12.2
+// @version      9.12.3
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO / EXPRESS auf einen Blick – inklusive fehlendem Eingang aus 2Use (konfiguriertes Depot und anpassbarer Zeitraum).
@@ -1865,7 +1865,7 @@
       .${NS}modal-inner{background:#fff;width:min(1600px,96vw);height:min(88vh,1000px);overflow:auto;border-radius:12px;box-shadow:0 12px 28px rgba(0,0,0,.2);border:1px solid rgba(0,0,0,.12)}
       .${NS}modal-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.08);font:700 13px system-ui;position:sticky;top:0;background:#fff;z-index:2}
       .${NS}modal-body{padding:8px 12px;max-height:calc(100% - 46px);overflow:auto}
-      .${NS}tbl{width:100%;border-collapse:collapse;font:12px system-ui}
+      .${NS}tbl{width:100%;table-layout:fixed;border-collapse:collapse;font:12px system-ui}
       .${NS}tbl th,.${NS}tbl td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .${NS}tbl th{text-align:left;background:#fafafa;position:sticky;top:0;cursor:pointer;user-select:none;z-index:1}
       .${NS}sort-asc::after{content:" ▲";font-size:11px}
@@ -2843,10 +2843,21 @@
     return `<tr>${ths.map((h, i) => `<th data-col="${i}">${h}</th>`).join('')}</tr>`;
   }
 
+  function buildColgroupHtml(selectable = false) {
+    // Feste, prozentuale Spaltenbreiten zusammen mit table-layout:fixed
+    // verhindern, dass die Modal-Tabelle auf FHD-Monitoren über die
+    // Fensterbreite hinauswächst und einen horizontalen Scrollbalken erzwingt.
+    const widths = selectable
+      ? [3, 12, 20, 12, 7, 9, 8, 8, 7, 7, 7]
+      : [13, 20, 12, 7, 9, 8, 8, 8, 8, 7];
+    return `<colgroup>${widths.map(w => `<col style="width:${w}%">`).join('')}</colgroup>`;
+  }
+
   function buildTableShell(selectable = false) {
     return `
       <div id="${NS}vt-wrap" style="position:relative;height:min(70vh,720px);overflow:auto">
         <table class="${NS}tbl">
+          ${buildColgroupHtml(selectable)}
           <thead>${buildHeaderHtml(selectable)}</thead>
           <tbody id="${NS}vt-body"></tbody>
         </table>
@@ -2890,12 +2901,28 @@
       esc(pred)
     ];
 
+    // Titles fürs Mouseover: bei gestauchten Spalten (table-layout:fixed +
+    // Ellipsis) soll der volle Text per Tooltip sichtbar bleiben.
+    const cellTitles = [
+      r.__pid || '',
+      r.__addr || '',
+      r.__driver || '',
+      String(r.__tourNum || ''),
+      String(r.__systempartner || ''),
+      statusText,
+      dtime,
+      r.__codesStr || '',
+      (r.__serviceCodes || []).join(' '),
+      pred
+    ];
+
     const finalCells = selectable ? [selCell, ...cells] : cells;
+    const finalTitles = selectable ? ['', ...cellTitles] : cellTitles;
     const dataAttrs = [];
     if (r.id != null) dataAttrs.push(`data-delivery="${esc(String(r.id))}"`);
     if (r.stopId != null) dataAttrs.push(`data-stop="${esc(String(r.stopId))}"`);
 
-    return `<tr ${dataAttrs.join(' ')}>${finalCells.map(v => `<td>${v}</td>`).join('')}</tr>`;
+    return `<tr ${dataAttrs.join(' ')}>${finalCells.map((v, i) => `<td${finalTitles[i] ? ` title="${esc(finalTitles[i])}"` : ''}>${v}</td>`).join('')}</tr>`;
   }
 
   function openModal(title, rowsOrHtml) {
@@ -3209,7 +3236,7 @@
       if (key === 'pknr' && row.pknr) {
         const parcelNumber = String(row.pknr).replace(/\D+/g, '');
         const url = `https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${encodeURIComponent(parcelNumber)}`;
-        return `<td data-sort-value="${esc(value)}"><button type="button" data-pm-external="${esc(url)}" title="${esc(url)}" style="display:flex;width:100%;justify-content:space-between;gap:8px;padding:0;border:0;background:transparent;color:#111;font:inherit;text-align:left;cursor:pointer"><span>${esc(value)}</span><span style="color:#00a6d6;font-size:10px">▼</span></button></td>`;
+        return `<td data-sort-value="${esc(value)}"><button type="button" data-pm-external="${esc(url)}" title="${esc(value)}\n${esc(url)}" style="display:flex;width:100%;justify-content:space-between;gap:8px;padding:0;border:0;background:transparent;color:#111;font:inherit;text-align:left;cursor:pointer"><span>${esc(value)}</span><span style="color:#00a6d6;font-size:10px">▼</span></button></td>`;
       }
       if (key === 'ticker') {
         const tickerText = String(row.ticker || '');
@@ -3221,10 +3248,10 @@
             ? 'https://dpd360.dpd.de/ops/express_ticker.aspx'
             : safeHttpUrl(row.tickerUrl);
         if (url) {
-          return `<td data-sort-value="${esc(value)}"><button type="button" data-pm-external="${esc(url)}"${createTicket ? ` data-express-ticket="${esc(String(row.pknr || '').replace(/\D+/g, ''))}"` : ''} title="${esc(url)}" style="display:flex;width:100%;justify-content:space-between;gap:8px;padding:0;border:0;background:transparent;color:#111;font:inherit;text-align:left;cursor:pointer"><span>${esc(value)}</span><span style="color:#00a6d6;font-size:10px">▼</span></button></td>`;
+          return `<td data-sort-value="${esc(value)}"><button type="button" data-pm-external="${esc(url)}"${createTicket ? ` data-express-ticket="${esc(String(row.pknr || '').replace(/\D+/g, ''))}"` : ''} title="${esc(value)}\n${esc(url)}" style="display:flex;width:100%;justify-content:space-between;gap:8px;padding:0;border:0;background:transparent;color:#111;font:inherit;text-align:left;cursor:pointer"><span>${esc(value)}</span><span style="color:#00a6d6;font-size:10px">▼</span></button></td>`;
         }
       }
-      return `<td data-sort-value="${esc(value)}">${esc(value)}</td>`;
+      return `<td data-sort-value="${esc(value)}" title="${esc(value)}">${esc(value)}</td>`;
     };
     const body = rows.map(row => `<tr>${columns.map(([, key]) => renderCell(row, key)).join('')}</tr>`).join('');
     return `
