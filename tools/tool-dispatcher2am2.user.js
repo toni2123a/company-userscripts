@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Prio / Express
 // @namespace    bodo.dpd.custom
-// @version      9.12.3
+// @version      9.12.4
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher2am2.user.js
 // @description  PRIO / EXPRESS auf einen Blick – inklusive fehlendem Eingang aus 2Use (konfiguriertes Depot und anpassbarer Zeitraum).
@@ -2663,7 +2663,15 @@
 
   const statusOf = r => apiStatus(r);
 
+  const isDeliveryProblemForceOpen = r => {
+    const s = (statusOf(r) || '').toUpperCase();
+    if (!/DELIVERY_PROBLEM/.test(s)) return false;
+    const codes = addCodes(r);
+    return codes.includes('041') || codes.includes('061');
+  };
+
   const delivered = r => {
+    if (isDeliveryProblemForceOpen(r)) return false;
     if (r.deliveredTime) return true;
     const s = (statusOf(r) || '').toUpperCase();
     return /ZUGESTELLT|DELIVERED/.test(s);
