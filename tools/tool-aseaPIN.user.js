@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.40
-// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Excel-Import).
+// @version      6.42
+// @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Import und Export).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @include      /^https?:\/\/scanserver-d001\d{4}\.ssw\.dpdit\.de\/cgi-bin\/scanmonitor\.cgi.*$/
@@ -1012,6 +1012,35 @@ ctx.fillText(
       .filter(o => o.label && !/^alle$/i.test(o.label));
   }
 
+  function getRouteFilterFromDoc(doc) {
+    if (!doc) return null;
+
+    const partnerSelect = doc.querySelector('select[name="systempartner"]');
+    const form = partnerSelect?.closest('form') || null;
+    const candidates = Array.from((form || doc).querySelectorAll('select'));
+    const routeSelect = candidates.find(sel => {
+      const key = `${sel.name || ''} ${sel.id || ''}`.toLowerCase();
+      return /(^|[^a-z])(route|route_nr|routenr)([^a-z]|$)/i.test(key) || key.includes('route');
+    });
+
+    if (!routeSelect || !routeSelect.name) return null;
+
+    const options = Array.from(routeSelect.options || [])
+      .map(option => ({
+        value: String(option.value ?? ''),
+        label: String(option.textContent || option.value || '').trim()
+      }))
+      .filter(option => option.label);
+
+    if (!options.length) return null;
+
+    return {
+      paramName: routeSelect.name,
+      selectedValue: String(routeSelect.value ?? options[0].value),
+      options
+    };
+  }
+
   function createOverviewOverlay(doc) {
     const overlay = doc.createElement('div');
     Object.assign(overlay.style, {
@@ -1361,14 +1390,27 @@ ctx.fillText(
   }
 
 
-  async function fetchReportRowsForSystempartner(baseUrl, baseParams, option) {
+  async function fetchReportRowsForSystempartner(baseUrl, baseParams, option, paramOverrides = null) {
     const p = new URLSearchParams(baseParams.toString());
     const sp = option.value || option.label;
     p.set('systempartner', sp);
 
+    if (paramOverrides) {
+      for (const [name, value] of Object.entries(paramOverrides)) {
+        p.delete(name);
+        if (value !== null && value !== undefined) p.append(name, String(value));
+      }
+    }
+
     const url = baseUrl + '?' + p.toString();
     const html = await fetchHtml(url);
-    const rows = extractRowsFromHtml(html);
+    let rows;
+    try {
+      rows = extractRowsFromHtml(html);
+    } catch (error) {
+      if (/Keine Datenzeilen gefunden/i.test(error?.message || '')) rows = [];
+      else throw error;
+    }
 
     return { url, html, rows };
   }
@@ -1646,8 +1688,8 @@ function openBarcodeOverlay(doc, row) {
   overlay.style.display = 'flex';
 }
 
-function createRowsPreviewOverlay(doc, partnerLabel, rows) {
-  const sourceRows = sortRowsByStreetThenOrt(Array.isArray(rows) ? rows.slice() : []);
+function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
+  let sourceRows = sortRowsByStreetThenOrt(Array.isArray(rows) ? rows.slice() : []);
   let displayRows = sourceRows.slice();
   const sortState = { key: '', dir: 'asc' };
   const headerCells = [];
@@ -1727,6 +1769,62 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
   subText.textContent = 'Zeilen: ' + displayRows.length;
   subText.style.whiteSpace = 'nowrap';
   sub.appendChild(subText);
+
+  const routeFilter = options && options.routeFilter;
+  if (routeFilter && Array.isArray(routeFilter.options) && routeFilter.options.length && typeof routeFilter.loadRows === 'function') {
+    const routeLabel = doc.createElement('label');
+    routeLabel.textContent = 'Route:';
+    routeLabel.style.whiteSpace = 'nowrap';
+    routeLabel.style.marginLeft = '6px';
+
+    const routeSelect = doc.createElement('select');
+    routeSelect.title = 'Pakete dieses Systempartners nach Route filtern';
+    Object.assign(routeSelect.style, {
+      height: '19px',
+      minWidth: '92px',
+      padding: '0 18px 0 4px',
+      fontSize: '10px',
+      border: '1px solid #aaa',
+      borderRadius: '3px',
+      background: '#fff',
+      color: '#000'
+    });
+
+    routeFilter.options.forEach((item) => {
+      const option = doc.createElement('option');
+      option.value = String(item.value ?? '');
+      option.textContent = item.label;
+      routeSelect.appendChild(option);
+    });
+    routeSelect.value = String(routeFilter.selectedValue ?? '');
+
+    let appliedValue = routeSelect.value;
+    routeSelect.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const requestedValue = routeSelect.value;
+      routeSelect.disabled = true;
+      subText.textContent = 'Route wird geladen …';
+
+      try {
+        const loadedRows = await routeFilter.loadRows(requestedValue);
+        sourceRows = sortRowsByStreetThenOrt(Array.isArray(loadedRows) ? loadedRows.slice() : []);
+        selectedRows.clear();
+        appliedValue = requestedValue;
+        renderRows();
+      } catch (error) {
+        console.error(error);
+        routeSelect.value = appliedValue;
+        renderRows();
+        alert('Route konnte nicht geladen werden:\n' + (error?.message || String(error)));
+      } finally {
+        routeSelect.disabled = false;
+      }
+    });
+
+    routeLabel.appendChild(doc.createTextNode(' '));
+    routeLabel.appendChild(routeSelect);
+    sub.appendChild(routeLabel);
+  }
 
   const configuredToursForDetails = getConfiguredToursForPartner(partnerLabel);
   if (configuredToursForDetails.length) {
@@ -2420,15 +2518,16 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
   return { overlay, close };
 }
 
-  async function showRowsPreviewPopup(doc, partnerLabel, rows) {
+  async function showRowsPreviewPopup(doc, partnerLabel, rows, options = {}) {
     const safeRows = Array.isArray(rows) ? rows : [];
-    const ui = createRowsPreviewOverlay(doc, partnerLabel, safeRows);
+    const ui = createRowsPreviewOverlay(doc, partnerLabel, safeRows, options);
     doc.body.appendChild(ui.overlay);
   }
 
   async function runOverview(doc) {
     const { doc: rdoc, baseUrl, params: baseParams } = getBaseReportUrlAndParamsFromPage();
     const options = getSystempartnerOptions(rdoc);
+    const routeFilter = getRouteFilterFromDoc(rdoc);
 
     const ui = createOverviewOverlay(doc);
     doc.body.appendChild(ui.overlay);
@@ -2644,6 +2743,25 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
         }
       }
 
+      function makeRouteDetailOptions(entry, transformRows = null) {
+        if (!routeFilter) return {};
+        return {
+          routeFilter: {
+            options: routeFilter.options,
+            selectedValue: routeFilter.selectedValue,
+            loadRows: async (routeValue) => {
+              const res = await fetchReportRowsForSystempartner(
+                baseUrl,
+                baseParams,
+                entry.option,
+                { [routeFilter.paramName]: routeValue }
+              );
+              return typeof transformRows === 'function' ? transformRows(res.rows) : res.rows;
+            }
+          }
+        };
+      }
+
       async function handleOpenRows(entry) {
         try {
           let rows = entry.rows;
@@ -2652,7 +2770,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
             rows = res.rows;
             entry.rows = rows;
           }
-          await showRowsPreviewPopup(doc, entry.option.label, rows);
+          await showRowsPreviewPopup(doc, entry.option.label, rows, makeRouteDetailOptions(entry));
         } catch (e) {
           console.error(e);
           alert('Detailanzeige fehlgeschlagen für "' + entry.option.label + '":\n' + (e?.message || String(e)));
@@ -2721,7 +2839,12 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows) {
               alert('Keine Treffer für ' + SO_GROUPS[groupKey].label + ' bei "' + rowUi.option.label + '".');
               return;
             }
-            showRowsPreviewPopup(doc, rowUi.option.label + ' – ' + SO_GROUPS[groupKey].label, rows);
+            showRowsPreviewPopup(
+              doc,
+              rowUi.option.label + ' – ' + SO_GROUPS[groupKey].label,
+              rows,
+              makeRouteDetailOptions(rowUi, loadedRows => filterRowsBySoGroup(loadedRows, groupKey))
+            );
           };
         }
         bindSoCell(rowUi.tdExpress, 'express');
@@ -3595,7 +3718,7 @@ btn2.addEventListener('click', () => {
 #tm-settings-panel th,#tm-settings-panel td{border:1px solid #ddd;padding:2px 3px;font-size:11px;vertical-align:top;}
 #tm-settings-panel th{background:#eee;}
 #tm-settings-panel input[type="text"],#tm-excel-import{width:100%;box-sizing:border-box;font-size:11px;}
-#tm-excel-import{height:80px;resize:vertical;}
+#tm-excel-import{height:110px;resize:vertical;}
 #tm-sp-panel.tm-collapsed{width:78px;height:58px;padding:0;overflow:visible;background:transparent;border:none;}
 #tm-sp-panel.tm-collapsed *{display:none !important;}
 #tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;position:absolute;top:0;right:0;left:auto;background:#f5f5f5;border:1px solid #999;}
@@ -3987,15 +4110,53 @@ btn2.addEventListener('click', () => {
       ta.id = 'tm-excel-import';
       settingsPanel.appendChild(ta);
 
+      const importActions = doc.createElement('div');
+      Object.assign(importActions.style, {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '8px',
+        marginTop: '4px'
+      });
+      settingsPanel.appendChild(importActions);
+
       const importBtn = doc.createElement('button');
       importBtn.textContent = 'Importieren';
-      importBtn.style.marginTop = '4px';
-      settingsPanel.appendChild(importBtn);
+      importActions.appendChild(importBtn);
+
+      const exportBtn = doc.createElement('button');
+      exportBtn.textContent = 'Export';
+      exportBtn.title = 'Alle gespeicherten Systempartner und Touren in das Feld schreiben';
+      importActions.appendChild(exportBtn);
+
+      exportBtn.addEventListener('click', () => {
+        const cfgNow = loadConfig();
+
+        if (!cfgNow.length) {
+          ta.value = '';
+          alert('Es sind keine Daten zum Exportieren gespeichert.');
+          return;
+        }
+
+        ta.value = cfgNow
+          .map(item => {
+            const name = String(item.name || '').trim();
+            const tours = Array.isArray(item.tours)
+              ? item.tours.map(t => String(t || '').trim()).filter(Boolean).join(', ')
+              : '';
+            return name + '\t' + tours;
+          })
+          .filter(line => line.trim())
+          .join('\n');
+
+        ta.focus();
+        ta.select();
+      });
 
       importBtn.addEventListener('click', () => {
         const text = ta.value;
         if (!text.trim()) {
-          alert('Bitte erst aus Excel einfügen (Strg+V).');
+          alert('Bitte erst Daten einfügen oder einen Export in das Feld schreiben.');
           return;
         }
 
@@ -4007,16 +4168,26 @@ btn2.addEventListener('click', () => {
           const trimmed = line.trim();
           if (!trimmed) return;
 
-          const parts = line.split(/\t|;/);
-          if (parts.length < 2) return;
+          const tabPos = line.indexOf('\t');
+          const semiPos = line.indexOf(';');
+          let splitPos = -1;
 
-          const name = parts[0].trim();
-          let tour = parts[1].trim();
+          if (tabPos >= 0 && semiPos >= 0) splitPos = Math.min(tabPos, semiPos);
+          else splitPos = Math.max(tabPos, semiPos);
 
-          if (!name || !tour || name.toLowerCase().startsWith('systempartner')) return;
+          if (splitPos < 0) return;
 
-          tour = tour.replace(/[^\dA-Za-z]/g, '');
-          if (!tour) return;
+          const name = line.slice(0, splitPos).trim();
+          const toursText = line.slice(splitPos + 1).trim();
+
+          if (!name || !toursText || name.toLowerCase().startsWith('systempartner')) return;
+
+          const tours = toursText
+            .split(/[,\s]+/)
+            .map(t => t.replace(/[^\dA-Za-z]/g, '').trim())
+            .filter(Boolean);
+
+          if (!tours.length) return;
 
           const norm = normalizeName(name);
           let entry = cfgNow.find(p => normalizeName(p.name) === norm);
@@ -4025,10 +4196,12 @@ btn2.addEventListener('click', () => {
             cfgNow.push(entry);
           }
 
-          if (!entry.tours.includes(tour)) {
-            entry.tours.push(tour);
-            addedCount++;
-          }
+          tours.forEach(tour => {
+            if (!entry.tours.includes(tour)) {
+              entry.tours.push(tour);
+              addedCount++;
+            }
+          });
         });
 
         if (!addedCount) {
