@@ -200,15 +200,16 @@
     {
       "id": "tool-tourenauswertung",
       "name": "DPD Dispatcher – Tourenauswertung",
-      "version": "3.1.4",
+      "version": "3.3.1",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js",
       "match": [
         "https://dispatcher2-de.geopost.com/*"
       ],
       "grants": [
-        "none"
+        "unsafeWindow",
+        "GM_xmlhttpRequest"
       ],
-      "description": "Tourenauswertung mit Datum von/bis, Systempartner/Touren, Fahrername, Stopps/Paketen, automatischen Fällen und Zustellhindernissen inkl. Klick-Details."
+      "description": "KPI-/Tourenauswertung mit eigener Datumsauswahl und direktem API-Abruf, ohne Dispatcher-Reiter oder deren Filter zu verändern."
     },
     {
       "id": "tool.lem",
