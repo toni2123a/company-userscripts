@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASEA PIN Freigabe
 // @namespace    http://tampermonkey.net/
-// @version      6.42
+// @version      6.50
 // @description  Eingangsmengenabgleich: Tour-Bubbles + QR-Popup, Mehrfachauswahl + Liste kopieren (WhatsApp-Text) + Kopie (Sammelbild) + Kopie mit Code (Sammelbild inkl. Barcode je Zeile, Spaltenbreite automatisch) + Übersicht (Systempartner -> Anzahl, Zeitfenster aus aktueller Seite + Gesamtsumme) + Einstellungen (Systempartner/Touren, Import und Export).
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-aseaPIN.user.js
@@ -1101,6 +1101,20 @@ ctx.fillText(
     right.style.alignItems = 'center';
     right.style.gap = '6px';
 
+    const btnSettings = doc.createElement('button');
+    btnSettings.type = 'button';
+    btnSettings.textContent = '⚙';
+    btnSettings.title = 'Einstellungen (Systempartner / Touren)';
+    btnSettings.style.padding = '3px 8px';
+    btnSettings.style.cursor = 'pointer';
+    btnSettings.style.fontSize = '15px';
+    btnSettings.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof doc._tmOpenSettings === 'function') doc._tmOpenSettings();
+      else alert('Einstellungen sind auf dieser Seite nicht verfügbar.');
+    };
+
     const btnRefresh = doc.createElement('button');
     btnRefresh.type = 'button';
     btnRefresh.textContent = 'Aktualisieren';
@@ -1113,6 +1127,7 @@ ctx.fillText(
     btnClose.style.padding = '3px 8px';
     btnClose.style.cursor = 'pointer';
 
+    right.appendChild(btnSettings);
     right.appendChild(btnRefresh);
     right.appendChild(btnClose);
 
@@ -1168,6 +1183,11 @@ ctx.fillText(
     thPrio.style.color = SO_GROUPS.prio.fg;
     thPrio.style.borderRadius = '4px';
 
+    const thTerminHeute = makeTh('Termin für heute', '110px', 'center');
+    thTerminHeute.style.background = '#bfe8ff';
+    thTerminHeute.style.color = '#000';
+    thTerminHeute.style.borderRadius = '4px';
+
     const th2 = doc.createElement('th');
     th2.textContent = 'Anzahl';
     th2.style.textAlign = 'right';
@@ -1187,6 +1207,7 @@ ctx.fillText(
     thr.appendChild(thExpress);
     thr.appendChild(thGefahrgut);
     thr.appendChild(thPrio);
+    thr.appendChild(thTerminHeute);
     thr.appendChild(th2);
     thr.appendChild(th3);
     thead.appendChild(thr);
@@ -1205,7 +1226,7 @@ ctx.fillText(
       borderTop: '2px solid #ddd',
       padding: '8px 12px',
       display: 'grid',
-      gridTemplateColumns: '48px 1fr 80px 90px 70px 120px 110px',
+      gridTemplateColumns: '48px 1fr 80px 90px 70px 110px 120px 110px',
       alignItems: 'center',
       columnGap: '0',
       fontWeight: 'bold',
@@ -1223,6 +1244,8 @@ ctx.fillText(
     sumGefahrgutCell.style.textAlign = 'center';
     const sumPrioCell = doc.createElement('div');
     sumPrioCell.style.textAlign = 'center';
+    const sumTerminHeuteCell = doc.createElement('div');
+    sumTerminHeuteCell.style.textAlign = 'center';
 
     const sumCell = doc.createElement('div');
     sumCell.textContent = '0';
@@ -1241,6 +1264,7 @@ ctx.fillText(
     sticky.appendChild(sumExpressCell);
     sticky.appendChild(sumGefahrgutCell);
     sticky.appendChild(sumPrioCell);
+    sticky.appendChild(sumTerminHeuteCell);
     sticky.appendChild(sumCell);
     sticky.appendChild(btnCopyAll);
 
@@ -1291,7 +1315,7 @@ ctx.fillText(
       e.stopPropagation();
     }, true);
 
-    return { overlay, sub, tbody, sumCell, sumExpressCell, sumGefahrgutCell, sumPrioCell, btnCopyAll, btnRefresh, close, sortHeaders: { th1, th2 } };
+    return { overlay, sub, tbody, sumCell, sumExpressCell, sumGefahrgutCell, sumPrioCell, sumTerminHeuteCell, btnCopyAll, btnRefresh, close, sortHeaders: { th1, th2 } };
   }
   function createTinyActionButton(doc, label, title) {
     const btn = doc.createElement('button');
@@ -1452,6 +1476,82 @@ ctx.fillText(
   function filterRowsBySoGroup(rows, groupKey) {
     if (!groupKey) return Array.isArray(rows) ? rows.slice() : [];
     return (Array.isArray(rows) ? rows : []).filter(r => getSoGroupKey(r && r.so) === groupKey);
+  }
+
+  function getLocalDateParts(d = new Date()) {
+    return {
+      y: d.getFullYear(),
+      m: d.getMonth() + 1,
+      day: d.getDate()
+    };
+  }
+
+  function parseUmverfuegungDate(value) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+
+    // Unterstützt z. B. 28.09.2026, 28.09.26, 2026-09-28 sowie Datum mit Uhrzeit/Text.
+    let m = text.match(/(?:^|\D)(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})(?:\D|$)/);
+    if (m) {
+      let y = Number(m[3]);
+      if (y < 100) y += 2000;
+      return { y, m: Number(m[2]), day: Number(m[1]) };
+    }
+
+    m = text.match(/(?:^|\D)(\d{4})-(\d{1,2})-(\d{1,2})(?:\D|$)/);
+    if (m) return { y: Number(m[1]), m: Number(m[2]), day: Number(m[3]) };
+
+    return null;
+  }
+
+  function isUmverfuegungToday(value, now = new Date()) {
+    const parsed = parseUmverfuegungDate(value);
+    if (!parsed) return false;
+    const today = getLocalDateParts(now);
+    return parsed.y === today.y && parsed.m === today.m && parsed.day === today.day;
+  }
+
+  function getUmverfuegungHighlight(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+
+    // ASG bleibt bewusst ohne Markierung.
+    if (/\bASG\b/i.test(text)) return '';
+
+    // Jeder erkannte Termin / jedes Datum wird hellblau markiert – unabhängig vom Tag.
+    if (parseUmverfuegungDate(text)) return '#bfe8ff';
+
+    // Jede andere Umverfügung (z. B. andere Adresse / Verfügung) wird hellgrün markiert.
+    return '#d9f2d9';
+  }
+
+  function countTerminHeute(rows) {
+    let count = 0;
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      if (isUmverfuegungToday(r && r.umv)) count++;
+    }
+    return count;
+  }
+
+  function filterRowsTerminHeute(rows) {
+    return (Array.isArray(rows) ? rows : []).filter(r => isUmverfuegungToday(r && r.umv));
+  }
+
+  function makeTerminHeuteBadge(doc, count) {
+    const badge = doc.createElement('span');
+    badge.textContent = String(Number(count) || 0);
+    Object.assign(badge.style, {
+      display: 'inline-block',
+      minWidth: '30px',
+      padding: '2px 7px',
+      borderRadius: '5px',
+      background: '#bfe8ff',
+      color: '#000',
+      fontWeight: 'bold',
+      textAlign: 'center',
+      boxSizing: 'border-box'
+    });
+    return badge;
   }
 
   function drawCanvasSoBadge(ctx, so, x, baselineY, maxWidth) {
@@ -1694,6 +1794,68 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
   const sortState = { key: '', dir: 'asc' };
   const headerCells = [];
   const selectedRows = new Set();
+  const soFilterEnabled = options.soFilter === true;
+  let selectedSoCodes = null; // null = alle SO, leere Menge = keine
+  const soValue = row => String(row.so ?? '').trim();
+  const soFilterBar = doc.createElement('div');
+  const soDropdown = doc.createElement('details');
+  const soSummary = doc.createElement('summary');
+  const soChoices = doc.createElement('div');
+
+  function refreshSoFilter() {
+    if (!soFilterEnabled) return;
+    const counts = new Map();
+    sourceRows.forEach(row => counts.set(soValue(row), (counts.get(soValue(row)) || 0) + 1));
+    const codes = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b, 'de', { numeric: true }));
+    soSummary.textContent = selectedSoCodes === null ? 'SO: Alle' :
+      (selectedSoCodes.size ? 'SO: ' + Array.from(selectedSoCodes).map(code => code || '(ohne SO)').join(', ') : 'SO: Keine');
+    soChoices.replaceChildren();
+    const actions = doc.createElement('div');
+    [['Alle', null], ['Keine', new Set()]].forEach(([label, value]) => {
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.style.marginRight = '6px';
+      button.addEventListener('click', () => {
+        selectedSoCodes = value === null ? null : new Set();
+        refreshSoFilter();
+        renderRows();
+      });
+      actions.appendChild(button);
+    });
+    soChoices.appendChild(actions);
+    codes.forEach(code => {
+      const label = doc.createElement('label');
+      Object.assign(label.style, { display: 'block', padding: '3px 0', cursor: 'pointer' });
+      const checkbox = doc.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = selectedSoCodes === null || selectedSoCodes.has(code);
+      checkbox.addEventListener('change', () => {
+        if (selectedSoCodes === null) selectedSoCodes = new Set(codes);
+        if (checkbox.checked) selectedSoCodes.add(code);
+        else selectedSoCodes.delete(code);
+        if (codes.every(value => selectedSoCodes.has(value))) selectedSoCodes = null;
+        renderRows();
+        soSummary.textContent = selectedSoCodes === null ? 'SO: Alle' :
+          (selectedSoCodes.size ? 'SO: ' + Array.from(selectedSoCodes).map(value => value || '(ohne SO)').join(', ') : 'SO: Keine');
+      });
+      label.appendChild(checkbox);
+      label.appendChild(doc.createTextNode(' ' + (code || '(ohne SO)') + ' (' + counts.get(code) + ')'));
+      soChoices.appendChild(label);
+    });
+  }
+
+  if (soFilterEnabled) {
+    Object.assign(soFilterBar.style, { padding: '6px 10px', borderBottom: '1px solid #e5e5e5', flexShrink: '0' });
+    Object.assign(soDropdown.style, { width: '280px', maxWidth: '100%', border: '1px solid #aaa', borderRadius: '3px', background: '#fff' });
+    Object.assign(soSummary.style, { padding: '4px 6px', cursor: 'pointer' });
+    soSummary.title = 'SO-Filter öffnen; mehrere Werte per Checkbox auswählen';
+    Object.assign(soChoices.style, { padding: '6px', maxHeight: '180px', overflowY: 'auto', borderTop: '1px solid #ddd' });
+    soDropdown.appendChild(soSummary);
+    soDropdown.appendChild(soChoices);
+    soFilterBar.appendChild(soDropdown);
+    refreshSoFilter();
+  }
 
   const overlay = doc.createElement('div');
   Object.assign(overlay.style, {
@@ -1742,6 +1904,14 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
     overflow: 'hidden'
   });
 
+  const titleRow = doc.createElement('div');
+  Object.assign(titleRow.style, {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    minWidth: '0'
+  });
+
   const title = doc.createElement('div');
   title.textContent = 'Details – ' + partnerLabel;
   title.style.fontWeight = 'bold';
@@ -1750,6 +1920,23 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
   title.style.whiteSpace = 'nowrap';
   title.style.overflow = 'hidden';
   title.style.textOverflow = 'ellipsis';
+  title.style.minWidth = '0';
+
+  const btnRefreshRows = doc.createElement('button');
+  btnRefreshRows.type = 'button';
+  btnRefreshRows.textContent = 'Aktualisieren';
+  btnRefreshRows.title = 'Liste dieses Systempartners neu laden';
+  Object.assign(btnRefreshRows.style, {
+    padding: '1px 7px',
+    height: '21px',
+    lineHeight: '17px',
+    fontSize: '10px',
+    cursor: 'pointer',
+    flex: '0 0 auto'
+  });
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(btnRefreshRows);
 
   const sub = doc.createElement('div');
   Object.assign(sub.style, {
@@ -1771,6 +1958,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
   sub.appendChild(subText);
 
   const routeFilter = options && options.routeFilter;
+  let routeSelectForRefresh = null;
   if (routeFilter && Array.isArray(routeFilter.options) && routeFilter.options.length && typeof routeFilter.loadRows === 'function') {
     const routeLabel = doc.createElement('label');
     routeLabel.textContent = 'Route:';
@@ -1778,6 +1966,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
     routeLabel.style.marginLeft = '6px';
 
     const routeSelect = doc.createElement('select');
+    routeSelectForRefresh = routeSelect;
     routeSelect.title = 'Pakete dieses Systempartners nach Route filtern';
     Object.assign(routeSelect.style, {
       height: '19px',
@@ -1809,6 +1998,8 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
         const loadedRows = await routeFilter.loadRows(requestedValue);
         sourceRows = sortRowsByStreetThenOrt(Array.isArray(loadedRows) ? loadedRows.slice() : []);
         selectedRows.clear();
+        selectedSoCodes = null;
+        refreshSoFilter();
         appliedValue = requestedValue;
         renderRows();
       } catch (error) {
@@ -1859,8 +2050,44 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
     });
   }
 
-  left.appendChild(title);
+  left.appendChild(titleRow);
   left.appendChild(sub);
+
+  btnRefreshRows.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!options || typeof options.refreshRows !== 'function') {
+      alert('Für diese Liste ist keine Aktualisierungsfunktion verfügbar.');
+      return;
+    }
+
+    const oldText = btnRefreshRows.textContent;
+    btnRefreshRows.disabled = true;
+    btnRefreshRows.textContent = 'Lädt …';
+    subText.textContent = 'Liste wird aktualisiert …';
+
+    try {
+      const routeValue = routeSelectForRefresh ? routeSelectForRefresh.value : null;
+      const loadedRows = await options.refreshRows(routeValue);
+      sourceRows = sortRowsByStreetThenOrt(Array.isArray(loadedRows) ? loadedRows.slice() : []);
+      selectedRows.clear();
+      selectedSoCodes = null;
+      refreshSoFilter();
+      renderRows();
+      btnRefreshRows.textContent = 'Aktualisiert ✓';
+      setTimeout(() => {
+        if (btnRefreshRows.isConnected) btnRefreshRows.textContent = oldText;
+      }, 1000);
+    } catch (error) {
+      console.error(error);
+      renderRows();
+      btnRefreshRows.textContent = oldText;
+      alert('Liste konnte nicht aktualisiert werden:\n' + (error?.message || String(error)));
+    } finally {
+      btnRefreshRows.disabled = false;
+    }
+  });
 
   const right = doc.createElement('div');
   right.style.display = 'flex';
@@ -2036,7 +2263,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
   }
 
   function sortDisplayRows() {
-    displayRows = sourceRows.slice();
+    displayRows = sourceRows.filter(row => !soFilterEnabled || selectedSoCodes === null || selectedSoCodes.has(soValue(row)));
     if (!sortState.key) return;
 
     displayRows.sort((a, b) => {
@@ -2067,13 +2294,13 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
     sortDisplayRows();
     updateSortableHeaderLabels(headerCells.filter(h => h.dataset && h.dataset.sortKey), sortState);
     tbody.innerHTML = '';
-    subText.textContent = 'Zeilen: ' + displayRows.length + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
+    subText.textContent = 'Zeilen: ' + displayRows.length + (soFilterEnabled ? ' von ' + sourceRows.length : '') + (sortState.key ? ' | Sortierung: ' + sortState.key + ' ' + (sortState.dir === 'asc' ? 'aufsteigend' : 'absteigend') : '');
 
     if (!displayRows.length) {
       const emptyTr = doc.createElement('tr');
       const emptyTd = doc.createElement('td');
       emptyTd.colSpan = headers.length;
-      emptyTd.textContent = 'Keine offenen Pakete vorhanden. Die Touren-QR-Codes oben können trotzdem angeklickt werden.';
+      emptyTd.textContent = sourceRows.length ? 'Keine Pakete für die gewählten SO. Bitte den SO-Filter ändern.' : 'Keine offenen Pakete vorhanden. Die Touren-QR-Codes oben können trotzdem angeklickt werden.';
       Object.assign(emptyTd.style, {
         padding: '14px 10px',
         color: '#666',
@@ -2192,6 +2419,17 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
           wordBreak: i === 0 ? 'break-all' : 'break-word',
           fontVariantNumeric: i <= 3 ? 'tabular-nums' : 'normal'
         });
+
+        // Umverfügung hervorheben: Termin = hellblau, andere Verfügung/Adresse = hellgrün, ASG = unverändert.
+        if (i === 7) {
+          const umvBg = getUmverfuegungHighlight(val);
+          if (umvBg) {
+            td.style.background = umvBg;
+            td.style.color = '#000';
+            td.style.fontWeight = '600';
+          }
+        }
+
         tr.appendChild(td);
       });
 
@@ -2226,6 +2464,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
   foot.appendChild(btnCloseBottom);
 
   box.appendChild(head);
+  if (soFilterEnabled) box.appendChild(soFilterBar);
   box.appendChild(body);
   box.appendChild(foot);
   overlay.appendChild(box);
@@ -2576,7 +2815,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
         if (!sortedItems.length) {
           const tr = doc.createElement('tr');
           const td = doc.createElement('td');
-          td.colSpan = 7;
+          td.colSpan = 8;
           td.textContent = 'Keine Systempartner gefunden.';
           td.style.padding = '8px 6px';
           td.style.color = '#666';
@@ -2590,6 +2829,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
         let sumExpress = 0;
         let sumGefahrgut = 0;
         let sumPrio = 0;
+        let sumTerminHeute = 0;
 
         for (const it of sortedItems) {
           const rowUi = rowMap.get(it.label);
@@ -2599,9 +2839,11 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
           rowUi.tdExpress.innerHTML = '';
           rowUi.tdGefahrgut.innerHTML = '';
           rowUi.tdPrio.innerHTML = '';
+          rowUi.tdTerminHeute.innerHTML = '';
           rowUi.tdExpress.appendChild(makeOverviewSoBadge(doc, 'express', counts.express));
           rowUi.tdGefahrgut.appendChild(makeOverviewSoBadge(doc, 'gefahrgut', counts.gefahrgut));
           rowUi.tdPrio.appendChild(makeOverviewSoBadge(doc, 'prio', counts.prio));
+          rowUi.tdTerminHeute.appendChild(makeTerminHeuteBadge(doc, rowUi.terminHeuteCount || 0));
 
           rowUi.td2.textContent = String(it.count);
           ui.tbody.appendChild(rowUi.tr);
@@ -2609,14 +2851,17 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
           sumExpress += counts.express || 0;
           sumGefahrgut += counts.gefahrgut || 0;
           sumPrio += counts.prio || 0;
+          sumTerminHeute += rowUi.terminHeuteCount || 0;
         }
 
         ui.sumExpressCell.innerHTML = '';
         ui.sumGefahrgutCell.innerHTML = '';
         ui.sumPrioCell.innerHTML = '';
+        ui.sumTerminHeuteCell.innerHTML = '';
         ui.sumExpressCell.appendChild(makeOverviewSoBadge(doc, 'express', sumExpress));
         ui.sumGefahrgutCell.appendChild(makeOverviewSoBadge(doc, 'gefahrgut', sumGefahrgut));
         ui.sumPrioCell.appendChild(makeOverviewSoBadge(doc, 'prio', sumPrio));
+        ui.sumTerminHeuteCell.appendChild(makeTerminHeuteBadge(doc, sumTerminHeute));
         ui.sumCell.textContent = String(sum);
       }
 
@@ -2654,6 +2899,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
         const tdExpress = makeSoCountTd();
         const tdGefahrgut = makeSoCountTd();
         const tdPrio = makeSoCountTd();
+        const tdTerminHeute = makeSoCountTd();
 
         const td2 = doc.createElement('td');
         td2.textContent = '…';
@@ -2678,12 +2924,13 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
         tr.appendChild(tdExpress);
         tr.appendChild(tdGefahrgut);
         tr.appendChild(tdPrio);
+        tr.appendChild(tdTerminHeute);
         tr.appendChild(td2);
         tr.appendChild(td3);
 
         rowMap.set(o.label, {
-          tr, td2, td1, td3, tdExpress, tdGefahrgut, tdPrio, btnQr, btnCopyImg, option: o,
-          rows: null, soCounts: { express: 0, gefahrgut: 0, prio: 0 },
+          tr, td2, td1, td3, tdExpress, tdGefahrgut, tdPrio, tdTerminHeute, btnQr, btnCopyImg, option: o,
+          rows: null, soCounts: { express: 0, gefahrgut: 0, prio: 0 }, terminHeuteCount: 0,
           configuredTours: getConfiguredToursForPartner(o.label)
         });
       }
@@ -2736,7 +2983,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
           if (!tours.length) {
             throw new Error('Für diesen Systempartner sind in den Einstellungen keine Touren hinterlegt.');
           }
-          await showMultiQrPopup(doc, tours);
+          showPartnerTourSelectionPopup(doc, entry.option.label, tours);
         } catch (e) {
           console.error(e);
           alert('QR-Popup fehlgeschlagen für "' + entry.option.label + '":\n' + (e?.message || String(e)));
@@ -2744,9 +2991,19 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
       }
 
       function makeRouteDetailOptions(entry, transformRows = null) {
-        if (!routeFilter) return {};
-        return {
-          routeFilter: {
+        const detailOptions = {
+          refreshRows: async (routeValue = null) => {
+            const overrides = (routeFilter && routeValue !== null && routeValue !== undefined)
+              ? { [routeFilter.paramName]: routeValue }
+              : null;
+            const res = await fetchReportRowsForSystempartner(baseUrl, baseParams, entry.option, overrides);
+            if (typeof transformRows !== 'function') entry.rows = res.rows;
+            return typeof transformRows === 'function' ? transformRows(res.rows) : res.rows;
+          }
+        };
+
+        if (routeFilter) {
+          detailOptions.routeFilter = {
             options: routeFilter.options,
             selectedValue: routeFilter.selectedValue,
             loadRows: async (routeValue) => {
@@ -2756,10 +3013,13 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
                 entry.option,
                 { [routeFilter.paramName]: routeValue }
               );
+              if (typeof transformRows !== 'function') entry.rows = res.rows;
               return typeof transformRows === 'function' ? transformRows(res.rows) : res.rows;
             }
-          }
-        };
+          };
+        }
+
+        return detailOptions;
       }
 
       async function handleOpenRows(entry) {
@@ -2788,13 +3048,15 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
             const { rows } = await fetchReportRowsForSystempartner(baseUrl, baseParams, opt);
             const count = Array.isArray(rows) ? rows.length : 0;
             const soCounts = countSoGroups(rows);
+            const terminHeuteCount = countTerminHeute(rows);
 
-            results.push({ label: opt.label, count, rows, soCounts });
+            results.push({ label: opt.label, count, rows, soCounts, terminHeuteCount });
 
             const rowUi = rowMap.get(opt.label);
             if (rowUi) {
               rowUi.rows = rows;
               rowUi.soCounts = soCounts;
+              rowUi.terminHeuteCount = terminHeuteCount;
               rowUi.td2.textContent = String(count);
             }
 
@@ -2806,6 +3068,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
             if (rowUi) {
               rowUi.rows = [];
               rowUi.soCounts = { express: 0, gefahrgut: 0, prio: 0 };
+              rowUi.terminHeuteCount = 0;
               rowUi.td2.textContent = '0';
             }
           } finally {
@@ -2829,6 +3092,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
 
         rowUi.td2.textContent = String(it.count || 0);
         rowUi.soCounts = it.soCounts || countSoGroups(rowUi.rows || []);
+        rowUi.terminHeuteCount = (it.terminHeuteCount != null) ? it.terminHeuteCount : countTerminHeute(rowUi.rows || []);
 
         function bindSoCell(td, groupKey) {
           td.onclick = (e) => {
@@ -2843,13 +3107,30 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
               doc,
               rowUi.option.label + ' – ' + SO_GROUPS[groupKey].label,
               rows,
-              makeRouteDetailOptions(rowUi, loadedRows => filterRowsBySoGroup(loadedRows, groupKey))
+              { ...makeRouteDetailOptions(rowUi, loadedRows => filterRowsBySoGroup(loadedRows, groupKey)), soFilter: groupKey === 'express' }
             );
           };
         }
         bindSoCell(rowUi.tdExpress, 'express');
         bindSoCell(rowUi.tdGefahrgut, 'gefahrgut');
         bindSoCell(rowUi.tdPrio, 'prio');
+
+        rowUi.tdTerminHeute.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const rows = filterRowsTerminHeute(rowUi.rows || []);
+          if (!rows.length) {
+            alert('Keine Umverfügung mit Termin für heute bei "' + rowUi.option.label + '".');
+            return;
+          }
+          showRowsPreviewPopup(
+            doc,
+            rowUi.option.label + ' – Termin für heute',
+            rows,
+            makeRouteDetailOptions(rowUi, loadedRows => filterRowsTerminHeute(loadedRows))
+          );
+        };
+        rowUi.tdTerminHeute.style.cursor = 'pointer';
 
         rowUi.btnQr.onclick = (e) => {
           e.preventDefault();
@@ -2919,7 +3200,7 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
               alert('Keine Treffer für ' + SO_GROUPS[groupKey].label + '.');
               return;
             }
-            await showRowsPreviewPopup(doc, 'Alle Systempartner – ' + SO_GROUPS[groupKey].label, allRows);
+            await showRowsPreviewPopup(doc, 'Alle Systempartner – ' + SO_GROUPS[groupKey].label, allRows, { soFilter: groupKey === 'express' });
           } catch (err) {
             console.error(err);
             alert('Fehler beim Öffnen der Gesamtliste:\n' + (err?.message || String(err)));
@@ -2929,6 +3210,28 @@ function createRowsPreviewOverlay(doc, partnerLabel, rows, options = {}) {
       bindTotalSoCell(ui.sumExpressCell, 'express');
       bindTotalSoCell(ui.sumGefahrgutCell, 'gefahrgut');
       bindTotalSoCell(ui.sumPrioCell, 'prio');
+
+      ui.sumTerminHeuteCell.style.cursor = 'pointer';
+      ui.sumTerminHeuteCell.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          const allRows = [];
+          for (const entry of rowMap.values()) {
+            if (entry && Array.isArray(entry.rows) && entry.rows.length) {
+              allRows.push(...filterRowsTerminHeute(entry.rows));
+            }
+          }
+          if (!allRows.length) {
+            alert('Keine Umverfügung mit Termin für heute vorhanden.');
+            return;
+          }
+          await showRowsPreviewPopup(doc, 'Alle Systempartner – Termin für heute', allRows);
+        } catch (err) {
+          console.error(err);
+          alert('Fehler beim Öffnen der Gesamtliste:\n' + (err?.message || String(err)));
+        }
+      };
 
       ui.btnCopyAll.onclick = async (e) => {
         e.preventDefault();
@@ -3477,6 +3780,136 @@ btn2.addEventListener('click', () => {
     }
   }
 
+  function showPartnerTourSelectionPopup(doc, partnerLabel, tours) {
+    const cleanTours = Array.from(new Set((Array.isArray(tours) ? tours : []).map(t => String(t || '').trim()).filter(Boolean)));
+    if (!cleanTours.length) {
+      alert('Für diesen Systempartner sind in den Einstellungen keine Touren hinterlegt.');
+      return;
+    }
+
+    const overlay = doc.createElement('div');
+    markQrPopupOverlay(overlay);
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1000004'
+    });
+
+    const box = doc.createElement('div');
+    Object.assign(box.style, {
+      background: '#fff', borderRadius: '7px', padding: '12px', minWidth: '320px',
+      maxWidth: '90vw', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 10px 28px rgba(0,0,0,.35)',
+      fontFamily: 'Arial, sans-serif', fontSize: '12px'
+    });
+
+    const title = doc.createElement('div');
+    title.textContent = partnerLabel;
+    title.style.fontWeight = 'bold';
+    title.style.marginBottom = '8px';
+    box.appendChild(title);
+
+    const control = doc.createElement('div');
+    Object.assign(control.style, { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' });
+
+    const multi = doc.createElement('input');
+    multi.type = 'checkbox';
+    multi.id = 'tm-overview-multi-' + Math.random().toString(36).slice(2);
+    const label = doc.createElement('label');
+    label.htmlFor = multi.id;
+    label.textContent = 'Mehrfachauswahl';
+
+    const btnShow = doc.createElement('button');
+    btnShow.type = 'button';
+    btnShow.textContent = 'Anzeigen';
+    btnShow.style.display = 'none';
+    btnShow.style.padding = '2px 7px';
+
+    control.appendChild(multi);
+    control.appendChild(label);
+    control.appendChild(btnShow);
+    box.appendChild(control);
+
+    const hint = doc.createElement('div');
+    hint.textContent = 'Ohne Mehrfachauswahl öffnet ein Klick die Tour sofort.';
+    hint.style.color = '#666';
+    hint.style.fontSize = '11px';
+    hint.style.marginBottom = '7px';
+    box.appendChild(hint);
+
+    const list = doc.createElement('div');
+    Object.assign(list.style, { display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' });
+    box.appendChild(list);
+
+    const selected = new Set();
+    const bubbleByTour = new Map();
+
+    const syncBubble = (tour) => {
+      const b = bubbleByTour.get(tour);
+      if (!b) return;
+      const on = selected.has(tour);
+      b.style.background = on ? '#4a4a4a' : '#7d7d7d';
+      b.style.borderColor = on ? '#000' : 'transparent';
+    };
+
+    for (const tour of cleanTours) {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.textContent = tour;
+      Object.assign(b.style, {
+        borderRadius: '14px', border: '1px solid transparent', background: '#7d7d7d', color: '#fff',
+        padding: '4px 10px', cursor: 'pointer', minWidth: '54px'
+      });
+      bubbleByTour.set(tour, b);
+      b.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!multi.checked) {
+          overlay.remove();
+          showQrPopup(doc, tour);
+          return;
+        }
+        if (selected.has(tour)) selected.delete(tour); else selected.add(tour);
+        syncBubble(tour);
+      };
+      list.appendChild(b);
+    }
+
+    multi.onchange = () => {
+      if (!multi.checked) {
+        selected.clear();
+        cleanTours.forEach(syncBubble);
+        btnShow.style.display = 'none';
+      } else {
+        btnShow.style.display = '';
+      }
+    };
+
+    btnShow.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const chosen = Array.from(selected);
+      if (!chosen.length) {
+        alert('Bitte mindestens eine Tour auswählen.');
+        return;
+      }
+      overlay.remove();
+      showMultiQrPopup(doc, chosen);
+    };
+
+    const footer = doc.createElement('div');
+    footer.style.textAlign = 'right';
+    const close = doc.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Schließen';
+    close.onclick = () => overlay.remove();
+    footer.appendChild(close);
+    box.appendChild(footer);
+
+    overlay.appendChild(box);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    box.onclick = (e) => e.stopPropagation();
+    doc.body.appendChild(overlay);
+  }
+
   async function showMultiQrPopup(doc, tours) {
   if (!tours || !tours.length) return;
 
@@ -3702,28 +4135,17 @@ btn2.addEventListener('click', () => {
     if (!doc.body || doc.getElementById('tm-sp-panel')) return;
 
     const css = `
-#tm-sp-panel{position:fixed;top:70px;right:10px;width:360px;max-height:80vh;overflow:auto;background:#f5f5f5;border:1px solid #ccc;padding:6px 8px;font-family:Arial,sans-serif;font-size:12px;z-index:9999;box-sizing:border-box;}
-#tm-sp-panel h3{margin:0 0 4px 0;font-size:13px;padding-top:22px;}
-#tm-sp-panel button{padding:2px 6px;font-size:11px;margin:2px 2px;cursor:pointer;}
-#tm-sp-info{margin:4px 0;}
-.tm-tour-bubble{display:inline-block;padding:3px 8px;margin:2px 4px 2px 0;border-radius:12px;background:#7d7d7d;color:#fff;cursor:pointer;white-space:nowrap;border:1px solid transparent;}
-.tm-tour-bubble:hover{filter:brightness(1.1);}
-.tm-tour-bubble.tm-selected{background:#4a4a4a;border-color:#000;}
-#tm-collapse-btn{position:absolute;top:0;right:0;width:28px;height:28px;padding:0;margin:0;line-height:28px;text-align:center;font-weight:bold;}
-#tm-overview-btn{position:absolute;top:0;left:0;height:28px;padding:0 8px;margin:0;line-height:28px;text-align:center;font-weight:bold;}
-#tm-settings-btn{position:absolute;top:0;left:86px;width:28px;height:28px;padding:0;margin:0;line-height:28px;text-align:center;font-weight:bold;}
-#tm-settings-panel{margin-top:6px;border-top:1px solid #ccc;padding-top:6px;display:none;background:#fff;border:1px solid #ddd;}
-#tm-settings-panel .cap{font-weight:bold;margin:0 0 6px 0;}
+#tm-sp-panel{position:fixed;top:70px;right:10px;width:86px;height:30px;z-index:9999;font-family:Arial,sans-serif;font-size:12px;overflow:visible;}
+#tm-overview-btn{width:86px;height:28px;padding:0 8px;margin:0;line-height:26px;text-align:center;font-weight:bold;background:#f5f5f5;border:1px solid #999;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.25);cursor:pointer;}
+#tm-collapse-btn,#tm-settings-btn,#tm-sp-panel h3,#tm-sp-info,#tm-sp-bubbles,#tm-multi-select,#tm-sp-panel>div:not(#tm-settings-panel){display:none !important;}
+#tm-settings-panel{display:none;position:fixed;top:90px;left:50%;transform:translateX(-50%);width:min(760px,calc(100vw - 40px));max-height:78vh;overflow:auto;background:#fff;border:1px solid #bbb;border-radius:8px;padding:12px;box-shadow:0 12px 34px rgba(0,0,0,.4);z-index:1000006;box-sizing:border-box;}
+#tm-settings-panel .cap{font-weight:bold;margin:0 0 6px 0;padding-right:80px;}
 #tm-settings-panel table{border-collapse:collapse;width:100%;}
 #tm-settings-panel th,#tm-settings-panel td{border:1px solid #ddd;padding:2px 3px;font-size:11px;vertical-align:top;}
 #tm-settings-panel th{background:#eee;}
 #tm-settings-panel input[type="text"],#tm-excel-import{width:100%;box-sizing:border-box;font-size:11px;}
 #tm-excel-import{height:110px;resize:vertical;}
-#tm-sp-panel.tm-collapsed{width:78px;height:58px;padding:0;overflow:visible;background:transparent;border:none;}
-#tm-sp-panel.tm-collapsed *{display:none !important;}
-#tm-sp-panel.tm-collapsed #tm-collapse-btn{display:block !important;position:absolute;top:0;right:0;left:auto;background:#f5f5f5;border:1px solid #999;}
-#tm-sp-panel.tm-collapsed #tm-overview-btn{display:block !important;position:absolute;top:32px;right:0;left:auto;width:78px;height:24px;padding:0 6px;margin:0;line-height:22px;text-align:center;font-weight:bold;background:#f5f5f5;border:1px solid #999;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.25);}
-`;
+`
 
     const style = doc.createElement('style');
     style.textContent = css;
@@ -3731,13 +4153,6 @@ btn2.addEventListener('click', () => {
 
     const panel = doc.createElement('div');
     panel.id = 'tm-sp-panel';
-
-    const btnCollapse = doc.createElement('button');
-    btnCollapse.id = 'tm-collapse-btn';
-    btnCollapse.type = 'button';
-    btnCollapse.textContent = '×';
-    btnCollapse.title = 'Panel ein-/ausklappen';
-    panel.appendChild(btnCollapse);
 
     const btnOverview = doc.createElement('button');
     btnOverview.id = 'tm-overview-btn';
@@ -3752,21 +4167,6 @@ btn2.addEventListener('click', () => {
     btnSettings.textContent = '⚙';
     btnSettings.title = 'Einstellungen (Systempartner / Touren)';
     panel.appendChild(btnSettings);
-
-    function applyCollapsedState(isCollapsed) {
-      panel.classList.toggle('tm-collapsed', !!isCollapsed);
-      try { window.localStorage.setItem(COLLAPSE_KEY, isCollapsed ? '1' : '0'); } catch {}
-    }
-
-    let collapsed = false;
-    try { collapsed = (window.localStorage.getItem(COLLAPSE_KEY) === '1'); } catch {}
-    applyCollapsedState(collapsed);
-
-    btnCollapse.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      applyCollapsedState(!panel.classList.contains('tm-collapsed'));
-    });
 
     btnOverview.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -3832,9 +4232,12 @@ btn2.addEventListener('click', () => {
 
     const settingsPanel = doc.createElement('div');
     settingsPanel.id = 'tm-settings-panel';
-    panel.appendChild(settingsPanel);
 
+    // Das Einstellungsfenster wird direkt an <body> gehängt und nicht in das
+    // kleine Übersicht-Panel. So liegt sein z-index wirklich über der großen
+    // Übersicht und wird nicht vom Stacking-Context des Panels begrenzt.
     doc.body.appendChild(panel);
+    doc.body.appendChild(settingsPanel);
 
     const selectedTours = new Set();
 
@@ -4095,13 +4498,13 @@ btn2.addEventListener('click', () => {
       settingsPanel.appendChild(table);
 
       const importTitle = doc.createElement('div');
-      importTitle.textContent = 'Import aus Excel-Liste (2 Spalten: Systempartner, Tour):';
+      importTitle.textContent = 'Systempartner importieren / exportieren:';
       importTitle.style.marginTop = '8px';
       importTitle.style.fontWeight = 'bold';
       settingsPanel.appendChild(importTitle);
 
       const importHint = doc.createElement('div');
-      importHint.textContent = 'In Excel Bereich A:B markieren, kopieren und hier einfügen. Überschrift wird ignoriert.';
+      importHint.textContent = 'Für andere Rechner am besten als JSON-Datei exportieren und dort über „Datei importieren“ auswählen. Excel-Einfügen (Spalten A:B) bleibt ebenfalls möglich.';
       importHint.style.fontSize = '10px';
       importHint.style.marginBottom = '2px';
       settingsPanel.appendChild(importHint);
@@ -4121,42 +4524,135 @@ btn2.addEventListener('click', () => {
       settingsPanel.appendChild(importActions);
 
       const importBtn = doc.createElement('button');
-      importBtn.textContent = 'Importieren';
+      importBtn.textContent = 'Text importieren';
       importActions.appendChild(importBtn);
 
+      const fileImportBtn = doc.createElement('button');
+      fileImportBtn.textContent = 'Datei importieren';
+      fileImportBtn.title = 'Eine zuvor exportierte JSON-Datei auswählen';
+      importActions.appendChild(fileImportBtn);
+
+      const fileInput = doc.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = '.json,application/json,.txt,text/plain';
+      fileInput.style.display = 'none';
+      settingsPanel.appendChild(fileInput);
+
       const exportBtn = doc.createElement('button');
-      exportBtn.textContent = 'Export';
-      exportBtn.title = 'Alle gespeicherten Systempartner und Touren in das Feld schreiben';
+      exportBtn.textContent = 'Datei exportieren';
+      exportBtn.title = 'Alle Systempartner/Touren als JSON-Datei herunterladen';
       importActions.appendChild(exportBtn);
 
-      exportBtn.addEventListener('click', () => {
+      function cleanImportedConfig(raw) {
+        const list = Array.isArray(raw) ? raw : raw?.systempartners;
+        if (!Array.isArray(list)) {
+          throw new Error('Die Datei enthält keine gültige Systempartner-Liste.');
+        }
+
+        return list.map(item => {
+          const name = String(item?.name || '').trim();
+          const tours = Array.isArray(item?.tours)
+            ? item.tours.map(t => String(t || '').trim()).filter(Boolean)
+            : [];
+          return { name, tours: Array.from(new Set(tours)) };
+        }).filter(item => item.name && item.tours.length);
+      }
+
+      function mergeImportedConfig(imported) {
+        const cfgNow = loadConfig();
+        let addedPartners = 0;
+        let addedTours = 0;
+
+        imported.forEach(item => {
+          const norm = normalizeName(item.name);
+          let entry = cfgNow.find(p => normalizeName(p.name) === norm);
+          if (!entry) {
+            entry = { name: item.name, tours: [] };
+            cfgNow.push(entry);
+            addedPartners++;
+          }
+
+          item.tours.forEach(tour => {
+            if (!entry.tours.includes(tour)) {
+              entry.tours.push(tour);
+              addedTours++;
+            }
+          });
+        });
+
+        saveConfig(cfgNow);
+        renderSettingsPanel();
+        updateBubbles();
+        alert(
+          'Import abgeschlossen.\n' +
+          'Neue Systempartner: ' + addedPartners + '\n' +
+          'Neue Touren: ' + addedTours +
+          ((!addedPartners && !addedTours) ? '\nAlle Daten waren bereits vorhanden.' : '')
+        );
+      }
+
+      async function saveExportFile(jsonText, suggestedName) {
+        const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = doc.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        doc.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      exportBtn.addEventListener('click', async () => {
         const cfgNow = loadConfig();
 
         if (!cfgNow.length) {
-          ta.value = '';
           alert('Es sind keine Daten zum Exportieren gespeichert.');
           return;
         }
 
-        ta.value = cfgNow
-          .map(item => {
-            const name = String(item.name || '').trim();
-            const tours = Array.isArray(item.tours)
-              ? item.tours.map(t => String(t || '').trim()).filter(Boolean).join(', ')
-              : '';
-            return name + '\t' + tours;
-          })
-          .filter(line => line.trim())
-          .join('\n');
+        const payload = {
+          format: 'ASEA-Systempartner',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          depot: DEPOT,
+          systempartners: cleanImportedConfig(cfgNow)
+        };
+        const date = new Date().toISOString().slice(0, 10);
 
-        ta.focus();
-        ta.select();
+        try {
+          await saveExportFile(JSON.stringify(payload, null, 2), 'ASEA-Systempartner-' + DEPOT + '-' + date + '.json');
+          alert('Export heruntergeladen. Die Datei befindet sich im Downloadordner des Browsers.');
+        } catch (err) {
+          if (err?.name !== 'AbortError') {
+            alert('Export fehlgeschlagen:\n' + (err?.message || String(err)));
+          }
+        }
+      });
+
+      fileImportBtn.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+
+        try {
+          const text = await file.text();
+          const raw = JSON.parse(text.replace(/^\uFEFF/, ''));
+          const imported = cleanImportedConfig(raw);
+          if (!imported.length) throw new Error('Die Datei enthält keine verwendbaren Einträge.');
+          mergeImportedConfig(imported);
+        } catch (err) {
+          alert('Datei konnte nicht importiert werden:\n' + (err?.message || String(err)));
+        } finally {
+          fileInput.value = '';
+        }
       });
 
       importBtn.addEventListener('click', () => {
         const text = ta.value;
         if (!text.trim()) {
-          alert('Bitte erst Daten einfügen oder einen Export in das Feld schreiben.');
+          alert('Bitte erst Daten aus Excel oder einer zweispaltigen Liste einfügen.');
           return;
         }
 
@@ -4217,15 +4713,33 @@ btn2.addEventListener('click', () => {
       });
     }
 
+    function openSettingsPanel() {
+      renderSettingsPanel();
+
+      const closeBtn = doc.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.textContent = 'Schließen';
+      Object.assign(closeBtn.style, {
+        position: 'absolute', top: '8px', right: '8px', padding: '2px 8px', cursor: 'pointer'
+      });
+      closeBtn.onclick = () => {
+        settingsPanel.style.display = 'none';
+        settingsPanel.innerHTML = '';
+      };
+      settingsPanel.appendChild(closeBtn);
+
+      // Immer über der Übersicht anzeigen.
+      settingsPanel.style.zIndex = '1000010';
+      settingsPanel.style.display = 'block';
+    }
+
+    doc._tmOpenSettings = openSettingsPanel;
+
     btnSettings.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (settingsPanel.style.display === 'none' || !settingsPanel.style.display) {
-        renderSettingsPanel();
-        settingsPanel.style.display = 'block';
-      } else {
-        settingsPanel.style.display = 'none';
-      }
+      if (settingsPanel.style.display === 'block') settingsPanel.style.display = 'none';
+      else openSettingsPanel();
     });
 
     multiCheckbox.addEventListener('change', () => {
