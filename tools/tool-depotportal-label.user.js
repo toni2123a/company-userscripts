@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Depotportal – Paketschein
 // @namespace    bodo.tools
-// @version      1.08
-// @description  Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen
+// @version      1.12
+// @description  Paketschein mit Empfänger/Absender, Barcode, Drucken, Zwischenablage, Google Maps und Google-Suche
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js
 // @match        https://depotportal.dpd.com/*
@@ -86,13 +86,25 @@
     }
 
     // ================================================================
-    // [4] Empfänger + Absender
+    // [4] Zustelladresse + Auftraggeber/Absender + Empfänger
     // ================================================================
-    function address(start, stops) {
+    function address(start, stops, after, before) {
         let raw = (document.body.innerText||'').replace(/\r/g,'');
-        let p = raw.indexOf(start);
+        const from = after ? raw.indexOf(after) : 0;
+        if (from === -1) return '';
+
+        let p = raw.indexOf(start, from);
         if (p === -1) return '';
+
+        // Der Treffer muss innerhalb des erwarteten Seitenbereichs liegen.
+        // So werden gleichnamige Menüpunkte oder ein altes Label-Overlay ignoriert.
+        if (before) {
+            const limit = raw.indexOf(before, from);
+            if (limit !== -1 && p >= limit) return '';
+        }
+
         p = raw.indexOf('\n',p);
+        if (p === -1) return '';
         let end = raw.length;
         for (const s of stops) {
             const x = raw.indexOf(s,p);
@@ -201,6 +213,8 @@ body { margin:0; }
     height:150mm;
     border:1px solid #000;
     box-sizing:border-box;
+    transform:scale(0.9);
+    transform-origin:top left;
 }
 </style></head><body>
 <div class="label-wrap">
@@ -234,7 +248,30 @@ body { margin:0; }
     }
 
     // ================================================================
-    // [8] Overlay öffnen
+    // [8] Aktuelle Empfängeradresse in Google öffnen
+    // ================================================================
+    function getCurrentRecipientAddress() {
+        const el = document.getElementById('labelEmpf');
+        return (el ? el.innerText : '')
+            .replace(/\s*\n\s*/g, ', ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function openRecipientAddress(target) {
+        const recipientAddress = getCurrentRecipientAddress();
+        if (!recipientAddress) return alert('Keine Empfängeradresse gefunden.');
+
+        const query = encodeURIComponent(recipientAddress);
+        const url = target === 'maps'
+            ? `https://www.google.com/maps/search/?api=1&query=${query}`
+            : `https://www.google.com/search?q=${query}`;
+
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
+    // ================================================================
+    // [9] Overlay öffnen
     // ================================================================
     function openOverlay(data) {
         let ov = document.getElementById('labelOv');
@@ -246,15 +283,20 @@ body { margin:0; }
                 display:'none',alignItems:'center',justifyContent:'center',
                 zIndex:'99999'
             });
-            ov.addEventListener('click',e=>{ if(e.target===ov) ov.style.display='none'; });
             document.body.appendChild(ov);
         }
         ov.innerHTML = `
 <div style="background:#fff;width:420px;height:650px;padding:6px;display:flex;flex-direction:column;border:1px solid #000;">
-  <div style="margin-bottom:6px;display:flex;gap:6px;font-size:11px;">
+  <div style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px;font-size:11px;">
     <button id="btnPrint">Drucken</button>
     <button id="btnCopy">In Zwischenablage</button>
-    <button id="btnClose">Abbrechen</button>
+    <button id="btnMaps">Google Maps</button>
+    <button id="btnGoogle">Google</button>
+    <button id="btnClose">Schließen</button>
+    <span style="flex-basis:100%;height:0;"></span>
+    <button class="addressChoice" id="btnDelivery">Zustelladresse</button>
+    <button class="addressChoice" id="btnSender">Absenderadresse</button>
+    <button class="addressChoice" id="btnRecipient">Empfängeradresse</button>
   </div>
   <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;overflow:hidden;">
     <div id="labelInner" style="width:100mm;height:150mm;border:1px solid #000;box-sizing:border-box;">
@@ -267,10 +309,41 @@ body { margin:0; }
         document.getElementById('btnClose').onclick=()=>ov.style.display='none';
         document.getElementById('btnPrint').onclick=()=>printLabelFromDom();
         document.getElementById('btnCopy').onclick=()=>copyImage();
+        document.getElementById('btnMaps').onclick=()=>openRecipientAddress('maps');
+        document.getElementById('btnGoogle').onclick=()=>openRecipientAddress('google');
+
+        const addressButtons = {
+            delivery: document.getElementById('btnDelivery'),
+            sender: document.getElementById('btnSender'),
+            recipient: document.getElementById('btnRecipient')
+        };
+
+        function selectAddress(type) {
+            const addresses = {
+                delivery: data.delivery,
+                sender: data.sender,
+                recipient: data.recipient
+            };
+            const field = document.getElementById('labelEmpf');
+            if (!field) return;
+
+            field.innerHTML = addresses[type] || '';
+            Object.entries(addressButtons).forEach(([key, button]) => {
+                const active = key === type;
+                button.style.background = active ? '#1976d2' : '';
+                button.style.color = active ? '#fff' : '';
+                button.style.fontWeight = active ? 'bold' : '';
+            });
+        }
+
+        addressButtons.delivery.onclick=()=>selectAddress('delivery');
+        addressButtons.sender.onclick=()=>selectAddress('sender');
+        addressButtons.recipient.onclick=()=>selectAddress('recipient');
+        selectAddress('delivery');
     }
 
     // ================================================================
-    // [9] Schriftzug „Sendungssuche“ anklickbar
+    // [10] Schriftzug „Sendungssuche“ anklickbar
     // ================================================================
     function hook() {
         const h = [...document.querySelectorAll('h1,h2,h3,h4')]
@@ -283,7 +356,7 @@ body { margin:0; }
     }
 
     // ================================================================
-    // [10] Klick → Daten sammeln + Overlay
+    // [11] Klick → Daten sammeln + Overlay
     // ================================================================
     function handleClick() {
         const psn = getParcelNumber();
@@ -292,14 +365,23 @@ body { margin:0; }
         const svc = getServiceCode().replace(/\D/g,'');
         const date = printDate();
 
-        const emp = address('Zustelladresse',['Auftraggeber']);
-        const abs = address('Auftraggeber',['Paketscheinnummer']);
+        const delivery = address('Zustelladresse',['Auftraggeber']);
+        const sender = address('Auftraggeber',['Empfänger']);
+        const recipient = address(
+            'Empfänger',
+            ['Details ausblenden','Details einblenden','Paketscheinnummer'],
+            'Auftraggeber',
+            'Paketscheinnummer'
+        );
 
         const human = '00' + (plz||'') + psn + (svc||'') + '276';
 
         const data = {
-            emp: emp,
-            abs: abs,
+            emp: delivery,
+            abs: sender,
+            delivery: delivery,
+            sender: sender,
+            recipient: recipient,
             date: date,
             qr: asgQrUrl(),
             bc: barcodeUrl(human),
@@ -310,7 +392,7 @@ body { margin:0; }
     }
 
     // ================================================================
-    // [11] Init
+    // [12] Init
     // ================================================================
     function init() {
         hook();
