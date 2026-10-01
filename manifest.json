@@ -325,13 +325,14 @@
     {
       "id": "tool-zerberus",
       "name": "Zerberus → DPD360",
-      "version": "1.3c",
+      "version": "1.3e",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Zerberus.user.js",
       "match": [
         "https://zerberus-dpd-02.csf.blujaysolutions.net/*"
       ],
       "grants": [
-        "GM_xmlhttpRequest"
+        "GM_xmlhttpRequest",
+        "GM_openInTab"
       ],
       "description": "Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an. Eimalige Anmeldung (Tag) in dpd360 erforderlich"
     }
