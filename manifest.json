@@ -70,7 +70,7 @@
     {
       "id": "tool-depotportal-label",
       "name": "Depotportal – Paketschein",
-      "version": "1.08",
+      "version": "1.12",
       "url": "https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-depotportal-label.user.js",
       "match": [
         "https://depotportal.dpd.com/*",
@@ -79,7 +79,7 @@
       "grants": [
         "none"
       ],
-      "description": "Paketschein mit Empfänger/Absender, 1/1, festem QR zur Abstell-Okay-Seite, Barcode und Drucken / Zwischenablage / Abbrechen"
+      "description": "Paketschein mit Empfänger/Absender, Barcode, Drucken, Zwischenablage, Google Maps und Google-Suche"
     },
     {
       "id": "tool-dispatcher-abholer",
