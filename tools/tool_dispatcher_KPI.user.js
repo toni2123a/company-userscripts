@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         DPD Dispatcher – KPI Monitor (Depot flexibel)
 // @namespace    bodo.dpd.custom
-// @version      2.2.2
+// @version      2.3.5
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool_dispatcher_KPI.user.js
-// @description  Dispatcher KPI Monitor
+// @description  Dispatcher KPI Monitor mit eigener Datumsauswahl und direktem API-Abruf ohne Reiterwechsel.
 // @match        https://dispatcher2-de.geopost.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @connect      dispatcher2-de.geopost.com
@@ -23,6 +23,8 @@ const RENDER_DEBOUNCE = 300;
 
 const DEPOT_LS_KEY = 'fvkpi-depot';
 const DEFAULT_DEPOT = '195';
+const OVERVIEW_BASE = '/dispatcher/api/vehicle-overview';
+const OVERVIEW_PAGE_SIZE = 250;
 
 const padLeft = (s, len, ch='0') => { s=String(s||''); return s.length>=len ? s : (ch.repeat(len-s.length)+s); };
 
@@ -63,6 +65,15 @@ const norm = s => String(s||'').replace(/\s+/g,' ').trim();
 const pad2 = n => String(n).padStart(2,'0');
 const todayDE = () => new Date().toLocaleDateString('de-DE');
 const timeHM = () => { const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const isoToday = () => { const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
+function selectedDate(){
+  const value=String(document.getElementById(NS+'dateInput')?.value||isoToday());
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)?value:isoToday();
+}
+function selectedDateDE(){
+  const m=selectedDate().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?`${m[3]}.${m[2]}.${m[1]}`:todayDE();
+}
 
 const fmtInt=v=>v==null?'—':String(Math.round(v||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 const fmtDec1=v=>Number.isFinite(v)?String(v.toFixed(1)).replace('.',','):'—';
@@ -188,11 +199,16 @@ function mountUI(){
     <div class="${NS}hdr">
       <div>
         KPI Monitor – Systempartner
-        <span class="${NS}mini">[Stand: ${todayDE()} ${timeHM()}]</span>
+        <span class="${NS}mini">[Datum: ${selectedDateDE()} · Stand: ${todayDE()} ${timeHM()}]</span>
         <span class="${NS}mini" style="margin-left:10px;opacity:.85">Scan: <b id="${NS}scanHost">${esc(getScanHost())}</b></span>
       </div>
 
       <div class="${NS}pill" style="justify-content:flex-end">
+        <label class="${NS}mini" style="display:inline-flex;gap:6px;align-items:center">
+          Datum:
+          <input id="${NS}dateInput" type="date" value="${selectedDate()}"
+                 style="width:135px;padding:6px 8px;border:1px solid rgba(0,0,0,.2);border-radius:8px;font:600 12px system-ui">
+        </label>
         <label class="${NS}mini" style="display:inline-flex;gap:6px;align-items:center">
           Depot:
           <input id="${NS}depotInput" type="text"
@@ -209,11 +225,22 @@ function mountUI(){
     </div>
     <div id="${NS}content"></div>
     <div class="${NS}note" id="${NS}note">
-      Daten: Fahrzeugübersicht + pickup-delivery (Mengen/PLZ) + scanserver (Gewicht/Tour).
+      Datum: ${selectedDateDE()} · Gewicht heute vom Scanserver, an anderen Tagen ausschließlich aus dem Dispatcher.
     </div>
   `;
   document.body.appendChild(PANEL);
   CONTENT=PANEL.querySelector('#'+NS+'content');
+  const dateInput=PANEL.querySelector('#'+NS+'dateInput');
+  if(dateInput){
+    dateInput.value=selectedDate();
+    dateInput.addEventListener('change',async()=>{
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(dateInput.value)) dateInput.value=isoToday();
+      AGG_CACHE=null; PD_CACHE=null; OVERVIEW_CACHE=null; WEIGHT_CACHE=null;
+      const note=PANEL.querySelector('#'+NS+'note');
+      if(note) note.textContent=`Datum: ${selectedDateDE()} · Gewicht heute vom Scanserver, an anderen Tagen ausschließlich aus dem Dispatcher.`;
+      await render(true);
+    });
+  }
 
   PANEL.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
@@ -379,7 +406,7 @@ function modalCreate(html){
 
   const box=ov.querySelector('.'+NS+'modal-box');
   ov.addEventListener('mousedown', (e)=>{
-    if(!box.contains(e.target)) ov.remove();
+    if(!box.contains(e.target) && ov.dataset.busy!=='1') ov.remove();
   }, {passive:true});
 
   return ov;
@@ -434,6 +461,7 @@ function findColumnsOverviewDatagrid(){
 
 function parseIntSafe(s){
   if(s==null) return null;
+  if(typeof s==='number') return Number.isFinite(s)?Math.round(s):null;
   const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim();
   if(!t) return null;
   const v=Math.round(parseFloat(t));
@@ -441,6 +469,7 @@ function parseIntSafe(s){
 }
 function parsePctSafe(s){
   if(s==null) return null;
+  if(typeof s==='number') return Number.isFinite(s)?s:null;
   const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim();
   if(!t) return null;
   const v=parseFloat(t);
@@ -495,11 +524,83 @@ function readOverviewAll(){
   return {ok:false, rows:[]};
 }
 
+let OVERVIEW_CACHE=null; // {key,ts,rows}
+const OVERVIEW_CACHE_TTL=45_000;
+
+function dispatcherHeaders(){
+  const headers={'Accept':'application/json, text/plain, */*'};
+  if(AUTH_BEARER) headers.Authorization=AUTH_BEARER;
+  if(!headers.Authorization){
+    const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+    if(m) headers.Authorization='Bearer '+decodeURIComponent(m[1]);
+  }
+  return headers;
+}
+
+async function loadOverviewAllPages(force=false){
+  const key=selectedDate();
+  if(!force && OVERVIEW_CACHE?.key===key && Date.now()-OVERVIEW_CACHE.ts<OVERVIEW_CACHE_TTL){
+    return OVERVIEW_CACHE.rows;
+  }
+
+  const rows=[];
+  for(let page=1;page<=300;page++){
+    const u=new URL(location.origin+OVERVIEW_BASE);
+    u.searchParams.set('page',String(page));
+    u.searchParams.set('pageSize',String(OVERVIEW_PAGE_SIZE));
+    u.searchParams.set('sort','');
+    u.searchParams.set('date',key);
+    u.searchParams.set('_ts',String(Date.now()+page));
+    const res=await fetch(u.toString(),{method:'GET',headers:dispatcherHeaders(),credentials:'include',cache:'no-store'});
+    if(!res.ok) throw new Error(`Fahrzeugübersicht HTTP ${res.status}`);
+    const json=await res.json();
+    const arr=Array.isArray(json?.results)?json.results:Array.isArray(json)?json:[];
+    if(!arr.length) break;
+    for(const r of arr){
+      const partner=norm(r?.subcontractorName||r?.subcontractor_name||r?.systemPartner||r?.systempartner||'Ohne Zuordnung');
+      const tour=norm(r?.tour||r?.round||r?.route||'');
+      if(!tour) continue;
+      rows.push({
+        partner,tour,
+        tourstart:norm(r?.departureTime||r?.startDelivery||''),
+        tourende:norm(r?.arrivalTime||r?.stopDelivery||''),
+        zusteller:norm(r?.courierName||r?.courier_name||r?.driverName||''),
+        stopps:parseIntSafe(r?.deliveryStopsTotal),
+        offen:parseIntSafe(r?.openDeliveryStops),
+        lieferquote:parsePctSafe(r?.deliveryReadiness),
+        gewichtDispatcher:parsePctSafe(r?.totalWeightKilograms??r?.weightKilograms),
+        pickupStopsTotal:parseIntSafe(r?.pickupStopsTotal),
+        estimatedPickupParcels:parseIntSafe(r?.estimatedPickupParcels),
+        pickupObstacles:parseIntSafe(r?.pickupObstacles),
+        pickupReadiness:parsePctSafe(r?.pickupReadiness),
+        notAcceptedPickups:parseIntSafe(r?.notAcceptedPickups),
+        timeCriticalPickups:parseIntSafe(r?.timeCriticalPickups),
+        pickupWeight:parsePctSafe(r?.pickupWeightKilogramsSum),
+        deliveredStops:parseIntSafe(r?.deliveredStops),
+        deliveryObstacles:parseIntSafe(r?.deliveryObstacles),
+        inEtaAllPercent:parsePctSafe(r?.inEtaAllPercent),
+        etaDifference:norm(r?.lastStopTimeShipmentEtaDiff||''),
+        status:norm(r?.status||''),
+        lastConnection:norm(r?.lastConnection||''),
+        watchlistedPickups:parseIntSafe(r?.watchlistedPickups)
+      });
+    }
+    if(arr.length<OVERVIEW_PAGE_SIZE) break;
+  }
+  OVERVIEW_CACHE={key,ts:Date.now(),rows};
+  return rows;
+}
+
 /* ====== BLOCK 05/11 – pickup-delivery: Token Capture (fetch+XHR) + Daten laden ====== */
 
 let AUTH_BEARER = '';
 let PD_CACHE = null; // {ts, items[]}
 const PD_CACHE_TTL = 45_000;
+
+try{
+  const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+  if(m) AUTH_BEARER='Bearer '+decodeURIComponent(m[1]);
+}catch{}
 
 function storeAuthFromHeaders(headers){
   try{
@@ -519,7 +620,7 @@ function storeAuthFromHeaders(headers){
   window.__fvkpi_fetchHooked=true;
   const orig = window.fetch;
   window.fetch = function(input, init){
-    try{ storeAuthFromHeaders(init?.headers); }catch{}
+    try{ storeAuthFromHeaders(init?.headers || input?.headers); }catch{}
     return orig.apply(this, arguments);
   };
 })();
@@ -540,8 +641,7 @@ function storeAuthFromHeaders(headers){
 })();
 
 function buildPDUrl(){
-  const d=new Date();
-  const ds=`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+  const ds=selectedDate();
   const u=new URL(location.origin + PICKUP_DELIVERY_BASE);
   u.searchParams.set('page','1');
   u.searchParams.set('pageSize','500');
@@ -551,9 +651,10 @@ function buildPDUrl(){
   return u.toString();
 }
 
-async function loadPickupDeliveryAllPages(){
+async function loadPickupDeliveryAllPages(force=false){
   const now=Date.now();
-  if(PD_CACHE && (now-PD_CACHE.ts)<PD_CACHE_TTL) return PD_CACHE.items;
+  const key=selectedDate();
+  if(!force && PD_CACHE?.key===key && (now-PD_CACHE.ts)<PD_CACHE_TTL) return PD_CACHE.items;
 
   const items=[];
   let page=1, totalCount=null;
@@ -562,13 +663,11 @@ async function loadPickupDeliveryAllPages(){
     const u=new URL(buildPDUrl());
     u.searchParams.set('page', String(page));
 
-    const headers={};
-    if(AUTH_BEARER) headers['Authorization']=AUTH_BEARER;
+    const headers=dispatcherHeaders();
 
     const r=await fetch(u.toString(), { method:'GET', headers, credentials:'include' });
     if(!r.ok){
-      toast('pickup-delivery nicht lesbar (Token fehlt). Einmal irgendeinen Dispatcher-Tab öffnen und dann KPI erneut.', false);
-      break;
+      throw new Error(`pickup-delivery HTTP ${r.status}`);
     }
     const j=await r.json().catch(()=>null);
     if(!j) break;
@@ -584,7 +683,7 @@ async function loadPickupDeliveryAllPages(){
     await sleep(40);
   }
 
-  PD_CACHE={ts:Date.now(), items};
+  PD_CACHE={key,ts:Date.now(), items};
   return items;
 }
 
@@ -619,7 +718,7 @@ function classifyItem(it){
 }
 
 function parcelsCount(it){
-  const pick = [it?.realParcels,it?.estimatedParcels,it?.completeParcels,it?.parcels,it?.parcelCount]
+  const pick = [it?.realParcels,it?.estimatedParcels,it?.completedParcels,it?.completeParcels,it?.parcels,it?.parcelCount]
     .find(x=>typeof x==='number' && Number.isFinite(x));
   return (typeof pick==='number' && Number.isFinite(pick)) ? pick : 0;
 }
@@ -648,15 +747,25 @@ function parseWeightsFromHtml(html){
     if(tds.length < 2) continue;
     const tour = tds[0];
     const last = tds[tds.length-1];
-    const kg = parseIntSafe(last);
+    const kg = parsePctSafe(last);
     if(tour && kg != null) map.set(String(tour), kg);
   }
   return map;
 }
 
-function loadWeights(){
+function loadWeights(overviewRows=[],force=false){
+  const reportDate=selectedDate();
+  if(reportDate!==isoToday()){
+    const map=new Map();
+    for(const row of overviewRows||[]){
+      if(Number.isFinite(row?.gewichtDispatcher)) map.set(String(row.tour),row.gewichtDispatcher);
+    }
+    return Promise.resolve(map);
+  }
+
   const now=Date.now();
-  if(WEIGHT_CACHE && (now-WEIGHT_CACHE.ts)<WEIGHT_TTL) return Promise.resolve(WEIGHT_CACHE.map);
+  const cacheKey=`${reportDate}:${getScanHost()}`;
+  if(!force && WEIGHT_CACHE?.key===cacheKey && (now-WEIGHT_CACHE.ts)<WEIGHT_TTL) return Promise.resolve(WEIGHT_CACHE.map);
 
   const urls = buildWeightUrls();
   const host = getScanHost();
@@ -691,7 +800,7 @@ function loadWeights(){
             if(map.size === 0){
               toast(`Gewicht: ${host} erreichbar, aber keine Werte gefunden.`, false);
             }
-            WEIGHT_CACHE = { ts: Date.now(), map };
+            WEIGHT_CACHE = { key:cacheKey, ts: Date.now(), map };
             resolve(map);
           }catch(e){
             console.error('[fvkpi] weight parse', e);
@@ -747,10 +856,12 @@ function applyPickupDeliveryToMap(P, pdItems){
   }
 
   for(const it of (pdItems||[])){
-    const tour = norm(it?.tour||'');
+    const tour = norm(it?.tour||it?.round||'');
     if(!tour) continue;
 
-    const list=idx.get(String(tour));
+    const itemPartner=norm(it?.subcontractorName||it?.subcontractor_name||it?.systemPartner||'');
+    const candidates=idx.get(String(tour));
+    const list=itemPartner?(candidates||[]).filter(obj=>norm(obj.partner)===itemPartner):candidates;
     if(!list || !list.length) continue;
 
     const postal = plz5(it?.postalCode || it?.countryPostalCode || it?.countryPostal || it?.dpdPlz || it?.pcode || '');
@@ -807,6 +918,7 @@ function summarizePartner(P){
     plzSet:new Set(),
     lieferquoteAvg:null,
     gewichtSum:0,
+    gewichtCount:0,
     gewichtAvg:null
   };
 
@@ -834,8 +946,10 @@ function summarizePartner(P){
     const lqArr=toursArr.map(x=>x.lieferquote).filter(Number.isFinite);
     const lqAvg=lqArr.length ? (lqArr.reduce((a,b)=>a+b,0)/lqArr.length) : null;
 
-    const gewichtSum=toursArr.reduce((a,x)=>a+(Number.isFinite(x.gewichtKg)?x.gewichtKg:0),0);
-    const gewichtAvg=tourCount ? (gewichtSum/tourCount) : null;
+    const gewichtValues=toursArr.map(x=>x.gewichtKg).filter(Number.isFinite);
+    const gewichtSum=gewichtValues.reduce((a,b)=>a+b,0);
+    const gewichtCount=gewichtValues.length;
+    const gewichtAvg=gewichtCount ? (gewichtSum/gewichtCount) : null;
 
     per.push({
       partner,
@@ -848,6 +962,7 @@ function summarizePartner(P){
       plzCount: plzSet.size,
       lieferquoteAvg:lqAvg,
       gewichtSum,
+      gewichtCount,
       gewichtAvg
     });
 
@@ -859,6 +974,7 @@ function summarizePartner(P){
     totals.abholstopps += abholstopps;
     totals.geplAbholpakete += geplAbholpakete;
     totals.gewichtSum += gewichtSum;
+    totals.gewichtCount += gewichtCount;
     for(const pz of plzSet) totals.plzSet.add(pz);
   }
 
@@ -872,7 +988,7 @@ function summarizePartner(P){
   totals.lieferquoteAvg = lqAll.length ? (lqAll.reduce((a,b)=>a+b,0)/lqAll.length) : null;
 
   totals.plzCount = totals.plzSet.size;
-  totals.gewichtAvg = totals.tours ? (totals.gewichtSum / totals.tours) : null;
+  totals.gewichtAvg = totals.gewichtCount ? (totals.gewichtSum / totals.gewichtCount) : null;
 
   return {per, totals};
 }
@@ -942,7 +1058,7 @@ function buildPartnerTableHtmlUI(per, totals){
 
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayDE()} ${timeHM()}</div>
+    <div style="margin:0 0 6px 0;color:#334155">Datum: ${selectedDateDE()} · Stand: ${todayDE()} ${timeHM()}</div>
     ${totalTop}
     <table class="${NS}tbl" data-kind="partner" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:13px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
       ${head}<tbody>${body}</tbody>
@@ -1025,7 +1141,7 @@ function buildPartnerTableHtmlCOPY(per, totals){
 
   return `
     <div style="${C.wrap}">
-      <div style="${C.stand}">Stand: ${todayDE()} ${timeHM()}</div>
+      <div style="${C.stand}">Datum: ${selectedDateDE()} · Stand: ${todayDE()} ${timeHM()}</div>
       ${totalTop}
       <table cellpadding="0" cellspacing="0" style="${C.table}">
         ${head}<tbody>${body}</tbody>
@@ -1161,7 +1277,7 @@ function buildToursTableHtmlCOPY(toursArr, footerSum, onlyRowObj=null, showPartn
 
   return `
     <div style="${C.wrap}">
-      <div style="${C.stand}">Stand: ${todayDE()} ${timeHM()}</div>
+      <div style="${C.stand}">Datum: ${selectedDateDE()} · Stand: ${todayDE()} ${timeHM()}</div>
       ${totalTop}
       <table cellpadding="0" cellspacing="0" style="${C.table}">
         ${head}<tbody>${body}</tbody>
@@ -1183,6 +1299,205 @@ async function copyHtmlToClipboard(html){
     }
     return true;
   }catch(e){ console.error('[fvkpi] copyHtmlToClipboard', e); return false; }
+}
+
+/* ====== Mailmaske – gleicher Maildienst wie Partner Report ====== */
+function readPartnerMailSettings(){
+  return new Promise(resolve=>{
+    let finished=false;
+    const finish=value=>{ if(!finished){ finished=true; clearTimeout(timer); resolve(value||{}); } };
+    const timer=setTimeout(()=>finish({}), 2500);
+    try{
+      const request=indexedDB.open('fvpr_db');
+      // Die vorhandene Partner-Datenbank nur lesen, keine neue anlegen.
+      request.onupgradeneeded=()=>{ request.transaction.abort(); finish({}); };
+      request.onerror=()=>finish({});
+      request.onblocked=()=>finish({});
+      request.onsuccess=()=>{
+        const db=request.result;
+        if(finished || !db.objectStoreNames.contains('settings')){ db.close(); finish({}); return; }
+        const tx=db.transaction('settings','readonly');
+        const get=tx.objectStore('settings').get('global');
+        get.onsuccess=()=>finish(get.result);
+        get.onerror=()=>finish({});
+        tx.oncomplete=tx.onabort=()=>db.close();
+      };
+    }catch{ finish({}); }
+  });
+}
+
+function cleanMailSignature(html){
+  const doc=new DOMParser().parseFromString(String(html||''), 'text/html');
+  doc.querySelectorAll('script,iframe,object,embed,form,input,button,link,meta,style,base').forEach(el=>el.remove());
+  doc.body.querySelectorAll('*').forEach(el=>{
+    Array.from(el.attributes).forEach(attr=>{
+      if(/^on/i.test(attr.name) || /^(srcdoc|contenteditable)$/i.test(attr.name) ||
+         (/^(href|src|xlink:href)$/i.test(attr.name) && /^\s*(javascript|vbscript|file):/i.test(attr.value))){
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  return doc.body.innerHTML;
+}
+
+function kpiMailRecipients(value, required=true){
+  const addresses=String(value||'').split(/[,;\s]+/).filter(Boolean);
+  if((required && !addresses.length) || addresses.some(a=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))){
+    throw new Error('Bitte eine gültige Empfängeradresse eintragen. Mehrere Adressen mit Semikolon trennen.');
+  }
+  return [...new Map(addresses.map(a=>[a.toLowerCase(),a])).values()].join(',');
+}
+
+function kpiRecipientKey(partner){
+  return NS+'mail-recipient:'+String(partner||'').trim().toLocaleLowerCase('de-DE');
+}
+function readKpiRecipients(partner){
+  try{
+    const value=JSON.parse(localStorage.getItem(kpiRecipientKey(partner))||'{}');
+    return {to:String(value.to||''), cc:String(value.cc||'')};
+  }catch{ return {to:'',cc:''}; }
+}
+function saveKpiRecipients(partner,to,cc){
+  try{ localStorage.setItem(kpiRecipientKey(partner),JSON.stringify({to,cc})); }catch{}
+}
+
+function sendKpiMail(settings, message){
+  const url=String(settings.httpGateway||'http://10.14.7.169/mail.php').trim();
+  const key=String(settings.apiKey||'fvpr-SECRET-123').trim();
+  if(typeof GM_xmlhttpRequest!=='function' || !/^https?:\/\//i.test(url)){
+    return Promise.reject(new Error('Maildienst nicht verfügbar. Bitte das Skript mit Tampermonkey starten.'));
+  }
+  return new Promise((resolve,reject)=>{
+    const uncertain=()=>reject(Object.assign(new Error('Versandstatus unklar. Bitte den Versand prüfen, bevor du diese Mail erneut sendest.'), {uncertain:true}));
+    GM_xmlhttpRequest({
+      method:'POST', url, headers:{'Content-Type':'application/json','X-Api-Key':key},
+      data:JSON.stringify(message), timeout:10000,
+      onload:r=>{
+        let result=null; try{ result=JSON.parse(r.responseText||''); }catch{}
+        if(r.status>=200 && r.status<300 && result?.ok===true){ resolve(); return; }
+        if(r.status>=400 && r.status<500){ reject(new Error('Maildienst hat den Versand abgelehnt (HTTP '+r.status+').')); return; }
+        uncertain();
+      },
+      onerror:uncertain, ontimeout:uncertain, onabort:uncertain
+    });
+  });
+}
+
+async function openKpiMail(partner, tableHtml){
+  const settings=await readPartnerMailSettings();
+  const signatureKey=NS+'mail-signature';
+  let savedSignature=null;
+  try{ savedSignature=localStorage.getItem(signatureKey); }catch{}
+  const signature=cleanMailSignature(savedSignature ?? settings.signature ?? '');
+  const defaultSubject=String(partner||'').replace(/[\r\n]+/g,' ').trim()+' KPI';
+  const remembered=readKpiRecipients(partner);
+  const ov=modalCreate(`
+    <form style="font:13px system-ui">
+      <h3 style="margin:0 0 12px;font-size:16px">Mail – ${esc(defaultSubject)}</h3>
+      <label style="display:block;margin-bottom:10px">An
+        <input name="recipient" type="text" required autocomplete="off" placeholder="Empfängeradresse; weitere Adresse"
+          value="${esc(remembered.to)}" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px">
+      </label>
+      <label style="display:block;margin-bottom:10px">CC <span style="color:#64748b">(optional)</span>
+        <input name="cc" type="text" autocomplete="off" placeholder="CC-Adresse; weitere Adresse"
+          value="${esc(remembered.cc)}" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px">
+      </label>
+      <label style="display:block;margin-bottom:10px">Betreff
+        <input name="subject" type="text" required value="${esc(defaultSubject)}"
+          style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px">
+      </label>
+      <label style="display:block;margin-bottom:5px">Mailtext <span style="color:#64748b">(optional)</span></label>
+      <div data-message contenteditable="true" role="textbox" aria-label="Mailtext"
+        style="min-height:64px;margin-bottom:10px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff"></div>
+      <div data-highlight-toolbar style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0">
+        <b>Markieren:</b>
+        ${[['#fff200','Gelb'],['#00e5e5','Türkis'],['#9dff57','Grün'],['#ff99cc','Rosa'],['#ff9f43','Orange'],['#d1d5db','Grau']].map(([color,label])=>`<button type="button" class="${NS}btn-sm" data-highlight="${color}" title="${label}" aria-label="${label}" style="width:28px;height:28px;padding:2px;background:${color}"></button>`).join('')}
+        <button type="button" class="${NS}btn-sm" data-highlight="transparent">Markierung entfernen</button>
+      </div>
+      <div class="${NS}wrap" style="max-height:43vh;padding:10px">
+        <div data-mailbody contenteditable="true" role="textbox" aria-label="Mailtabelle zum Markieren">${tableHtml}</div>
+        <div style="margin:16px 0 6px;font-weight:600">Signatur</div>
+        <div data-signature contenteditable="true" role="textbox" aria-label="Signatur" style="min-height:70px;padding:8px;border:1px solid #cbd5e1;border-radius:6px">${signature}</div>
+      </div>
+      <div style="margin-top:8px;color:#475569">Text oder Zahlen in der Tabelle auswählen und eine Farbe anklicken. ${signature ? 'Signatur bei Bedarf direkt bearbeiten.' : 'Hier einmalig deine Signatur aus Outlook einfügen.'} Signatur und Empfänger werden lokal gemerkt.</div>
+      <div data-status role="status" style="margin-top:8px;white-space:pre-wrap"></div>
+      <div class="${NS}modal-actions">
+        <button class="${NS}btn-sm" type="submit">Senden</button>
+        <button class="${NS}btn-sm" type="button" data-close>Abbrechen</button>
+      </div>
+    </form>`);
+  const form=ov.querySelector('form');
+  const recipient=form.elements.namedItem('recipient');
+  const ccInput=form.elements.namedItem('cc');
+  const subjectInput=form.elements.namedItem('subject');
+  const messageEditor=ov.querySelector('[data-message]');
+  const mailbody=ov.querySelector('[data-mailbody]');
+  const editor=ov.querySelector('[data-signature]');
+  const status=ov.querySelector('[data-status]');
+  const send=ov.querySelector('[type="submit"]');
+  const close=ov.querySelector('[data-close]');
+  close.addEventListener('click',()=>{ if(ov.dataset.busy!=='1') ov.remove(); });
+  let markedRange=null;
+  const rememberMarkedRange=()=>{
+    const selection=window.getSelection();
+    if(selection?.rangeCount){
+      const range=selection.getRangeAt(0);
+      if(!range.collapsed && mailbody.contains(range.commonAncestorContainer)) markedRange=range.cloneRange();
+    }
+  };
+  mailbody.addEventListener('mouseup',rememberMarkedRange);
+  mailbody.addEventListener('keyup',rememberMarkedRange);
+  ov.querySelectorAll('[data-highlight]').forEach(button=>{
+    button.addEventListener('mousedown',e=>e.preventDefault());
+    button.addEventListener('click',()=>{
+      if(!markedRange){ status.style.color='#b91c1c'; status.textContent='Bitte zuerst Text oder Zahlen in der Tabelle auswählen.'; return; }
+      const selection=window.getSelection();
+      selection.removeAllRanges(); selection.addRange(markedRange);
+      document.execCommand('styleWithCSS',false,true);
+      document.execCommand('hiliteColor',false,button.dataset.highlight);
+      rememberMarkedRange();
+      status.textContent='';
+    });
+  });
+  let sending=false, completed=false, unknown=false;
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    if(sending || completed || unknown) return;
+    status.style.color='#b91c1c';
+    let to,cc;
+    try{ to=kpiMailRecipients(recipient.value); cc=kpiMailRecipients(ccInput.value,false); }
+    catch(err){ status.textContent=err.message; return; }
+    const subject=String(subjectInput.value||'').replace(/[\r\n]+/g,' ').trim();
+    if(!subject){ status.textContent='Bitte einen Betreff eintragen.'; subjectInput.focus(); return; }
+    const signatureHtml=cleanMailSignature(editor.innerHTML);
+    if(!norm(editor.textContent) && !editor.querySelector('img')){
+      status.textContent='Bitte deine Signatur einfügen, damit sie in der Mail enthalten ist.';
+      editor.focus(); return;
+    }
+    try{ localStorage.setItem(signatureKey,signatureHtml); }catch{}
+    saveKpiRecipients(partner,to,cc);
+    const messageHtml=cleanMailSignature(messageEditor.innerHTML);
+    const mailHtml=cleanMailSignature(mailbody.innerHTML);
+    sending=true; ov.dataset.busy='1'; send.disabled=true; close.disabled=true;
+    recipient.disabled=true; ccInput.disabled=true; subjectInput.disabled=true;
+    messageEditor.contentEditable='false'; mailbody.contentEditable='false'; editor.contentEditable='false';
+    status.style.color='#475569'; status.textContent='Mail wird gesendet…';
+    try{
+      await sendKpiMail(settings, {subject, to, cc, html:(messageHtml?messageHtml+'<br><br>':'')+mailHtml+'<br><div>'+signatureHtml+'</div>'});
+      completed=true;
+      status.style.color='#15803d'; status.textContent='Maildienst hat den Versand bestätigt.';
+      send.textContent='Gesendet'; close.textContent='Schließen';
+    }catch(err){
+      unknown=!!err.uncertain;
+      status.style.color='#b91c1c'; status.textContent=err.message||'Versand fehlgeschlagen.';
+    }finally{
+      sending=false; ov.dataset.busy='0'; close.disabled=false;
+      send.disabled=completed||unknown; recipient.disabled=completed||unknown; ccInput.disabled=completed||unknown; subjectInput.disabled=completed||unknown;
+      messageEditor.contentEditable=String(!completed && !unknown);
+      mailbody.contentEditable=String(!completed && !unknown); editor.contentEditable=String(!completed && !unknown);
+    }
+  });
+  recipient.focus();
 }
 
 /* ====== BLOCK 09/11 – Fahrzeugübersicht aktivieren + Aggregates Master ====== */
@@ -1397,26 +1712,21 @@ async function ensureFahrzeuguebersichtActive() {
   return ok;
 }
 
-async function getAggregates(){
+async function getAggregates(force=false){
   const now=Date.now();
-  if(AGG_CACHE && (now-AGG_CACHE.ts)<AGG_TTL) return AGG_CACHE.data;
+  const cacheKey=selectedDate();
+  if(!force && AGG_CACHE?.key===cacheKey && (now-AGG_CACHE.ts)<AGG_TTL) return AGG_CACHE.data;
   if(AGG_INFLIGHT) return AGG_INFLIGHT;
 
   AGG_INFLIGHT = (async () => {
     let didLoadingOn=false;
     try{
-      loadingOn('Fahrzeugübersicht wird geöffnet…');
+      loadingOn(`KPI-Daten für ${selectedDateDE()} werden geladen…`);
       didLoadingOn=true;
 
-      const tabReady = await ensureFahrzeuguebersichtActive();
-      if(!tabReady){
-        toast('Fahrzeugübersicht konnte nicht geladen werden.', false);
-        return null;
-      }
-
-      const ov=readOverviewAll();
-      if(!ov.ok || !ov.rows.length){
-        toast('Keine Daten in der Fahrzeugübersicht gefunden.', false);
+      const overviewRows=await withTimeout(loadOverviewAllPages(force),30000,'vehicle-overview');
+      if(!overviewRows.length){
+        toast(`Keine Daten für ${selectedDateDE()} gefunden.`, false);
         return null;
       }
 
@@ -1426,8 +1736,8 @@ async function getAggregates(){
       loadingOn('Daten werden geladen…');
 
       const [pdRes, weightRes] = await Promise.allSettled([
-        withTimeout(loadPickupDeliveryAllPages(), 30000, 'pickup-delivery'),
-        withTimeout(loadWeights(), 30000, 'Gewicht (scanserver)')
+        withTimeout(loadPickupDeliveryAllPages(force), 30000, 'pickup-delivery'),
+        withTimeout(loadWeights(overviewRows,force), 30000, selectedDate()===isoToday()?'Gewicht (scanserver)':'Gewicht (Dispatcher)')
       ]);
 
       let pdItems = [];
@@ -1436,6 +1746,7 @@ async function getAggregates(){
       }else{
         console.error('[fvkpi] PD timeout/error', pdRes.reason);
         toast('pickup-delivery: Timeout/Fehler (Console).', false);
+        return null;
       }
 
       let wMap = new Map();
@@ -1446,14 +1757,37 @@ async function getAggregates(){
         toast('Gewicht: Timeout/Fehler (Console).', false);
       }
 
-      const P = groupByPartnerTour(ov.rows);
+      const activeTourKey=v=>norm(v).replace(/[^\dA-Za-z]/g,'').replace(/^0+(?=\d)/,'').toUpperCase();
+      const activeTours=new Set();
+      const activePartnerTours=new Set();
+      for(const item of pdItems){
+        const tour=activeTourKey(item?.tour||item?.round||'');
+        if(!tour) continue;
+        activeTours.add(tour);
+        const partner=norm(item?.subcontractorName||item?.subcontractor_name||item?.systemPartner||'').toUpperCase();
+        if(partner) activePartnerTours.add(`${partner}|||${tour}`);
+      }
+
+      const activeOverviewRows=overviewRows.filter(row=>{
+        const tour=activeTourKey(row.tour);
+        if(!tour) return false;
+        const composite=`${norm(row.partner).toUpperCase()}|||${tour}`;
+        return activePartnerTours.size ? activePartnerTours.has(composite) : activeTours.has(tour);
+      });
+
+      if(!activeOverviewRows.length){
+        toast(`Keine aktiven Touren für ${selectedDateDE()} gefunden.`,false);
+        return null;
+      }
+
+      const P = groupByPartnerTour(activeOverviewRows);
       if(pdItems.length) applyPickupDeliveryToMap(P, pdItems);
       if(wMap) applyWeightsToMap(P, wMap);
 
       const sum = summarizePartner(P);
       const data = { P, per: sum.per, totals: sum.totals };
 
-      AGG_CACHE={ts:Date.now(), data};
+      AGG_CACHE={key:cacheKey,ts:Date.now(), data};
       return data;
 
     }catch(e){
@@ -1483,7 +1817,7 @@ async function render(force=false){
     CONTENT.innerHTML=`<div class="${NS}empty"><span class="${NS}spinner" aria-hidden="true"></span> <span>Daten werden geladen…</span></div>`;
 
     try{
-      const agg=await getAggregates();
+      const agg=await getAggregates(force);
       if(!agg){
         CONTENT.innerHTML=`<div class="${NS}empty">Keine Daten / Timeout / Fehler. (F12 → Console)</div>`;
         return;
@@ -1541,7 +1875,7 @@ async function copyPartnerRowOnly(partner){
     geplAbholpakete: p.geplAbholpakete,
     plzCount: p.plzCount,
     gewichtSum: p.gewichtSum,
-    gewichtAvg: (p.tourCount ? (p.gewichtSum / p.tourCount) : null),
+    gewichtAvg: p.gewichtAvg,
     lieferquoteAvg: p.lieferquoteAvg
   }];
 
@@ -1557,7 +1891,7 @@ async function copyPartnerRowOnly(partner){
     geplAbholpakete: p.geplAbholpakete,
     plzCount: p.plzCount,
     gewichtSum: p.gewichtSum,
-    gewichtAvg: (p.tourCount ? (p.gewichtSum / p.tourCount) : null),
+    gewichtAvg: p.gewichtAvg,
     lieferquoteAvg: p.lieferquoteAvg
   };
 
@@ -1699,6 +2033,7 @@ async function openPartnerModal(partner){
       </div>
       <div class="${NS}modal-actions">
         <button class="${NS}btn-sm" data-act="copy-table">Tabelle kopieren</button>
+        ${!showPartnerCol ? `<button class="${NS}btn-sm" data-act="send-table">Senden</button>` : ''}
         <button class="${NS}btn-sm" data-act="close">Schließen</button>
       </div>
     `);
@@ -1710,6 +2045,16 @@ async function openPartnerModal(partner){
       const b=e.target.closest('button[data-act]');
       if(b){
         if(b.dataset.act==='close'){ ov.remove(); return; }
+        if(b.dataset.act==='send-table'){
+          if(b.disabled) return;
+          b.disabled=true;
+          try{
+            const html=buildToursTableHtmlCOPY(toursArr, sum, null, showPartnerCol);
+            await openKpiMail(displayPartner, html);
+          }catch(err){ console.error('[fvkpi] mail',err); toast('Mailmaske konnte nicht geöffnet werden.',false); }
+          finally{ b.disabled=false; }
+          return;
+        }
         if(b.dataset.act==='copy-table'){
           const html = buildToursTableHtmlCOPY(toursArr, sum, null, showPartnerCol);
           const ok=await copyHtmlToClipboard(html);
@@ -1747,12 +2092,6 @@ async function openPanel(){
   mountUI();
   const p=document.querySelector(PANEL_ID);
   if(p) p.style.display='';
-
-  try{
-    await ensureFahrzeuguebersichtActive();
-  }catch(e){
-    console.error('[fvkpi] openPanel ensure overview', e);
-  }
 
   await render(true);
 }
@@ -1812,7 +2151,7 @@ document.addEventListener('mousedown', function(e){
   const box = modal?.querySelector('.fvkpi-modal-box');
 
   if (modal && box) {
-    if (!box.contains(e.target)) {
+    if (!box.contains(e.target) && modal.dataset.busy !== '1') {
       modal.remove();
     }
     return;
