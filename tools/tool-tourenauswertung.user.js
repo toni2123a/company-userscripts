@@ -1,13 +1,16 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Tourenauswertung
 // @namespace    bodo.dpd.custom
-// @version      3.1.4
+// @version      3.3.1
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-tourenauswertung.user.js
-// @description  Tourenauswertung mit Datum von/bis, Systempartner/Touren, Fahrername, Stopps/Paketen, automatischen Fällen und Zustellhindernissen inkl. Klick-Details.
+// @description  KPI-/Tourenauswertung mit eigener Datumsauswahl und direktem API-Abruf, ohne Dispatcher-Reiter oder deren Filter zu verändern.
 // @match        https://dispatcher2-de.geopost.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
+// @connect      scanserver-*.ssw.dpdit.de
+// @connect      *
 // ==/UserScript==
 
 (function () {
@@ -21,6 +24,8 @@
   const TOURMAP_CACHE_MS = 10 * 60 * 1000;
   const SUMMARY_CACHE_MS = 60 * 1000;
   const DETAIL_CACHE_MS = 60 * 1000;
+  const DATE_FROM_STORAGE_KEY = NS + 'date-from-v1';
+  const DATE_TO_STORAGE_KEY = NS + 'date-to-v1';
 
   const PAGE_SIZE = 500;
   const HARD_MAX_PAGES = 300;
@@ -31,16 +36,18 @@
     run: () => startModuleOnce()
   };
 
+  const PAGE_WINDOW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
   function registerTourenauswertungModule() {
     try {
-      if (window.TM && typeof window.TM.register === 'function') {
-        window.TM.register(moduleDef);
+      if (PAGE_WINDOW.TM && typeof PAGE_WINDOW.TM.register === 'function') {
+        PAGE_WINDOW.TM.register(moduleDef);
         return true;
       }
 
-      window.__tmQueue = window.__tmQueue || [];
-      if (!window.__tmQueue.some(m => m && m.id === MODULE_ID)) {
-        window.__tmQueue.push(moduleDef);
+      PAGE_WINDOW.__tmQueue = PAGE_WINDOW.__tmQueue || [];
+      if (!PAGE_WINDOW.__tmQueue.some(m => m && m.id === MODULE_ID)) {
+        PAGE_WINDOW.__tmQueue.push(moduleDef);
       }
     } catch (e) {
       console.warn('Tourenauswertung konnte noch nicht registriert werden.', e);
@@ -70,7 +77,8 @@
 
 
   const NEW_DIRECT_COLUMNS_FROM = '2026-05-06';
-  const EXTRA_COLUMNS_STORAGE_KEY = NS + 'extra-detail-columns-v1';
+  const DEFAULT_SELECTED_COLUMNS = [];
+const EXTRA_COLUMNS_STORAGE_KEY = NS + 'extra-detail-columns-v1';
 
   const FIELD_CATALOG = [
     ['id', 'ID', ['id']],
@@ -87,7 +95,7 @@
     ['houseNo', 'Hausnummer', ['houseNo', 'houseno', 'houseNumber']],
     ['city', 'Stadt', ['city']],
     ['country_postal', 'Land und Postleitzahl', ['country', 'postal_code', 'postalCode']],
-    ['predict_timeframe', 'Predict-Zeitfenster', ['timeframe_from_predict', 'timeframe_to_predict']],
+    ['predict_timeframe', 'Predict-Zeitfenster', ['timeframe_from_predict', 'timeframe_to_predict', 'from1', 'to1']],
     ['difference', 'ETA Differenz', ['difference']],
     ['stop', 'Stopp', ['stop']],
     ['order_type', 'Auftragstyp', ['order_type', 'orderType']],
@@ -98,21 +106,21 @@
     ['changed_consignee', 'Geänderter Empfänger', ['changed_consignee', 'changedConsignee']],
     ['name2', 'Name 2', ['name2']],
     ['phone', 'Telefon', ['phone']],
-    ['scanned_planned_parcels', 'Gescannte / Geplante Pakete', ['completed_parcel', 'estimated_parcels', 'parcels']],
+    ['scanned_planned_parcels', 'Gescannte / Geplante Pakete', ['completed_parcel', 'completedParcels', 'realParcels', 'estimated_parcels', 'estimatedParcels', 'parcels']],
     ['time_critical', 'zeitkritisch', ['time_critical', 'timeCritical']],
     ['depot', 'Depot', ['depot']],
-    ['standard_timeframe', 'Standard-Zeitfenster', ['default_time_from', 'default_time_to']],
+    ['standard_timeframe', 'Standard-Zeitfenster', ['default_time_from', 'default_time_to', 'timeFrom1', 'timeTo1']],
     ['new_deliverydate', 'Neues Lieferdatum', ['new_deliverydate', 'newDeliverydate']],
     ['delay', 'Verspätung', ['delay']],
     ['timeframe_type', 'Zeitfenster-Typ', ['timeframe_type', 'timeframeType']],
     ['scan_date', 'Scan-Datum', ['scan_date', 'scanDate']],
-    ['cod_cop', 'COD / COP', ['cash_amount', 'cash_currency']],
+    ['cod_cop', 'COD / COP', ['cash_amount', 'cashAmount', 'cash_currency', 'cashCurrency']],
     ['receipt_id', 'Quittung ID', ['receipt_id', 'receiptId']],
     ['loading_unloading', 'Laden / Entladen', ['loading', 'unloading']],
     ['waiting', 'Warten', ['waiting']],
     ['additional_code', 'Zusatzcode', ['additional_code', 'additionalCode', 'additionalCodes']],
     ['yellow_card', 'PIK-Nummer', ['yellow_card', 'yellowCard']],
-    ['freetext_dc', 'Freetext Dc', ['freetext_dc', 'freetextDc']],
+    ['freetext_dc', 'Freetext Dc', ['freetext_dc', 'freetextDc', 'freeTextDc']],
     ['contact_name', 'Kontaktperson', ['contact_name', 'contactName']],
     ['pudo_id', 'Paketshop ID', ['pudo_id', 'pudoId']],
     ['in_eta', 'in ETA', ['in_eta', 'inEta']],
@@ -120,37 +128,44 @@
     ['tour_area', 'DPD PLZ', ['tour_area', 'tourArea']],
     ['delis_id', 'Delis ID', ['delis_id', 'delisId']],
     ['eta', 'ETA', ['eta']],
-    ['ga_1', 'Zeitfenster 1 Z / A', ['good_acceptance_time_from_1', 'good_acceptance_time_to_1']],
-    ['ga_2', 'Zeitfenster 2 Z / A', ['good_acceptance_time_from_2', 'good_acceptance_time_to_2']],
+    ['ga_1', 'Zeitfenster 1 Z / A', ['good_acceptance_time_from_1', 'good_acceptance_time_to_1', 'timeFrom1', 'timeTo1']],
+    ['ga_2', 'Zeitfenster 2 Z / A', ['good_acceptance_time_from_2', 'good_acceptance_time_to_2', 'timeFrom2', 'timeTo2', 'from2', 'to2']],
     ['extra', 'Präferenz', ['extra']],
     ['service_category', 'Service Kategorie', ['service_category', 'serviceCategory']],
     ['eta_scantime', 'ETA-Scantime', ['eta_scantime', 'etaScantime']],
     ['proposed_tour', 'Ermittelte Tour', ['proposed_tour', 'proposedTour']],
     ['signer', 'Unterzeichner', ['signer']],
     ['note', 'Interne Notiz', ['note']],
-    ['depot_tour_change_counter', 'Tour Änderungen', ['depot_tour_change_counter', 'depotTourChangeCounter']],
+    ['depot_tour_change_counter', 'Tour Änderungen', ['depot_tour_change_counter', 'depotTourChangeCounter', 'tourChanges']],
     ['service_type', 'Service', ['service_type', 'serviceType']],
-    ['real_coordinate_lat', 'Real Coordinate Lat', ['real_coordinate_lat', 'realCoordinateLat']],
-    ['real_coordinate_long', 'Real Coordinate Long', ['real_coordinate_long', 'realCoordinateLong']],
+    ['real_coordinate_lat', 'Real Coordinate Lat', ['real_coordinate_lat', 'realCoordinateLat', 'gpsLat']],
+    ['real_coordinate_long', 'Real Coordinate Long', ['real_coordinate_long', 'realCoordinateLong', 'gpsLong']],
     ['planned_coordinate_lat', 'Planned Coordinate Lat', ['planned_coordinate_lat', 'plannedCoordinateLat']],
     ['planned_coordinate_long', 'Planned Coordinate Long', ['planned_coordinate_long', 'plannedCoordinateLong']],
-    ['insert_user', 'Ersteller', ['insert_user', 'insertUser']],
-    ['modify_date', 'Änderungsdatum', ['modify_date', 'modifyDate']],
-    ['modify_user', 'Verändert durch', ['modify_user', 'modifyUser']],
-    ['as_code', 'AS code', ['as_code', 'asCode']],
+    ['insert_user', 'Ersteller', ['insert_user', 'insertUser', 'insertUserName']],
+    ['insert_date', 'Einfügedatum und -zeit', ['insert_date', 'insertDate', 'insertDateTime']],
+    ['modify_date', 'Änderungsdatum und -zeit', ['modify_date', 'modifyDate', 'modifyDateTime']],
+    ['modify_user', 'Verändert durch', ['modify_user', 'modifyUser', 'modifyUserName']],
+    ['as_code', 'AS code', ['as_code', 'asCode', 'asCodes']],
     ['elements', 'Service Elemente', ['elements']],
-    ['swap', 'Austausch', ['swap']],
-    ['id_check', 'ID Check', ['id_check', 'idCheck']],
-    ['department_delivery', 'Abteilung Zustellung', ['department_delivery', 'departmentDelivery']],
+    ['swap', 'Austausch', ['swap', 'isSwap']],
+    ['id_check', 'ID Check', ['id_check', 'idCheck', 'isIdCheck']],
+    ['department_delivery', 'Abteilung Zustellung', ['department_delivery', 'departmentDelivery', 'departmentDeliveries']],
     ['delivered_time', 'Zustellzeit', ['delivered_time', 'deliveredTime']],
     ['free_comment', 'Freier Kommentar', ['free_comment', 'freeComment']],
-    ['event_id', 'Event ID', ['event_id', 'eventId']],
+    ['event_id', 'Event ID', ['event_id', 'eventId', 'eventIds']],
     ['source_system_id', 'Quellsystem ID', ['source_system_id', 'sourceSystemId']],
     ['complaint_id', 'Beschwerde ID', ['complaint_id', 'complaintId']],
     ['complaint_status', 'Beschwerde Status', ['complaint_status', 'complaintStatus']],
-    ['planned_pallets', 'Anzahl der geplanten Paletten', ['planned_pallets', 'plannedPallets']],
+    ['planned_pallets', 'Anzahl der geplanten Paletten', ['planned_pallets', 'plannedPallets', 'numberOfPallet']],
     ['problem_reason', 'PROBLEM Check Grund', ['problem_reason', 'problemReason']],
     ['problem_comment', 'PROBLEM Check Kommentar', ['problem_comment', 'problemComment']],
+    ['cancel_reason', 'Stornierung - Grund', ['cancel_reason', 'cancelReason']],
+    ['cancel_comment', 'Stornierung - Kommentar', ['cancel_comment', 'cancelComment']],
+    ['parcel_discrepancy', 'Paketabweichung', ['parcel_discrepancy', 'parcelDiscrepancy']],
+    ['watchlist', 'Watchlist', ['watchlist']],
+    ['last_message_answer', 'Letzte Nachrichtenantwort', ['last_message_answer', 'lastMessageAnswer']],
+    ['last_message_creation_time', 'Letzte Nachricht', ['last_message_creation_time', 'lastMessageCreationTime']],
     ['courier_name', 'Zustellername', ['courier_name', 'courierName']],
     ['subcontractor', 'Systempartner', ['subcontractor', 'subcontractor_name', 'subcontractorName', 'systempartner', 'systemPartner']]
   ].map(([key, label, paths]) => ({ key: 'extra_' + key, rawKey: key, label, paths }));
@@ -162,6 +177,7 @@
 
   const state = {
     summaryRows: [],
+    normalizedRows: [],
     standText: '',
     detectedDateParam: '',
     detectedDateValue: '',
@@ -311,11 +327,11 @@
   }
 
   function getDefaultDateFrom() {
-    return state.detectedDateFrom || state.detectedDateValue || toIsoDateLocal(new Date());
+    return parseDateLike(localStorage.getItem(DATE_FROM_STORAGE_KEY)) || toIsoDateLocal(new Date());
   }
 
   function getDefaultDateTo() {
-    return state.detectedDateTo || state.detectedDateValue || toIsoDateLocal(new Date());
+    return parseDateLike(localStorage.getItem(DATE_TO_STORAGE_KEY)) || getDefaultDateFrom();
   }
 
   function getSelectedDateFrom() {
@@ -335,6 +351,23 @@
     if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
       toEl.value = fromEl.value;
     }
+    if (fromEl.value) localStorage.setItem(DATE_FROM_STORAGE_KEY, fromEl.value);
+    if (toEl.value) localStorage.setItem(DATE_TO_STORAGE_KEY, toEl.value);
+  }
+
+  function datesInRange(fromIso, toIso, maxDays = 62) {
+    const out = [];
+    const from = parseDateLike(fromIso);
+    const to = parseDateLike(toIso) || from;
+    if (!from) return out;
+
+    const current = new Date(`${from}T12:00:00`);
+    const end = new Date(`${to}T12:00:00`);
+    while (current <= end && out.length < maxDays) {
+      out.push(toIsoDateLocal(current));
+      current.setDate(current.getDate() + 1);
+    }
+    return out;
   }
 
   function getSummaryCacheKey() {
@@ -632,17 +665,57 @@
 
   function getSelectedExtraColumns() {
     const valid = new Set(FIELD_CATALOG.map(f => f.key));
-    let arr = state.selectedExtraColumns;
-    if (!Array.isArray(arr) || !arr.length) {
-      try { arr = JSON.parse(localStorage.getItem(EXTRA_COLUMNS_STORAGE_KEY) || '[]'); } catch { arr = []; }
-    }
-    return arr.filter(k => valid.has(k));
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(EXTRA_COLUMNS_STORAGE_KEY) || '[]'); } catch { arr = []; }
+    if (!Array.isArray(arr)) arr = [];
+    state.selectedExtraColumns = arr.filter(k => valid.has(k));
+    return state.selectedExtraColumns;
   }
 
   function setSelectedExtraColumns(keys) {
     const valid = new Set(FIELD_CATALOG.map(f => f.key));
     state.selectedExtraColumns = Array.from(new Set((keys || []).filter(k => valid.has(k))));
     try { localStorage.setItem(EXTRA_COLUMNS_STORAGE_KEY, JSON.stringify(state.selectedExtraColumns)); } catch {}
+  }
+
+
+  function extraColumnsForMain() {
+    return FIELD_CATALOG
+      .filter(f => getSelectedExtraColumns().includes(f.key))
+      .map(f => ({ key: f.key, rawKey: f.rawKey, label: f.label }));
+  }
+
+  function firstUsefulExtraValue(rows, col) {
+    const values = [];
+    for (const r of rows || []) {
+      let v = '';
+      if (col.key === 'extra_subcontractor') v = r.__partner || '';
+      else if (col.key === 'extra_tour') v = r.__tour || '';
+      else if (col.key === 'extra_courier_name') v = r.__driver || '';
+      else if (col.key === 'extra_service_code') v = r.__serviceCode || '';
+      else if (col.key === 'extra_additional_code') v = r.__additionalCode || '';
+      else if (col.key === 'extra_delivery_status' || col.key === 'extra_pickup_status') v = r.__status || '';
+      else if (col.key === 'extra_scanned_planned_parcels') v = r.__pkgCount || '';
+      else if (col.key === 'extra_name') v = r.__raw?.name || r.__raw?.customer_name || r.__raw?.customerName || '';
+      else if (col.key === 'extra_street') v = r.__raw?.street || r.__raw?.addressLine1 || r.__raw?.address?.street || '';
+      else if (col.key === 'extra_houseNo') v = r.__raw?.houseNo || r.__raw?.houseno || r.__raw?.houseNumber || r.__raw?.address?.houseNumber || '';
+      else if (col.key === 'extra_city') v = r.__raw?.city || r.__raw?.town || r.__raw?.address?.city || '';
+      else if (r.__extraFields && Object.prototype.hasOwnProperty.call(r.__extraFields, col.key)) v = r.__extraFields[col.key];
+
+      v = formatGenericValue(v);
+      if (v && v !== '—') values.push(v);
+    }
+    const unique = Array.from(new Set(values));
+    if (!unique.length) return '—';
+    if (unique.length === 1) return unique[0];
+    return unique.slice(0, 3).join(', ') + (unique.length > 3 ? ', …' : '');
+  }
+
+  function mainExtraValueForGroup(systempartner, tour, col) {
+    let rows = state.normalizedRows || [];
+    if (systempartner) rows = rows.filter(r => r.__partner === systempartner);
+    if (tour) rows = rows.filter(r => String(r.__tour || '—') === String(tour || '—'));
+    return firstUsefulExtraValue(rows, col);
   }
 
   function extraColumnsForDetails() {
@@ -820,6 +893,7 @@
   function parcelListOf(r) {
     const directLists = [
       r?.parcel_number,
+      r?.parcelNumber,
       r?.parcelNumbers,
       r?.parcels,
       r?.parcelNumberList,
@@ -831,7 +905,9 @@
       r?.consignments,
       r?.shipments,
       r?.completed_parcel,
-      r?.removed_parcel_numbers
+      r?.completedParcels,
+      r?.removed_parcel_numbers,
+      r?.removedParcelNumbers
     ];
 
     const out = [];
@@ -878,7 +954,10 @@
 
     const candidates = [
       r?.estimated_parcels,
+      r?.estimatedParcels,
       r?.completed_parcel,
+      r?.completedParcels,
+      r?.realParcels,
       r?.parcelCount,
       r?.parcelsCount,
       r?.numberOfParcels,
@@ -1175,13 +1254,17 @@
       }
     }
 
-    if (lastOkRequest) {
-      try {
+    try {
+      const headers = buildHeaders(lastOkRequest?.headers);
+      const selectedDates = datesInRange(
+        getSelectedDateFrom() || getDefaultDateFrom(),
+        getSelectedDateTo() || getDefaultDateTo()
+      );
+
+      for (const selectedDate of selectedDates) {
         const base = new URL('/dispatcher/api/vehicle-overview', location.origin);
         base.searchParams.set('pageSize', String(PAGE_SIZE));
-        base.searchParams.set('dateFrom', getSelectedDateFrom() || getDefaultDateFrom());
-        base.searchParams.set('dateTo', getSelectedDateTo() || getDefaultDateTo());
-        const headers = buildHeaders(lastOkRequest.headers);
+        base.searchParams.set('date', selectedDate);
 
         for (let p = 1; p <= HARD_MAX_PAGES; p++) {
           const u = new URL(base.toString());
@@ -1206,9 +1289,9 @@
 
           if (!arr.length || arr.length < PAGE_SIZE) break;
         }
-      } catch (e) {
-        console.warn('vehicle-overview konnte nicht geladen werden, nutze Fallback.', e);
       }
+    } catch (e) {
+      console.warn('vehicle-overview konnte nicht geladen werden, nutze direkte Pickup-/Delivery-Zuordnung.', e);
     }
 
     try {
@@ -1333,6 +1416,10 @@
         });
       }
       if (!H.has('Accept')) H.set('Accept', 'application/json, text/plain, */*');
+      if (!H.has('Authorization')) {
+        const m = document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
+        if (m) H.set('Authorization', 'Bearer ' + decodeURIComponent(m[1]));
+      }
     } catch {}
     return H;
   }
@@ -1355,10 +1442,6 @@
   }
 
   function getPickupDeliveryBaseUrl() {
-    if (lastOkRequest?.url) {
-      const u = new URL(lastOkRequest.url.href);
-      return new URL(`${u.origin}/dispatcher/api/pickup-delivery`);
-    }
     return new URL('/dispatcher/api/pickup-delivery', location.origin);
   }
 
@@ -1408,8 +1491,7 @@
   }
 
   async function fetchAllRawRows(onProgress) {
-    if (!lastOkRequest) throw new Error('Bitte zuerst einmal die normale Pickup-/Delivery-Liste laden.');
-    const headers = buildHeaders(lastOkRequest.headers);
+    const headers = buildHeaders(lastOkRequest?.headers);
     const rows = [];
     const seen = new Set();
 
@@ -1638,15 +1720,13 @@
     fromEl.value = fromEl.value || getDefaultDateFrom();
     toEl.value = toEl.value || getDefaultDateTo();
 
-    const title = state.detectedDateParam
-      ? `Erkanntes Datumsfeld: ${state.detectedDateParam}`
-      : 'Kein Datumsfeld sicher erkannt – Bereich wird bestmöglich gesetzt';
+    const title = 'Eigene Datumsauswahl des KPI-Tools; Dispatcher-Reiter und Dispatcher-Filter bleiben unverändert.';
 
     fromEl.title = title;
     toEl.title = title;
 
-    fromEl.disabled = !lastOkRequest;
-    toEl.disabled = !lastOkRequest;
+    fromEl.disabled = false;
+    toEl.disabled = false;
 
     ensureValidDateRange();
   }
@@ -1679,13 +1759,14 @@
           <label class="${NS}label" for="${NS}date-to">Datum bis:</label>
           <input id="${NS}date-to" class="${NS}select" type="date" style="min-width:160px">
           <button class="${NS}btn" data-action="refresh">Aktualisieren</button>
+          <button class="${NS}btn" data-action="kpiView">Wie KPI Monitor</button>
           <button class="${NS}btn" data-action="chooseColumns">Spalten</button>
           <button class="${NS}btn" data-action="copyMain">Tabelle kopieren</button>
         </div>
       </div>
       <div id="${NS}loading" class="${NS}loading">Lade Daten …</div>
       <div class="${NS}body">
-        <div id="${NS}note" class="${NS}empty">Bitte einmal die normale Pickup-/Delivery-Liste laden, damit der API-Request geklont werden kann.</div>
+        <div id="${NS}note" class="${NS}empty">Datum auswählen und auf Aktualisieren klicken. Der geöffnete Dispatcher-Reiter wird nicht verändert.</div>
         <div id="${NS}table-wrap"></div>
       </div>
     `;
@@ -1729,6 +1810,10 @@
           await fullRefresh({ forceReload: true }).catch(console.error);
           return;
         }
+        if (action === 'kpiView') {
+          await openKpiLikeView().catch(console.error);
+          return;
+        }
         if (action === 'copyMain') {
           await copyMainTable().catch(console.error);
           return;
@@ -1767,8 +1852,9 @@
           return;
         }
         if (action === 'resetColumns') {
-          setSelectedExtraColumns([]);
-          hideModal();
+          setSelectedExtraColumns(DEFAULT_SELECTED_COLUMNS);
+          openColumnChooser();
+          renderMainTable();
           return;
         }
       }
@@ -1851,6 +1937,7 @@ function renderMainTable() {
 
   const total = totalsOfSummary(state.summaryRows);
   const totalDriverText = finalizeDriverText(total.driverSet);
+  const mainExtraColumns = extraColumnsForMain();
 
   wrap.innerHTML = `
     <div style="overflow:auto">
@@ -1866,6 +1953,7 @@ function renderMainTable() {
             <th>Nicht bearb. Zustellstopps</th>
             <th>Nicht bearb. Abholstopps</th>
             <th>Zustellhindernisse</th>
+            ${mainExtraColumns.map(c => `<th>${esc(c.label)}</th>`).join('')}
           </tr>
         </thead>
         <tbody>
@@ -1882,6 +1970,7 @@ function renderMainTable() {
               <td><span class="${NS}numlink" data-kind="metric" data-level="partner" data-partner="${esc(r.systempartner)}" data-metric="canceledDeliveryStops">${r.canceledDeliveryStops}</span></td>
               <td><span class="${NS}numlink" data-kind="metric" data-level="partner" data-partner="${esc(r.systempartner)}" data-metric="canceledPickupStops">${r.canceledPickupStops}</span></td>
               <td><span class="${NS}numlink" data-kind="hindranceCodes" data-level="partner" data-partner="${esc(r.systempartner)}">${r.hindranceStops || 0}</span></td>
+              ${mainExtraColumns.map(c => `<td>${esc(mainExtraValueForGroup(r.systempartner, '', c))}</td>`).join('')}
             </tr>
           `).join('')}
         </tbody>
@@ -1898,6 +1987,7 @@ function renderMainTable() {
             <td><span class="${NS}numlink" data-kind="metric" data-level="all" data-metric="canceledDeliveryStops">${total.canceledDeliveryStops}</span></td>
             <td><span class="${NS}numlink" data-kind="metric" data-level="all" data-metric="canceledPickupStops">${total.canceledPickupStops}</span></td>
             <td><span class="${NS}numlink" data-kind="hindranceCodes" data-level="all">${total.hindranceStops || 0}</span></td>
+            ${mainExtraColumns.map(c => `<td>${esc(firstUsefulExtraValue(state.normalizedRows || [], c))}</td>`).join('')}
           </tr>
         </tfoot>
       </table>
@@ -2500,12 +2590,13 @@ async function handleMainTableClick(el) {
 
 
   function openColumnChooser() {
-    const selected = new Set(getSelectedExtraColumns());
+    const currentCols = getSelectedExtraColumns();
+    const selected = new Set(currentCols.length ? currentCols : DEFAULT_SELECTED_COLUMNS);
     const html = `
       <div style="padding:12px;max-height:65vh;overflow:auto">
-        <div style="font:700 13px system-ui;margin-bottom:8px">Zusätzliche Detailspalten auswählen</div>
+        <div style="font:700 13px system-ui;margin-bottom:8px">Zusätzliche Spalten auswählen</div>
         <div style="font:600 12px system-ui;opacity:.75;margin-bottom:10px">
-          Standard bleibt unverändert. Die Auswahl wird nur zusätzlich in den Detailtabellen angezeigt.
+          Standard = Grundansicht ohne Zusatzspalten. Ausgewählte Spalten werden in Hauptübersicht, Tourenübersicht und Detailtabellen ergänzt.
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px 14px">
           ${FIELD_CATALOG.map(f => `
@@ -2527,6 +2618,7 @@ async function handleMainTableClick(el) {
   function saveColumnChooser() {
     const boxes = Array.from(document.querySelectorAll('#' + NS + 'modal input[data-extra-column]'));
     setSelectedExtraColumns(boxes.filter(b => b.checked).map(b => b.dataset.extraColumn));
+    renderMainTable();
     hideModal();
   }
 
@@ -2538,6 +2630,7 @@ async function handleMainTableClick(el) {
     if (b) b.innerHTML = `<div class="${NS}modal-scroll">${html || ''}</div>`;
     state.modal = { type: 'html', title, rows: [], columns: [], totals: null, sortCol: -1, sortDir: 'asc' };
     if (m) m.style.display = 'flex';
+    requestAnimationFrame(() => bindAllSortableTables());
   }
 
   function openModalTable(title, rows, columns, totals) {
@@ -2943,6 +3036,321 @@ async function handleMainTableClick(el) {
     renderModalTable();
   }
 
+
+
+  // ===== Ansicht „Wie KPI Monitor“ =====
+  const KPI_DEPOT_LS_KEY = 'fvkpi-depot';
+  const KPI_DEFAULT_DEPOT = '195';
+  let kpiWeightCache = null;
+
+  function kpiDepotToHost(input) {
+    const v = String(input || '').trim();
+    if (v.includes('.') && !/^\d+$/.test(v)) return v;
+    const digits = v.replace(/\D/g, '');
+    const depot3 = String(digits || KPI_DEFAULT_DEPOT).padStart(3, '0');
+    const d7 = (`10${depot3}`).padStart(7, '0');
+    return `scanserver-d${d7}.ssw.dpdit.de`;
+  }
+
+  function kpiParseNumber(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    const n = Number(String(v).replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function kpiFormatInt(v) {
+    return Number.isFinite(Number(v)) ? Math.round(Number(v)).toLocaleString('de-DE') : '—';
+  }
+
+  function kpiFormatDec(v) {
+    return Number.isFinite(Number(v)) ? Number(v).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—';
+  }
+
+  function kpiFormatPct(v) {
+    return Number.isFinite(Number(v)) ? `${kpiFormatDec(v)} %` : '—';
+  }
+
+  function kpiFormatKg(v) {
+    return Number.isFinite(Number(v)) ? `${kpiFormatDec(v)} kg` : '—';
+  }
+
+  function kpiFormatDuration(mins) {
+    if (!Number.isFinite(mins)) return '—';
+    const m = Math.max(0, Math.round(mins));
+    return `${Math.floor(m / 60)} Std ${String(m % 60).padStart(2, '0')} Min`;
+  }
+
+  function kpiPostalOf(r) {
+    const raw = r?.__raw || {};
+    const txt = raw.postalCode || raw.postal_code || raw.zipCode || raw.zip || raw?.address?.postalCode || raw?.recipient?.postalCode || raw.tour_area || raw.tourArea || '';
+    const m = String(txt).match(/\d{5}/);
+    return m ? m[0] : '';
+  }
+
+  function kpiClassOf(r) {
+    const raw = r?.__raw || {};
+    const text = [
+      raw.priority, raw.priorityCode, raw.time_critical, raw.timeCritical,
+      r.__serviceCode, r.__additionalCode,
+      ...(Array.isArray(raw.serviceCodes) ? raw.serviceCodes : []),
+      ...(Array.isArray(raw.additionalCodes) ? raw.additionalCodes : []),
+      ...(Array.isArray(raw.serviceElements) ? raw.serviceElements : [])
+    ].join(' ').toUpperCase();
+    if (raw.timeCritical === true || raw.time_critical === true || /\bPRIO\b|TIME.?CRITICAL/.test(text)) return 'prio';
+    if (/EXPRESS|\bEXP\b|E12/.test(text)) return 'express';
+    return 'other';
+  }
+
+  function kpiTimeMinutes(r) {
+    const raw = r?.__raw || {};
+    const values = [r.__deliveredAt, r.__pickupAt, raw.delivered_time, raw.deliveredTime, raw.scan_time, raw.scanTime, raw.modify_date, raw.modifyDate];
+    for (const v of values) {
+      if (!v) continue;
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) return d.getHours() * 60 + d.getMinutes();
+      const m = String(v).match(/(\d{1,2}):(\d{2})/);
+      if (m) return Number(m[1]) * 60 + Number(m[2]);
+    }
+    return null;
+  }
+
+  function kpiIsDelivered(r) {
+    const s = normalizeStatusForMatch(r.__statusNorm || r.__status || '');
+    return s.includes('DELIVERED') || s.includes('ZUGESTELLT');
+  }
+
+  function kpiAggregateRows() {
+    const map = new Map();
+    for (const r of state.normalizedRows || []) {
+      const tour = String(r.__tour || '—');
+      const partner = String(r.__partner || 'Ohne Zuordnung');
+      const key = `${partner}|||${tour}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          tour, zusteller: r.__driver || '—', stopps: 0, offen: 0,
+          times: [], prio: 0, express: 0, other: 0, gesamtpakete: 0,
+          abholstopps: 0, geplAbholp: 0, pickupKeys: new Set(), plz: new Set(),
+          gewicht: null, lieferquote: null, sp: partner
+        });
+      }
+      const g = map.get(key);
+      if ((!g.zusteller || g.zusteller === '—') && r.__driver) g.zusteller = r.__driver;
+      const cnt = Math.max(0, Number(r.__pkgCount || 0));
+      const pz = kpiPostalOf(r); if (pz) g.plz.add(pz);
+      const tm = kpiTimeMinutes(r); if (Number.isFinite(tm)) g.times.push(tm);
+
+      if (r.__type === 'PICKUP') {
+        const raw = r.__raw || {};
+        const stopKey = String(raw.stop ?? raw.id ?? `${tour}-${g.pickupKeys.size}`);
+        if (!g.pickupKeys.has(stopKey)) { g.pickupKeys.add(stopKey); g.abholstopps++; }
+        g.geplAbholp += cnt;
+      } else {
+        g.stopps++;
+        if (!kpiIsDelivered(r)) g.offen++;
+        const kind = kpiClassOf(r);
+        g[kind] += cnt;
+        g.gesamtpakete += cnt;
+      }
+    }
+
+    const rows = Array.from(map.values());
+    for (const g of rows) {
+      if (g.times.length >= 2) g.tourzeit = Math.max(...g.times) - Math.min(...g.times);
+      else g.tourzeit = null;
+      g.lieferquote = g.stopps > 0 ? ((g.stopps - g.offen) / g.stopps) * 100 : null;
+      delete g.pickupKeys;
+    }
+    rows.sort((a, b) => collator.compare(a.tour, b.tour) || collator.compare(a.sp, b.sp));
+    return rows;
+  }
+
+  function kpiParseWeights(html) {
+    const doc = new DOMParser().parseFromString(html || '', 'text/html');
+    const map = new Map();
+    for (const tr of doc.querySelectorAll('table tr')) {
+      const cells = Array.from(tr.querySelectorAll('td')).map(td => norm(td.textContent));
+      if (cells.length < 2) continue;
+      const kg = kpiParseNumber(cells[cells.length - 1]);
+      if (cells[0] && kg != null) map.set(String(cells[0]), kg);
+    }
+    return map;
+  }
+
+  async function kpiLoadDispatcherWeights(fromDate, toDate) {
+    const key = `dispatcher:${fromDate}:${toDate}`;
+    if (kpiWeightCache?.key === key && Date.now() - kpiWeightCache.ts < 60 * 1000) {
+      return { map: kpiWeightCache.map, source: 'Dispatcher' };
+    }
+
+    const map = new Map();
+    const headers = buildHeaders(lastOkRequest?.headers);
+    const selectedDates = datesInRange(fromDate, toDate);
+
+    try {
+      for (const selectedDate of selectedDates) {
+        for (let page = 1; page <= HARD_MAX_PAGES; page++) {
+          const url = new URL('/dispatcher/api/vehicle-overview', location.origin);
+          url.searchParams.set('page', String(page));
+          url.searchParams.set('pageSize', String(PAGE_SIZE));
+          url.searchParams.set('date', selectedDate);
+          url.searchParams.set('_ts', String(Date.now() + page));
+
+          const json = await fetchJsonPage(url, headers);
+          const rows = pickArray(json);
+
+          for (const row of rows) {
+            const tour = String(row?.tour ?? '').trim();
+            if (!tour) continue;
+
+            const weight = kpiParseNumber(
+              row?.totalWeightKilograms ??
+              row?.weightKilograms
+            );
+
+            if (weight == null) continue;
+            map.set(tour, (map.get(tour) || 0) + weight);
+          }
+
+          if (!rows.length || rows.length < PAGE_SIZE) break;
+        }
+      }
+    } catch (e) {
+      console.warn('Dispatcher-Gewichte konnten nicht geladen werden.', e);
+    }
+
+    kpiWeightCache = { key, ts: Date.now(), map };
+    return { map, source: 'Dispatcher' };
+  }
+
+  function kpiLoadCurrentScanserverWeights() {
+    const depot = localStorage.getItem(KPI_DEPOT_LS_KEY) || KPI_DEFAULT_DEPOT;
+    const key = `scanserver:${toIsoDateLocal(new Date())}:${depot}`;
+    if (kpiWeightCache?.key === key && Date.now() - kpiWeightCache.ts < 6 * 60 * 60 * 1000) {
+      return Promise.resolve({ map: kpiWeightCache.map, source: 'Scanserver' });
+    }
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      return Promise.resolve({ map: new Map(), source: 'Scanserver' });
+    }
+    const host = kpiDepotToHost(localStorage.getItem(KPI_DEPOT_LS_KEY) || KPI_DEFAULT_DEPOT);
+    const urls = [`https://${host}/cgi-bin/report_weight.cgi`, `http://${host}/cgi-bin/report_weight.cgi`];
+    return new Promise(resolve => {
+      let i = 0;
+      const next = () => {
+        if (i >= urls.length) { resolve({ map: new Map(), source: 'Scanserver' }); return; }
+        GM_xmlhttpRequest({
+          method: 'GET', url: urls[i++], timeout: 20000,
+          onload: res => {
+            if ((res.status || 0) < 200 || (res.status || 0) >= 300) { next(); return; }
+            const map = kpiParseWeights(res.responseText || '');
+            kpiWeightCache = { key, ts: Date.now(), map };
+            resolve({ map, source: 'Scanserver' });
+          },
+          onerror: next, ontimeout: next
+        });
+      };
+      next();
+    });
+  }
+
+  function kpiLoadWeights() {
+    const fromDate = getSelectedDateFrom() || getDefaultDateFrom();
+    const toDate = getSelectedDateTo() || fromDate;
+    const today = toIsoDateLocal(new Date());
+
+    if (fromDate === today && toDate === today) {
+      return kpiLoadCurrentScanserverWeights();
+    }
+
+    return kpiLoadDispatcherWeights(fromDate, toDate);
+  }
+
+  async function openKpiLikeView() {
+    if (!state.normalizedRows?.length) {
+      await fullRefresh({ forceReload: true });
+    }
+    setLoading(true, 'Erstelle Ansicht wie KPI Monitor …');
+    try {
+      const rows = kpiAggregateRows();
+      const weightResult = await kpiLoadWeights();
+      const weights = weightResult.map;
+      rows.forEach(r => { if (weights.has(String(r.tour))) r.gewicht = weights.get(String(r.tour)); });
+
+      const tourCount = rows.length;
+      const validTimes = rows.map(r => r.tourzeit).filter(Number.isFinite);
+      const validWeights = rows.map(r => r.gewicht).filter(Number.isFinite);
+      const sumStopps = rows.reduce((a, r) => a + r.stopps, 0);
+      const sumOffen = rows.reduce((a, r) => a + r.offen, 0);
+      const sumGesamtpakete = rows.reduce((a, r) => a + r.gesamtpakete, 0);
+
+      const sum = {
+        tourCount,
+        zusteller: new Set(rows.map(r => r.zusteller).filter(x => x && x !== '—')).size,
+        avgStopps: tourCount ? sumStopps / tourCount : null,
+        offen: sumOffen,
+        avgTourzeit: validTimes.length ? validTimes.reduce((a, b) => a + b, 0) / validTimes.length : null,
+        prio: rows.reduce((a, r) => a + r.prio, 0),
+        express: rows.reduce((a, r) => a + r.express, 0),
+        other: rows.reduce((a, r) => a + r.other, 0),
+        avgGesamtpakete: tourCount ? sumGesamtpakete / tourCount : null,
+        abholstopps: rows.reduce((a, r) => a + r.abholstopps, 0),
+        geplAbholp: rows.reduce((a, r) => a + r.geplAbholp, 0),
+        plz: new Set(rows.flatMap(r => Array.from(r.plz))).size,
+        avgGewicht: validWeights.length ? validWeights.reduce((a, b) => a + b, 0) / validWeights.length : null,
+        lieferquote: sumStopps ? ((sumStopps - sumOffen) / sumStopps) * 100 : null,
+        sp: new Set(rows.map(r => r.sp).filter(Boolean)).size
+      };
+
+      const colgroup = `<colgroup>
+        <col style="width:90px"><col style="width:180px"><col style="width:85px"><col style="width:75px"><col style="width:120px">
+        <col style="width:70px"><col style="width:80px"><col style="width:75px"><col style="width:115px"><col style="width:110px">
+        <col style="width:115px"><col style="width:190px"><col style="width:105px"><col style="width:110px"><col style="width:110px">
+      </colgroup>`;
+
+      const totalTop = `
+        <table class="${NS}tbl" style="min-width:1570px;table-layout:fixed;margin:0 0 0 0">
+          ${colgroup}
+          <tbody><tr style="background:#e0f2ff;color:#003366;font-weight:700">
+            <td>Gesamt (${kpiFormatInt(sum.tourCount)})</td>
+            <td>${kpiFormatInt(sum.zusteller)}</td>
+            <td>Ø ${kpiFormatDec(sum.avgStopps)}</td>
+            <td>${kpiFormatInt(sum.offen)}</td>
+            <td>Ø ${kpiFormatDuration(sum.avgTourzeit)}</td>
+            <td>${kpiFormatInt(sum.prio)}</td>
+            <td>${kpiFormatInt(sum.express)}</td>
+            <td>${kpiFormatInt(sum.other)}</td>
+            <td>Ø ${kpiFormatDec(sum.avgGesamtpakete)}</td>
+            <td>${kpiFormatInt(sum.abholstopps)}</td>
+            <td>${kpiFormatInt(sum.geplAbholp)}</td>
+            <td>${kpiFormatInt(sum.plz)}</td>
+            <td>Ø ${kpiFormatKg(sum.avgGewicht)}</td>
+            <td>Ø ${kpiFormatPct(sum.lieferquote)}</td>
+            <td>—</td>
+          </tr></tbody>
+        </table>`;
+
+      const html = `
+        <div style="padding:0 0 8px;font:600 12px system-ui;opacity:.75">
+          Zeitraum: ${esc(formatDateDE(getSelectedDateFrom()))} bis ${esc(formatDateDE(getSelectedDateTo()))}. Gewichtsquelle: ${esc(weightResult.source)}. Nicht vorhandene Gewichte bleiben leer.
+        </div>
+        <div style="overflow:auto">
+          ${totalTop}
+          <table class="${NS}tbl" id="${NS}kpi-like-table" style="min-width:1570px;table-layout:fixed">
+            ${colgroup}
+            <thead><tr>
+              <th>Tour</th><th>Zusteller</th><th>Stopps</th><th>Offen</th><th>Tourzeit</th><th>Prio</th><th>Express</th><th>Other</th><th>Gesamtpakete</th><th>Abholstopps</th><th>gepl.Abholp.</th><th>PLZ</th><th>Gewicht</th><th>Lieferquote</th><th>SP</th>
+            </tr></thead>
+            <tbody>${rows.map(r => `<tr>
+              <td>${esc(r.tour)}</td><td class="${NS}driver-cell">${esc(r.zusteller || '—')}</td><td>${kpiFormatInt(r.stopps)}</td><td>${kpiFormatInt(r.offen)}</td><td>${kpiFormatDuration(r.tourzeit)}</td><td>${kpiFormatInt(r.prio)}</td><td>${kpiFormatInt(r.express)}</td><td>${kpiFormatInt(r.other)}</td><td>${kpiFormatInt(r.gesamtpakete)}</td><td>${kpiFormatInt(r.abholstopps)}</td><td>${kpiFormatInt(r.geplAbholp)}</td><td>${esc(Array.from(r.plz).sort().join(', ') || '—')}</td><td>${kpiFormatKg(r.gewicht)}</td><td>${kpiFormatPct(r.lieferquote)}</td><td>${esc(r.sp)}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+      openModalHtml('Wie KPI Monitor', html);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function hideModal() {
     const m = document.getElementById(NS + 'modal');
     if (m) m.style.display = 'none';
@@ -3199,15 +3607,51 @@ async function handleMainTableClick(el) {
   }
 
   async function copyModalTable() {
-    const table = document.querySelector('#' + NS + 'modal-body table');
+    const modalBody = document.getElementById(NS + 'modal-body');
+    if (!modalBody) return;
+
+    // KPI-Ansicht besteht sichtbar aus zwei Tabellen:
+    // 1. blaue Gesamtzeile, 2. Überschrift + alle Tourzeilen.
+    // Für die Zwischenablage beide Teile zu EINER Tabelle zusammenführen.
+    const kpiTable = modalBody.querySelector('#' + NS + 'kpi-like-table');
+    if (kpiTable) {
+      const allTables = Array.from(modalBody.querySelectorAll('table'));
+      const totalTable = allTables.find(tbl => tbl !== kpiTable && tbl.querySelector('tbody tr'));
+
+      const copyTable = document.createElement('table');
+
+      const colgroup = kpiTable.querySelector('colgroup');
+      if (colgroup) copyTable.appendChild(colgroup.cloneNode(true));
+
+      const copyBody = document.createElement('tbody');
+      if (totalTable) {
+        const totalRow = totalTable.querySelector('tbody tr');
+        if (totalRow) copyBody.appendChild(totalRow.cloneNode(true));
+      }
+      copyTable.appendChild(copyBody);
+
+      const thead = kpiTable.querySelector('thead');
+      if (thead) copyTable.appendChild(thead.cloneNode(true));
+
+      const srcBody = kpiTable.querySelector('tbody');
+      if (srcBody) {
+        const detailBody = document.createElement('tbody');
+        Array.from(srcBody.children).forEach(tr => detailBody.appendChild(tr.cloneNode(true)));
+        copyTable.appendChild(detailBody);
+      }
+
+      const ok = await copyHtmlAndText(tableToStyledHtml(copyTable), tableToTSV(copyTable));
+      if (!ok) alert('Kopieren nicht möglich.');
+      return;
+    }
+
+    const table = modalBody.querySelector('table');
     if (!table) return;
     const ok = await copyHtmlAndText(tableToStyledHtml(table), tableToTSV(table));
     if (!ok) alert('Kopieren nicht möglich.');
   }
 
   async function refreshSummary({ forceReload = false } = {}) {
-    if (!lastOkRequest) throw new Error('Bitte zuerst einmal die normale Pickup-/Delivery-Liste laden.');
-
     const cacheKey = getSummaryCacheKey();
 
     if (forceReload) {
@@ -3219,6 +3663,7 @@ async function handleMainTableClick(el) {
       const cached = getCachedSummary(cacheKey);
       if (cached) {
         state.summaryRows = cached.summaryRows;
+        state.normalizedRows = getCachedDetailRows(cacheKey) || [];
         state.standText = cached.standText;
         renderStand();
         renderMainTable();
@@ -3231,6 +3676,7 @@ async function handleMainTableClick(el) {
     });
 
     state.summaryRows = result.summaryRows;
+    state.normalizedRows = result.normalized || [];
     setLoadedStandFromDateRange(
       getSelectedDateFrom() || state.detectedDateFrom || state.detectedDateValue,
       getSelectedDateTo() || state.detectedDateTo || state.detectedDateValue
@@ -3260,73 +3706,6 @@ async function handleMainTableClick(el) {
     }
   }
 
-  function findPickupDeliveryTab() {
-    const selectors = ['button', '[role="tab"]', '.tab', '.tabs__tab', '.mat-tab-label', 'a', 'div'];
-    for (const sel of selectors) {
-      const els = Array.from(document.querySelectorAll(sel));
-      const hit = els.find(el => {
-        const txt = norm(el.textContent || '').toLowerCase();
-        return txt.includes('abholung') && txt.includes('zustellung');
-      });
-      if (hit) return hit;
-    }
-    return null;
-  }
-
-  function isPickupDeliveryTabActive(el) {
-    if (!el) return false;
-    const txt = norm(el.textContent || '').toLowerCase();
-    if (!txt.includes('abholung') || !txt.includes('zustellung')) return false;
-
-    const cls = String(el.className || '').toLowerCase();
-    const ariaSelected = String(el.getAttribute('aria-selected') || '').toLowerCase();
-    const ariaCurrent = String(el.getAttribute('aria-current') || '').toLowerCase();
-    const cs = getComputedStyle(el);
-
-    if (ariaSelected === 'true' || ariaCurrent === 'page') return true;
-    if (cls.includes('active') || cls.includes('selected')) return true;
-
-    return (
-      cs.backgroundColor === 'rgb(226, 0, 52)' ||
-      cs.backgroundColor === 'rgb(229, 0, 55)' ||
-      cs.color === 'rgb(255, 255, 255)'
-    );
-  }
-
-  function clickElement(el) {
-    if (!el) return false;
-    try {
-      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      return true;
-    } catch {
-      try {
-        el.click();
-        return true;
-      } catch {
-        return false;
-      }
-    }
-  }
-
-  function autoSwitchToPickupDeliveryTab() {
-    let tries = 0;
-    const maxTries = 20;
-
-    const run = () => {
-      tries++;
-      const tab = findPickupDeliveryTab();
-      if (tab) {
-        if (!isPickupDeliveryTabActive(tab)) clickElement(tab);
-        if (isPickupDeliveryTabActive(tab) || tries >= maxTries) return;
-      }
-      if (tries < maxTries) setTimeout(run, 350);
-    };
-
-    run();
-  }
-
   (function hookNetwork() {
     if (!window.__spx_fetch_hooked && window.fetch) {
       const orig = window.fetch;
@@ -3334,7 +3713,7 @@ async function handleMainTableClick(el) {
         const res = await orig(input, init);
         try {
           const urlStr = typeof input === 'string' ? input : (input && input.url) || '';
-          if (urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok) {
+          if (urlStr.includes('/dispatcher/api/') && res.ok) {
             const u = new URL(urlStr, location.origin);
             const q = u.searchParams;
             if (!q.get('parcelNumber') && !q.get('parcel_number')) {
@@ -3348,6 +3727,9 @@ async function handleMainTableClick(el) {
               if (!headers['authorization']) {
                 const m = document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
                 if (m) headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+              }
+              if (!headers['authorization'] && lastOkRequest?.headers?.authorization) {
+                headers['authorization'] = lastOkRequest.headers.authorization;
               }
               lastOkRequest = { url: u, headers };
               const dd = detectDateParamsFromUrl(u);
@@ -3384,12 +3766,15 @@ async function handleMainTableClick(el) {
       X.prototype.send = function () {
         const onload = () => {
           try {
-            if (this.__spx_url && this.__spx_url.href.includes('/dispatcher/api/pickup-delivery') && this.status >= 200 && this.status < 300) {
+            if (this.__spx_url && this.__spx_url.href.includes('/dispatcher/api/') && this.status >= 200 && this.status < 300) {
               const q = this.__spx_url.searchParams;
               if (!q.get('parcelNumber') && !q.get('parcel_number')) {
                 if (!this.__spx_headers['authorization']) {
                   const m = document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/);
                   if (m) this.__spx_headers['authorization'] = 'Bearer ' + decodeURIComponent(m[1]);
+                }
+                if (!this.__spx_headers['authorization'] && lastOkRequest?.headers?.authorization) {
+                  this.__spx_headers['authorization'] = lastOkRequest.headers.authorization;
                 }
                 lastOkRequest = { url: this.__spx_url, headers: this.__spx_headers };
                 const dd = detectDateParamsFromUrl(this.__spx_url);
@@ -3413,7 +3798,6 @@ async function handleMainTableClick(el) {
   })();
 
   function startModuleOnce() {
-    autoSwitchToPickupDeliveryTab();
     if (started) {
       togglePanel(true);
       return;
@@ -3421,7 +3805,6 @@ async function handleMainTableClick(el) {
     started = true;
     mountUI();
     togglePanel(true);
-    autoSwitchToPickupDeliveryTab();
   }
 function recipientNameOf(r) {
   const candidates = [
