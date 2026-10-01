@@ -1,13 +1,12 @@
 // ==UserScript==
-// @name         Zerberus → DPD360  
+// @name         Zerberus → DPD360
 // @namespace    https://dpd.de/
-// @version      1.3c
-// @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Zerberus.user.js
-// @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-Zerberus.user.js
+// @version      1.3e
 // @description  Verknüpft die Avisdaten aus DPD 360 und zeigt diese auf der Website an. Eimalige Anmeldung (Tag) in dpd360 erforderlich
 // @author       Thiemo Schöler
 // @match        https://zerberus-dpd-02.csf.blujaysolutions.net/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @connect      dpd360.dpd.de
 // @run-at       document-idle
 // ==/UserScript==
@@ -153,6 +152,23 @@
       </details>
     `;
     document.body.appendChild(host);
+
+    // Tracking-Links bewusst über Tampermonkey öffnen.
+    // Das verhindert, dass Zerberus den normalen Link-Klick abfängt.
+    host.addEventListener('click', (event) => {
+      const link = event.target.closest('a.dpd360-tracking-link');
+      if (!link) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      GM_openInTab(link.href, {
+        active: true,
+        insert: true,
+        setParent: true
+      });
+    }, true);
+
     return {
       setParcelBadge: (txtHtml) => (host.querySelector('#dpd360-parcel-mini').innerHTML = txtHtml),
       setBody: (html) => (host.querySelector('#dpd360-flyout-body').innerHTML = html),
@@ -208,7 +224,8 @@
   // ---------- Fetch ----------
   function fetchDPD360(parcelNo, ui) {
     const dpdUrl = `https://dpd360.dpd.de/order/order_view.aspx?parcelno=${encodeURIComponent(parcelNo)}`;
-    ui.setParcelBadge(`<a href="${dpdUrl}" target="_blank">${parcelNo}</a>`);
+    const trackingUrl = `https://depotportal.dpd.com/dp/de_DE/tracking/parcels/${encodeURIComponent(parcelNo)}`;
+    ui.setParcelBadge(`<a class="dpd360-tracking-link" href="${trackingUrl}" target="_blank" rel="noopener noreferrer" title="Sendung im Depotportal öffnen">${parcelNo}</a>`);
 
     GM_xmlhttpRequest({
       method: 'GET',
@@ -260,7 +277,7 @@
 
           ui.setBody(`
             <div class="dpd360-row">
-              Sendungsnr.: <code>${parcelNo}</code> &nbsp;|&nbsp;
+              Sendungsnr.: <code><a class="dpd360-tracking-link" href="${trackingUrl}" target="_blank" rel="noopener noreferrer" title="Sendung im Depotportal öffnen">${parcelNo}</a></code> &nbsp;|&nbsp;
               <a href="${dpdUrl}" target="_blank">DPD360 öffnen</a>
             </div>
             ${section('Client (nicht Verkäufer)', labLabelAddress)}
