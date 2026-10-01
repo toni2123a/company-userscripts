@@ -3,12 +3,12 @@
 // ==UserScript==
 // @name         DPD Dispatcher – Partner-Report Mailer
 // @namespace    bodo.dpd.custom
-// @version      5.7.3
+// @version      5.9.7
 // @updateURL    https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
 // @downloadURL  https://raw.githubusercontent.com/toni2123a/company-userscripts/main/tools/tool-dispatcher.partner.user.js
-// @description  ✉ je Partner mit Bestätigung + „Änderungen speichern“; Zeilenklick = Vorschau; Gesamt an „gesamt“. Lokale Empfänger (IndexedDB), Export/Import. Robust (Datagrid ODER normale Tabelle). Fix: robuste Spalten-Erkennung je Header-Reihenfolge + ETA-Prozentspalte statt ETA-Zeit + Abholstops robust + Status-Spalte in Partnerseiten. Klick-Details Stopps/Pakete/offen bis Paket-Lebenslauf mit Prio/Express-Markierung. Loader-Integration (TM).
+// @description  Partner-Report mit eigener Datumsauswahl und direktem API-Abruf, ohne Dispatcher-Reiter oder deren Filter zu verändern.
 // @match        https://dispatcher2-de.geopost.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      10.14.7.169
@@ -25,6 +25,7 @@ const ENABLE_STANDALONE = false; // <- kein eigener Button
 
 const NS='fvpr-', PANEL_ID='#fvpr-panel', OFFSET_PX=-240;
 const REFRESH_MS=60_000, RENDER_DEBOUNCE=300, SCAN_MAX_STEPS=40, SCAN_STAG_LIMIT=2;
+const OVERVIEW_PAGE_SIZE=250, OVERVIEW_CACHE_MS=60_000;
 const GATEWAY_DEFAULT='http://10.14.7.169/mail.php', GATEWAY_API_KEY='fvpr-SECRET-123';
 
 const DEBUG = localStorage.getItem('fvpr-debug')==='1';
@@ -53,8 +54,8 @@ function _diagFormat(){
 }
 
 const norm=s=>String(s||'').replace(/\s+/g,' ').trim();
-const parsePct=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=parseFloat(t); return Number.isFinite(v)?v:null; };
-const parseIntDe=s=>{ if(s==null)return null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=Math.round(parseFloat(t)); return Number.isFinite(v)?v:null; };
+const parsePct=s=>{ if(s==null)return null; if(typeof s==='number')return Number.isFinite(s)?s:null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=parseFloat(t); return Number.isFinite(v)?v:null; };
+const parseIntDe=s=>{ if(s==null)return null; if(typeof s==='number')return Number.isFinite(s)?Math.round(s):null; const t=String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.\-]/g,'').trim(); if(!t)return null; const v=Math.round(parseFloat(t)); return Number.isFinite(v)?v:null; };
 const fmtPct=v=>Number.isFinite(v)?String(v.toFixed(1)).replace('.',','):'—';
 const fmtInt=v=>v==null?'—':String(Math.round(v||0)).replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 
@@ -62,6 +63,16 @@ const todayStr=()=>new Date().toLocaleDateString('de-DE');
 const pad2=n=>String(n).padStart(2,'0');
 const timeHM=()=>{ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const dateStamp=()=>{ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
+const isoToday=()=>dateStamp();
+function selectedReportDate(){
+  const el=document.getElementById(NS+'report-date');
+  const value=String(el?.value||isoToday());
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)?value:isoToday();
+}
+function selectedReportDateDE(){
+  const m=selectedReportDate().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?`${m[3]}.${m[2]}.${m[1]}`:todayStr();
+}
 
 const sum = (vs,proj)=>vs.reduce((a,v)=>a+(proj(v)||0),0);
 const avg = (vs,proj)=>{ const arr=vs.map(proj).filter(x=>x!=null); return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0; };
@@ -605,6 +616,7 @@ function ensureStyles(){
 
 /* ====== TEIL 8/12 – UI (Panel/Buttons/Import-Export) + Sortier-Helper ====== */
 let PANEL, CONTENT, CFGBOX;
+let SHOW_ALL_TOURS_AND_PARTNERS=false;
 
 // Unterdrückung von Auto-Render nach Nutzersortierung (ms)
 let LAST_USER_SORT_TS = 0;
@@ -699,7 +711,12 @@ function mountUI(forLoader=false){
     <div class="${NS}hdr">
       <div>Auswertung – Systempartner (Fahrzeugübersicht) <span class="${NS}mini">[Stand: ${todayStr()} ${timeHM()}]</span></div>
       <div class="${NS}pill">
+        <label for="${NS}report-date" style="font:700 12px system-ui">Datum:</label>
+        <input id="${NS}report-date" class="${NS}btn-sm" type="date" value="${selectedReportDate()}" style="cursor:text">
         <button class="${NS}btn-sm" data-act="refresh">Aktualisieren</button>
+        <label style="display:inline-flex;align-items:center;gap:2px;font:500 10px system-ui;opacity:.55;white-space:nowrap;cursor:pointer" title="Blendet auch Touren und Systempartner ohne verwertbare Daten ein">
+          <input id="${NS}show-all" type="checkbox" style="width:11px;height:11px;margin:0;accent-color:#64748b"> Alle Touren und Partner anzeigen
+        </label>
         <span class="${NS}btn-sm" style="opacity:.0;cursor:default"></span>
         <button class="${NS}btn-sm" data-act="send-partner-and-total">✉ Pro Partner und gesamt an uns</button>
         <button class="${NS}btn-sm" data-act="send-total-only">✉ Gesamt</button>
@@ -707,36 +724,79 @@ function mountUI(forLoader=false){
       </div>
     </div>
     <div id="${NS}content"></div>
-    <div class="${NS}cfg" style="display:none" id="${NS}cfgbox">
-      <h4 style="margin:0 0 6px 0;font:700 14px system-ui">Globale Einstellungen</h4>
+    <div class="${NS}cfg" style="display:none;max-height:62vh;overflow:auto" id="${NS}cfgbox">
+      <h4 style="margin:0 0 6px 0;font:700 14px system-ui">Einstellungen und Mail-Empfänger</h4>
       <div class="${NS}row"><label>Betreff-Prefix</label><input id="${NS}cfg-subj" type="text"></div>
+      <div style="margin:8px 0;font:600 12px system-ui">Mit <b>-</b> im Feld „An“ wird an diesen Empfänger niemals gesendet und es erscheint keine Nachfrage.</div>
+      <div id="${NS}cfg-recipients"></div>
       <button class="${NS}btn-sm" data-act="cfg-save">Speichern</button>
       <button class="${NS}btn-sm" data-act="cfg-hide">Schließen</button>
       <button class="${NS}btn-sm" data-act="export">Export</button>
       <button class="${NS}btn-sm" data-act="import">Import</button>
     </div>
-    <div class="${NS}note">Pro Partner wird nur versendet, wenn im Partner-Eintrag eine gültige Adresse hinterlegt ist. Die Gesamt-Mail geht an den Eintrag mit Name = "gesamt".</div>
+    <div class="${NS}note">Alle Empfänger werden gemeinsam in den Einstellungen gepflegt. Ein „-“ im Feld „An“ deaktiviert den Versand dauerhaft und ohne Rückfrage.</div>
     <input type="file" id="${NS}impfile" accept="application/json" style="display:none">
   `;
   document.body.appendChild(PANEL);
   CONTENT=PANEL.querySelector('#'+NS+'content');
   CFGBOX=PANEL.querySelector('#'+NS+'cfgbox');
+  PANEL.insertBefore(CFGBOX, CONTENT);
+  const reportDateInput=PANEL.querySelector('#'+NS+'report-date');
+  if(reportDateInput){
+    reportDateInput.value=selectedReportDate();
+    reportDateInput.addEventListener('change', async ()=>{
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(reportDateInput.value)) reportDateInput.value=isoToday();
+      FVPR_OVERVIEW_CACHE={key:'',ts:0,rows:[]};
+      FVPR_DETAIL_CACHE={key:'',ts:0,rows:[]};
+      await render(true).catch(console.error);
+    });
+  }
+  const showAllInput=PANEL.querySelector('#'+NS+'show-all');
+  if(showAllInput){
+    showAllInput.checked=SHOW_ALL_TOURS_AND_PARTNERS;
+    showAllInput.addEventListener('change',async()=>{
+      SHOW_ALL_TOURS_AND_PARTNERS=showAllInput.checked;
+      await render(true).catch(console.error);
+    });
+  }
 
   if (!forLoader && ENABLE_STANDALONE){
     if (!document.getElementById(NS+'wrap')){
       const wrap=document.createElement('div'); wrap.id=NS+'wrap'; wrap.className=NS+'wrap';
       const btn=document.createElement('button'); btn.className=NS+'btn'; btn.textContent='Partner-Report';
       wrap.append(btn); document.body.appendChild(wrap);
-      btn.addEventListener('click',()=>{ const will=PANEL.style.display==='none'; PANEL.style.display=will?'':'none'; if(will) fillCfg(); },{passive:true});
+      btn.addEventListener('click',()=>{ const will=PANEL.style.display==='none'; PANEL.style.display=will?'':'none'; },{passive:true});
     }
   }
 
   PANEL.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
     if(b.dataset.act==='refresh') { const hide=(typeof fvprShowBlockingLoader==='function')?fvprShowBlockingLoader('Auswertung wird aktualisiert …'):(()=>{}); try{ await render(true); } finally{ hide(); } }
-    if(b.dataset.act==='send-partner-and-total') await sendPartnerAndTotalConfirm();
+    if(b.dataset.act==='send-partner-and-total'){
+      if(b.dataset.busy==='1') return;
+      const oldText=b.textContent;
+      b.dataset.busy='1'; b.disabled=true; b.textContent='Bitte warten …';
+      const hide=fvprShowBlockingLoader('Der Sammelversand wird vorbereitet …');
+      try{ await sendPartnerAndTotalConfirm(); }
+      catch(err){ console.error(err); toast('Sammelversand konnte nicht vorbereitet werden.',false); }
+      finally{ hide(); b.disabled=false; b.textContent=oldText; delete b.dataset.busy; }
+      return;
+    }
     if(b.dataset.act==='send-total-only') await sendTotalOnlyConfirm();
-    if(b.dataset.act==='settings'){ CFGBOX.style.display=CFGBOX.style.display==='none'?'':''; if(CFGBOX.style.display!=='none') await fillCfg(); }
+    if(b.dataset.act==='settings'){
+      const opening=getComputedStyle(CFGBOX).display==='none';
+      CFGBOX.style.display=opening?'block':'none';
+      if(opening){
+        if(b.dataset.busy==='1') return;
+        const oldText=b.textContent;
+        b.dataset.busy='1'; b.disabled=true; b.textContent='Bitte warten …';
+        PANEL.scrollTop=0;
+        try{ await fillCfg(); }
+        catch(err){ console.error(err); toast('Einstellungen konnten nicht geladen werden.',false); }
+        finally{ b.disabled=false; b.textContent=oldText; delete b.dataset.busy; }
+      }
+      return;
+    }
     if(b.dataset.act==='cfg-hide') CFGBOX.style.display='none';
     if(b.dataset.act==='cfg-save') await saveCfgFromUI();
     if(b.dataset.act==='export') await exportDb();
@@ -1136,6 +1196,44 @@ async function deliverMail({subject, html, to, cc}){
 }
 
 /* ====== HTML-Builder ====== */
+function mailRowHasData(r){
+  if(r?.eta!==null && r?.eta!==undefined && r?.eta!=='') return true;
+  return [r?.stops,r?.pkgs,r?.open,r?.obstacles,r?.pOpen]
+    .some(v=>Number.isFinite(Number(v)) && Number(v)>0);
+}
+function mailRows(list){
+  return (list||[]).filter(mailRowHasData);
+}
+function visibleRows(list){
+  return SHOW_ALL_TOURS_AND_PARTNERS?(list||[]):mailRows(list);
+}
+function mailAggregates(per){
+  const cleanPer=(per||[]).map(p=>{
+    const list=mailRows(p.list);
+    if(!list.length) return null;
+    return {
+      ...p, list,
+      tours:list.length,
+      etaAvg:avg(list,r=>r.eta),
+      stops:sum(list,r=>r.stops),
+      open:sum(list,r=>r.open),
+      pkgs:sum(list,r=>r.pkgs),
+      obstacles:sum(list,r=>r.obstacles),
+      pOpen:sum(list,r=>r.pOpen)
+    };
+  }).filter(Boolean);
+  const allRows=cleanPer.flatMap(p=>p.list);
+  return {per:cleanPer,totals:{
+    tours:allRows.length,
+    etaAvg:avg(allRows,r=>r.eta),
+    stops:sum(allRows,r=>r.stops),
+    open:sum(allRows,r=>r.open),
+    pkgs:sum(allRows,r=>r.pkgs),
+    obstacles:sum(allRows,r=>r.obstacles),
+    pOpen:sum(allRows,r=>r.pOpen)
+  }};
+}
+
 function partnerHtml(partner,list,signature){
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
@@ -1163,7 +1261,7 @@ function partnerHtml(partner,list,signature){
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <div style="margin:0 0 6px 0;color:#334155">Datum: ${selectedReportDateDE()} · Stand: ${todayStr()} ${timeHM()}</div>
     <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
       <thead>
         <tr data-total-row="1" style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;cursor:pointer;">
@@ -1248,7 +1346,7 @@ function summaryHtml(per,totals,signature){
 
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <div style="margin:0 0 6px 0;color:#334155">Datum: ${selectedReportDateDE()} · Stand: ${todayStr()} ${timeHM()}</div>
     <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
       ${head}<tbody>${body}</tbody>
     </table>
@@ -1257,6 +1355,7 @@ function summaryHtml(per,totals,signature){
 }
 
 function mailPartnerHtml(partner,list,signature){
+  list=mailRows(list);
   const rows=list.map(r=>{
     const etaStyle = `background:${etaBg(r.eta)};`;
     return `
@@ -1283,7 +1382,7 @@ function mailPartnerHtml(partner,list,signature){
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
   return `
   <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
-    <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <div style="margin:0 0 8px 0;color:#334155">Datum: ${selectedReportDateDE()} · Stand: ${todayStr()} ${timeHM()}</div>
     <div style="max-width:100%; overflow-x:auto;">
       <table cellpadding="0" cellspacing="0" style="width:100%; min-width:560px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
         <thead>
@@ -1316,6 +1415,7 @@ function mailPartnerHtml(partner,list,signature){
 }
 
 function mailSummaryHtml(per,totals,signature){
+  ({per,totals}=mailAggregates(per));
   const body=per.map(p=>{
     const etaStyle=`background:${etaBg(p.etaAvg)};`;
     return `
@@ -1333,7 +1433,7 @@ function mailSummaryHtml(per,totals,signature){
   const signatureHtml = signature ? `<div style="margin-top:10px">${signature}</div>` : '';
   return `
   <div style="font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif; color:#111;">
-    <div style="margin:0 0 8px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <div style="margin:0 0 8px 0;color:#334155">Datum: ${selectedReportDateDE()} · Stand: ${todayStr()} ${timeHM()}</div>
     <div style="max-width:100%; overflow-x:auto;">
       <table cellpadding="0" cellspacing="0" style="width:100%; min-width:640px; border-collapse:collapse; table-layout:fixed; font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;">
         <thead>
@@ -1402,7 +1502,7 @@ function totalToursHtml(rows, signature){
 
   return `
   <div style="font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;">
-    <div style="margin:0 0 6px 0;color:#334155">Stand: ${todayStr()} ${timeHM()}</div>
+    <div style="margin:0 0 6px 0;color:#334155">Datum: ${selectedReportDateDE()} · Stand: ${todayStr()} ${timeHM()}</div>
     <table class="${NS}tbl" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;">
       <thead>
         <tr data-total-row="1" style="background:#e0f2ff;color:#003366;font-weight:700;font-size:12px;">
@@ -1435,17 +1535,94 @@ function totalToursHtml(rows, signature){
 }
 
 /* ---------- Aggregation + Flows ---------- */
-async function getAggregates(){
+let FVPR_OVERVIEW_CACHE={key:'',ts:0,rows:[]};
+
+async function fetchVehicleOverviewRows(force=false){
+  const selectedDate=selectedReportDate();
+  if(!force && FVPR_OVERVIEW_CACHE.key===selectedDate && Date.now()-FVPR_OVERVIEW_CACHE.ts<OVERVIEW_CACHE_MS){
+    return FVPR_OVERVIEW_CACHE.rows;
+  }
+
+  const headers=fvprBuildHeaders(FVPR_LAST_PD_REQUEST?.headers||{});
+  const raw=[];
+
+  for(let page=1; page<=300; page++){
+    const url=new URL('/dispatcher/api/vehicle-overview', location.origin);
+    url.searchParams.set('page',String(page));
+    url.searchParams.set('pageSize',String(OVERVIEW_PAGE_SIZE));
+    url.searchParams.set('sort','');
+    url.searchParams.set('date',selectedDate);
+    url.searchParams.set('_ts',String(Date.now()+page));
+
+    const res=await fetch(url.toString(),{credentials:'include',headers,cache:'no-store'});
+    if(!res.ok) throw new Error(`Fahrzeugübersicht nicht geladen: HTTP ${res.status}`);
+    const arr=fvprPickArray(await res.json());
+    if(!arr.length) break;
+    raw.push(...arr);
+    if(arr.length<OVERVIEW_PAGE_SIZE) break;
+  }
+
+  const rows=raw.map(r=>({
+    partner:norm(r?.subcontractorName||r?.subcontractor_name||r?.systemPartner||r?.systempartner||'Ohne Zuordnung'),
+    tour:norm(r?.tour||r?.round||r?.route||'—'),
+    driver:norm(r?.courierName||r?.courier_name||r?.driverName||r?.driver||''),
+    status:norm(r?.status||''),
+    eta:parsePct(r?.inEtaAllPercent),
+    stops:parseIntDe(r?.deliveryStopsTotal),
+    open:parseIntDe(r?.openDeliveryStops),
+    pkgs:parseIntDe(r?.estimatedDeliveryParcels),
+    obstacles:parseIntDe(r?.deliveryObstacles),
+    pOpen:parseIntDe(r?.openPickupStops),
+    deliveredStops:parseIntDe(r?.deliveredStops),
+    pickupStops:parseIntDe(r?.pickupStopsTotal),
+    pickedUpStops:parseIntDe(r?.pickedUpStops),
+    pickupObstacles:parseIntDe(r?.pickupObstacles),
+    pickupReadiness:parsePct(r?.pickupReadiness),
+    deliveryReadiness:parsePct(r?.deliveryReadiness),
+    estimatedPickupParcels:parseIntDe(r?.estimatedPickupParcels),
+    notAcceptedPickups:parseIntDe(r?.notAcceptedPickups),
+    timeCriticalPickups:parseIntDe(r?.timeCriticalPickups),
+    pickupWeight:parsePct(r?.pickupWeightKilogramsSum),
+    weight:parsePct(r?.weightKilograms),
+    totalWeight:parsePct(r?.totalWeightKilograms),
+    etaDifference:norm(r?.lastStopTimeShipmentEtaDiff||''),
+    lastConnection:norm(r?.lastConnection||''),
+    departureTime:norm(r?.departureTime||''),
+    arrivalTime:norm(r?.arrivalTime||''),
+    serviceStart:norm(r?.serviceStart||''),
+    watchlistedPickups:parseIntDe(r?.watchlistedPickups)
+  }));
+
+  await cacheTourPartner(rows).catch(()=>{});
+  FVPR_OVERVIEW_CACHE={key:selectedDate,ts:Date.now(),rows};
+  return rows;
+}
+
+async function getAggregates(force=false){
   DIAG('agg', 'getAggregates gestartet');
+  const rows=await fetchVehicleOverviewRows(force);
+  DIAG('agg', 'API Fahrzeugübersicht', { rowCount: rows.length, date:selectedReportDate() });
+  if(!rows.length) return null;
 
-  const tabReady = await ensureFahrzeuguebersichtActive();
-  DIAG('agg', 'ensureFahrzeuguebersichtActive', { tabReady });
-
-  const {ok,rows}=await readAllRows();
-  DIAG('agg', 'readAllRows Ergebnis', { ok, rowCount: rows.length });
-  if(!ok||rows.length===0) return null;
-
-  cacheTourPartner(rows);
+  // Der Wert openPickupStops der Fahrzeugübersicht kann bei historischen Tagen
+  // unverändert bleiben. Deshalb werden offene Abholstopps immer aus der
+  // Pickup-/Delivery-API für exakt das im Tool gewählte Datum neu ermittelt.
+  try{
+    const detailRows=await fvprFetchDetailRows(force);
+    const openPickupByTour=new Map();
+    for(const detail of detailRows){
+      if(!fvprIsOpenPickup(detail)) continue;
+      const key=`${norm(detail.__partner)}|||${tourKey(detail.__tour)}`;
+      if(!openPickupByTour.has(key)) openPickupByTour.set(key,new Set());
+      openPickupByTour.get(key).add(String(detail.__raw?.stop??detail.__raw?.id??detail.__stop??detail.__idx));
+    }
+    for(const row of rows){
+      const key=`${norm(row.partner)}|||${tourKey(row.tour)}`;
+      row.pOpen=openPickupByTour.get(key)?.size||0;
+    }
+  }catch(e){
+    console.warn('[fvpr] Datumsabhängige offene Abholstopps konnten nicht geladen werden.',e);
+  }
 
   const groups=groupByPartner(rows);
   const per=[];
@@ -1478,9 +1655,103 @@ async function copyPartnerHtml(partner){
   const agg=await getAggregates(); if(!agg) return;
   const g=await ensureSettingsRecord();
   const p=agg.per.find(x=>x.partner===partner); if(!p) return;
-  const html=partnerHtml(partner, p.list, g.signature||'');
+  const html=partnerHtml(partner, visibleRows(p.list), g.signature||'');
   const ok=await copyHtmlToClipboard(html);
   toast(ok?'Vorschau in Zwischenablage':'Kopieren fehlgeschlagen', ok);
+}
+
+function openDriverTourPrintWindow(sourceRows){
+  const sorted=[...(sourceRows||[])].sort((a,b)=>{
+    const byTour=String(a.tour||'').localeCompare(String(b.tour||''),'de',{numeric:true});
+    return byTour||String(a.partner||'').localeCompare(String(b.partner||''),'de');
+  });
+  if(!sorted.length){ alert('Keine Fahrer- und Tourdaten vorhanden.'); return; }
+
+  let lastPartner=null, groupIndex=-1;
+  const rows=sorted.map(row=>{
+    const partner=norm(row.partner);
+    if(partner!==lastPartner){ groupIndex++; lastPartner=partner; }
+    return {...row,__gray:groupIndex%2===1};
+  });
+
+  const pages=[];
+  for(let start=0;start<rows.length;start+=135){
+    const pageRows=rows.slice(start,start+135);
+    const cols=pageRows.length<=45?1:(pageRows.length<=90?2:3);
+    const perCol=Math.ceil(pageRows.length/cols);
+    const columns=Array.from({length:cols},(_,i)=>pageRows.slice(i*perCol,(i+1)*perCol));
+    pages.push({cols,perCol,columns});
+  }
+
+  const pageHtml=pages.map((page,pageIndex)=>{
+    const rowHeight=Math.max(5.15,Math.min(9,246/(page.perCol+1)));
+    const fontSize=rowHeight>=8.5?14:(rowHeight>=7?12:(rowHeight>=5.9?10.5:9.5));
+    const columns=page.columns.map(column=>`<table class="tour-table" style="font-size:${fontSize}pt">
+      <thead><tr><th>Tour</th><th>Zustellername</th><th class="row-actions"></th></tr></thead>
+      <tbody>${column.map(row=>`<tr class="${row.__gray?'partner-gray':'partner-white'}" data-partner="${escHtml(row.partner||'')}" style="height:${rowHeight.toFixed(2)}mm"><td contenteditable="true" spellcheck="false">${escHtml(row.tour||'—')}</td><td class="driver-cell" contenteditable="true" spellcheck="false" title="${escHtml(row.driver||'')}">${escHtml(row.driver||'—')}</td><td class="row-actions"><button type="button" title="Zeile löschen">×</button></td></tr>`).join('')}</tbody>
+    </table>`).join('');
+    return `<section class="print-page${pageIndex<pages.length-1?' page-break':''}">
+      <div class="print-date">${escHtml(selectedReportDateDE())}</div>
+      <div class="print-columns" style="grid-template-columns:repeat(${page.cols},minmax(0,1fr))">${columns}</div>
+    </section>`;
+  }).join('');
+
+  const w=window.open('','_blank');
+  if(!w){ alert('Das Druckfenster wurde vom Browser blockiert.'); return; }
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Fahrer- und Tourliste ${escHtml(selectedReportDateDE())}</title><style>
+    *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important} body{margin:0;background:#e5e7eb;font-family:Arial,sans-serif;color:#111}
+    .toolbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:center;gap:10px;padding:10px;background:#fff;border-bottom:1px solid #cbd5e1}
+    .toolbar button{border:1px solid #94a3b8;background:#f8fafc;border-radius:7px;padding:7px 16px;font-weight:700;cursor:pointer}
+    .toolbar .hint{font-size:12px;color:#64748b;margin-right:12px}
+    .print-page{width:210mm;min-height:297mm;margin:10mm auto;background:#fff;padding:10mm;box-shadow:0 3px 18px rgba(0,0,0,.18)}
+    .print-date{height:10mm;border:1.4px solid #111;display:flex;align-items:center;justify-content:center;font-size:13pt;font-weight:700;margin-bottom:5mm}
+    .print-columns{display:grid;gap:6mm;align-items:start}
+    .tour-table{width:100%;border-collapse:collapse;table-layout:fixed}
+    .tour-table th,.tour-table td{border:1px solid #111;padding:0 1.4mm;line-height:1.05;white-space:nowrap;overflow:hidden}
+    .tour-table th{height:7mm;text-align:left;font-weight:700;background:#fff}
+    .tour-table th:first-child,.tour-table td:first-child{width:21%;font-weight:700}
+    .tour-table .row-actions{width:4mm;min-width:4mm;max-width:4mm;padding:0;text-align:center;background:#fff!important}
+    .row-actions button{display:block;width:3.1mm;height:3.1mm;margin:auto;padding:0;border:1px solid #cbd5e1;border-radius:50%;background:#fff;color:#64748b;cursor:pointer;font:700 7pt/1 Arial,sans-serif}
+    [contenteditable="true"]{cursor:text}.tour-table td[contenteditable="true"]:focus{outline:2px solid #60a5fa;outline-offset:-2px;background:#eff6ff!important;box-shadow:none!important}
+    .partner-gray td:not(.row-actions){background:#d9d9d9!important;box-shadow:inset 0 0 0 1000px #d9d9d9}.partner-white td:not(.row-actions){background:#fff!important}
+    @page{size:A4 portrait;margin:0}
+    @media print{
+      body{background:#fff}.toolbar{display:none}.print-page{margin:0;box-shadow:none;width:210mm;height:297mm;min-height:297mm;overflow:hidden}
+      .page-break{break-after:page;page-break-after:always}
+      .tour-table{break-inside:avoid}
+      .row-actions{display:none!important}.tour-table td[contenteditable="true"]{outline:none!important}
+    }
+  </style></head><body><div class="toolbar"><span class="hint">Tour oder Fahrername anklicken zum Ändern · × löscht eine Zeile</span><button id="print-list">Drucken</button><button id="close-list">Schließen</button></div>${pageHtml}</body></html>`);
+  w.document.close();
+  const blurEditor=()=>{ try{ w.document.activeElement?.blur(); }catch{} };
+  const recolor=()=>{
+    let partner=null,group=-1;
+    w.document.querySelectorAll('.tour-table tbody tr').forEach(row=>{
+      const current=String(row.dataset.partner||'');
+      if(current!==partner){ partner=current; group++; }
+      row.classList.toggle('partner-gray',group%2===1);
+      row.classList.toggle('partner-white',group%2===0);
+    });
+  };
+  const fitName=cell=>{
+    if(!cell) return;
+    cell.title=String(cell.textContent||'').trim();
+    cell.style.fontSize='';
+    let size=parseFloat(w.getComputedStyle(cell).fontSize)||12;
+    while(cell.scrollWidth>cell.clientWidth+1 && size>7){
+      size-=0.25;
+      cell.style.fontSize=`${size}px`;
+    }
+  };
+  const fitAllNames=()=>w.document.querySelectorAll('.driver-cell').forEach(fitName);
+  fitAllNames();
+  w.document.addEventListener('input',e=>{ if(e.target?.classList?.contains('driver-cell')) fitName(e.target); });
+  w.document.getElementById('print-list')?.addEventListener('click',()=>{ blurEditor(); fitAllNames(); w.print(); });
+  w.document.getElementById('close-list')?.addEventListener('click',()=>w.close());
+  w.document.querySelectorAll('.row-actions button').forEach(btn=>btn.addEventListener('click',()=>{ btn.closest('tr')?.remove(); recolor(); }));
+  w.addEventListener('beforeprint',()=>{ blurEditor(); fitAllNames(); });
+  w.focus();
 }
 
 async function openTotalPreview(){
@@ -1494,13 +1765,14 @@ async function openTotalPreview(){
     }
 
     const g = await ensureSettingsRecord();
-  const allRows = agg.per.flatMap(p => p.list || []);
+  const allRows = agg.per.flatMap(p => visibleRows(p.list));
   const html = totalToursHtml(allRows, g.signature || '');
 
   const ov = modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – Gesamt (alle Touren)</h3>
     <div style="max-height:60vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-bottom:10px;background:#fff">${html}</div>
     <div class="${NS}modal-actions">
+      <button class="${NS}btn-sm" data-act="driver-list" style="margin-right:auto;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:500;opacity:.62">Fahrer- und Tourliste</button>
       <button class="${NS}btn-sm" data-act="copy">Kopieren</button>
       <button class="${NS}btn-sm" data-act="close">Schließen</button>
     </div>
@@ -1518,6 +1790,8 @@ async function openTotalPreview(){
       toast(ok ? 'Gesamt kopiert' : 'Kopieren fehlgeschlagen', ok);
     }
 
+    if(btn.dataset.act === 'driver-list') openDriverTourPrintWindow(allRows);
+
     if(btn.dataset.act === 'close') ov.remove();
   }, {passive:false});
   } finally {
@@ -1528,15 +1802,45 @@ async function openTotalPreview(){
 async function copyTotalHtml(){
   const agg = await getAggregates(); if(!agg) return;
   const g = await ensureSettingsRecord();
-  const allRows = agg.per.flatMap(p => p.list || []);
+  const allRows = agg.per.flatMap(p => visibleRows(p.list));
   const html = totalToursHtml(allRows, g.signature || '');
   const ok = await copyHtmlToClipboard(html);
   toast(ok ? 'Gesamt in Zwischenablage' : 'Kopieren fehlgeschlagen', ok);
 }
 async function fillCfg(){
+  const box=PANEL.querySelector('#'+NS+'cfg-recipients');
+  if(!box) return;
+  box.innerHTML=`<div class="${NS}empty">Empfänger werden geladen …</div>`;
+
   const g=await ensureSettingsRecord();
   const el=PANEL.querySelector('#'+NS+'cfg-subj');
   if(el) el.value=g.subjectPrefix||'Aktueller Tour.Report';
+
+  let displayed=Array.from(CONTENT?.querySelectorAll('tbody tr[data-partner]')||[])
+    .map(row=>norm(row.dataset.partner)).filter(Boolean);
+  if(!displayed.length && FVPR_OVERVIEW_CACHE.key===selectedReportDate()){
+    displayed=[...new Set(FVPR_OVERVIEW_CACHE.rows.map(r=>norm(r.partner)).filter(Boolean))];
+  }
+  const names=['gesamt',...displayed];
+  const unique=[...new Set(names)];
+  const stored=await idbAll('partners').catch(()=>[]);
+  const byName=new Map(stored.map(r=>[String(r.name||''),r]));
+
+  box.innerHTML=`
+    <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px">
+      <table class="${NS}tbl" style="min-width:850px">
+        <thead><tr><th style="text-align:left">Systempartner / Tabelle</th><th style="text-align:left">An</th><th style="text-align:left">CC</th></tr></thead>
+        <tbody>${unique.map(name=>{
+          const rec=byName.get(name)||{};
+          const label=name==='gesamt'?'Gesamttabelle':name;
+          return `<tr data-recipient-row="1" data-recipient="${escHtml(name)}">
+            <td style="text-align:left;font-weight:700">${escHtml(label)}</td>
+            <td style="text-align:left"><input data-field="to" type="text" value="${escHtml(rec.to||'')}" placeholder="mail@firma.de oder -" style="width:96%;box-sizing:border-box"></td>
+            <td style="text-align:left"><input data-field="cc" type="text" value="${escHtml(rec.cc||'')}" placeholder="optional" style="width:96%;box-sizing:border-box"></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 async function saveCfgFromUI(){
@@ -1549,9 +1853,29 @@ async function saveCfgFromUI(){
       httpGateway:cur.httpGateway||GATEWAY_DEFAULT,
       apiKey:cur.apiKey||GATEWAY_API_KEY
     });
+
+    const rows=Array.from(PANEL.querySelectorAll('[data-recipient-row="1"]'));
+    for(const row of rows){
+      const name=String(row.dataset.recipient||'').trim();
+      const to=String(row.querySelector('[data-field="to"]')?.value||'').trim();
+      const cc=String(row.querySelector('[data-field="cc"]')?.value||'').trim();
+      if(!name) continue;
+
+      if(to && to!=='-'){
+        const parsed=normalizeEmailList(to);
+        if(!parsed.valid.length || parsed.invalid.length) throw new Error(`Ungültige Adresse bei ${name}: ${to}`);
+      }
+      if(cc){
+        const parsedCc=normalizeEmailList(cc);
+        if(parsedCc.invalid.length) throw new Error(`Ungültige CC-Adresse bei ${name}: ${cc}`);
+      }
+
+      const old=await idbGet('partners',name)||{};
+      await idbPut('partners',{name,to,cc,alias:old.alias||''});
+    }
     toast('Einstellungen gespeichert');
   }catch(e){
-    console.error(e); toast('Fehler beim Speichern',false);
+    console.error(e); toast(String(e?.message||'Fehler beim Speichern'),false);
   }
 }
 
@@ -1565,7 +1889,7 @@ async function openPreview(partner){
     const p=agg.per.find(x=>x.partner===partner);
     if(!p){ DIAG("detail", "Partner nicht in Aggregates gefunden", { partner, verfuegbar: agg.per.map(x=>x.partner) }); alert('Partner nicht gefunden.'); return; }
     DIAG("detail", "Partner gefunden", { partner, touren: p.tours, rows: p.list.length });
-    const content=partnerHtml(partner, p.list, g.signature||'');
+    const content=partnerHtml(partner, visibleRows(p.list), g.signature||'');
     DIAG("detail", "partnerHtml erzeugt", { htmlLen: content.length });
     const ov=modal(`
       <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Vorschau – ${partner}</h3>
@@ -1601,7 +1925,12 @@ async function openPreview(partner){
         toast(ok?'Vorschau kopiert':'Kopieren fehlgeschlagen', ok);
       }
       if(btn.dataset.act==='close') ov.remove();
-      if(btn.dataset.act==='edit'){ ov.remove(); openPartnerDialog(partner); }
+      if(btn.dataset.act==='edit'){
+        ov.remove();
+        CFGBOX.style.display='';
+        await fillCfg();
+        CFGBOX.scrollIntoView({behavior:'smooth',block:'nearest'});
+      }
     },{passive:false});
   } catch(err) {
     DIAG("error", "openPreview EXCEPTION", { err: String(err), stack: err?.stack?.slice?.(0,400) });
@@ -1612,41 +1941,23 @@ async function openPreview(partner){
   }
 }
 
-function openConfirm({title, subject, to, cc, saveKey, onOk, htmlToCopy=''}){
+function openConfirm({title, subject, to, cc, onOk}){
   const ov=modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">${title||'Bestätigen'}</h3>
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
-      <label>Betreff</label><input id="${NS}cf-subj" type="text" value="${subject||''}">
-      <label>An</label><input id="${NS}cf-to" type="text" value="${to||''}">
-      <label>CC</label><input id="${NS}cf-cc" type="text" value="${cc||''}">
-    </div>
+    <table style="width:100%;border-collapse:collapse;font:13px system-ui;margin:8px 0">
+      <tr><td style="padding:6px;font-weight:700">Mail</td><td style="padding:6px">${escHtml(subject||'')}</td></tr>
+      <tr><td style="padding:6px;font-weight:700">An</td><td style="padding:6px">${escHtml(to||'')}</td></tr>
+      <tr><td style="padding:6px;font-weight:700">CC</td><td style="padding:6px">${escHtml(cc||'—')}</td></tr>
+    </table>
     <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="copy">Kopieren</button>
-      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
-      <button class="${NS}btn-sm" data-act="ok">OK</button>
+      <button class="${NS}btn-sm" data-act="ok">Senden</button>
       <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
     </div>
   `);
   ov.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
-    const subj=ov.querySelector('#'+NS+'cf-subj').value.trim();
-    const toV =ov.querySelector('#'+NS+'cf-to').value.trim();
-    const ccV =ov.querySelector('#'+NS+'cf-cc').value.trim();
     if(b.dataset.act==='cancel'){ ov.remove(); return; }
-    if(b.dataset.act==='copy'){
-      if(!htmlToCopy){ toast('Nichts zum Kopieren', false); return; }
-      const ok=await copyHtmlToClipboard(htmlToCopy);
-      toast(ok?'HTML kopiert':'Kopieren fehlgeschlagen', ok);
-      return;
-    }
-    if(b.dataset.act==='save'){
-      const key = saveKey || 'gesamt';
-      const cur = await idbGet('partners', key) || {name:key, alias:''};
-      await idbPut('partners', { name:key, to:toV, cc:ccV, alias:cur.alias||'' });
-      toast('Adressen gespeichert');
-      return;
-    }
-    if(b.dataset.act==='ok'){ onOk({subject:subj, to:toV, cc:ccV}); ov.remove(); }
+    if(b.dataset.act==='ok'){ await onOk({subject,to,cc}); ov.remove(); }
   },{passive:false});
 }
 
@@ -1690,19 +2001,115 @@ async function openPartnerDialog(partner){
   },{passive:false});
 }
 
+function recipientNeverSend(rec){
+  return String(rec?.to||'').trim()==='-';
+}
+
+function recipientHasValidAddress(rec){
+  if(recipientNeverSend(rec)) return false;
+  return normalizeEmailList(rec?.to||'').valid.length>0;
+}
+
+async function loadRecipientRecords(names){
+  const records=new Map();
+  for(const name of [...new Set((names||[]).filter(Boolean))]){
+    records.set(name,await idbGet('partners',name)||{name,to:'',cc:'',alias:''});
+  }
+  return records;
+}
+
+async function prepareRecipientsForSend(names){
+  const unique=[...new Set((names||[]).filter(Boolean))];
+  const records=new Map();
+  for(const name of unique) records.set(name,await idbGet('partners',name)||{name,to:'',cc:'',alias:''});
+
+  const missing=unique.filter(name=>{
+    const rec=records.get(name);
+    return !recipientNeverSend(rec) && !recipientHasValidAddress(rec);
+  });
+  if(!missing.length) return records;
+
+  return await new Promise(resolve=>{
+    let finished=false;
+    const finish=value=>{ if(finished) return; finished=true; try{ ov.remove(); }catch{} resolve(value); };
+    const ov=modal(`
+      <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Fehlende Mailadressen</h3>
+      <div style="font:13px system-ui;margin-bottom:10px">Für folgende Empfänger ist keine Mailadresse hinterlegt. Adresse eintragen, diesmal überspringen oder dauerhaft mit <b>-</b> ausschließen.</div>
+      <div style="max-height:55vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px">
+        <table class="${NS}tbl" style="min-width:920px">
+          <thead><tr><th style="text-align:left">Empfänger</th><th style="text-align:left">Auswahl</th><th style="text-align:left">An</th><th style="text-align:left">CC</th></tr></thead>
+          <tbody>${missing.map(name=>`<tr data-missing-recipient="${escHtml(name)}">
+            <td style="text-align:left;font-weight:700">${escHtml(name==='gesamt'?'Gesamttabelle':name)}</td>
+            <td style="text-align:left"><select data-field="mode"><option value="enter">Adresse eintragen</option><option value="skip">Diesmal nicht senden</option><option value="never">Nie senden (-)</option></select></td>
+            <td style="text-align:left"><input data-field="to" type="text" placeholder="mail@firma.de" style="width:96%;box-sizing:border-box"></td>
+            <td style="text-align:left"><input data-field="cc" type="text" placeholder="optional" style="width:96%;box-sizing:border-box"></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="${NS}modal-actions">
+        <button class="${NS}btn-sm" data-act="continue">Speichern und fortfahren</button>
+        <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
+      </div>`);
+
+    ov.addEventListener('mousedown',e=>{ if(e.target===ov) finish(null); });
+    ov.addEventListener('click',async e=>{
+      const btn=e.target.closest('button[data-act]'); if(!btn) return;
+      if(btn.dataset.act==='cancel'){ finish(null); return; }
+      if(btn.dataset.act!=='continue') return;
+
+      const pending=[];
+      for(const row of ov.querySelectorAll('[data-missing-recipient]')){
+        const name=String(row.dataset.missingRecipient||'');
+        const mode=String(row.querySelector('[data-field="mode"]')?.value||'enter');
+        const to=String(row.querySelector('[data-field="to"]')?.value||'').trim();
+        const cc=String(row.querySelector('[data-field="cc"]')?.value||'').trim();
+        const old=records.get(name)||{name,alias:''};
+
+        if(mode==='skip'){
+          records.set(name,{...old,__skip:true});
+          continue;
+        }
+        if(mode==='never'){
+          const rec={name,to:'-',cc:'',alias:old.alias||''};
+          pending.push(rec); records.set(name,rec);
+          continue;
+        }
+
+        const parsed=normalizeEmailList(to);
+        const parsedCc=normalizeEmailList(cc);
+        if(!parsed.valid.length || parsed.invalid.length){
+          alert(`Bitte eine gültige Adresse für ${name} eintragen oder „Nicht senden“ auswählen.`);
+          return;
+        }
+        if(parsedCc.invalid.length){ alert(`Ungültige CC-Adresse bei ${name}.`); return; }
+        const rec={name,to,cc,alias:old.alias||''};
+        pending.push(rec); records.set(name,rec);
+      }
+
+      for(const rec of pending) await idbPut('partners',rec);
+      finish(records);
+    },{passive:false});
+  });
+}
+
 /* ====== Versand-Flows ====== */
 async function sendSinglePartnerConfirm(partner){
   if(partner==='gesamt'){ await sendTotalOnlyConfirm(); return; }
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
   const p=agg.per.find(x=>x.partner===partner); if(!p){ alert('Partner nicht gefunden.'); return; }
-  const rec=await idbGet('partners', partner)||{};
+  const cleanList=mailRows(p.list);
+  if(!cleanList.length){ alert('Für diesen Partner sind keine versendbaren Tourdaten vorhanden.'); return; }
+  const recipients=await loadRecipientRecords([partner]);
+  const rec=recipients.get(partner)||{};
+  if(recipientNeverSend(rec)){ toast(`Versand an ${partner} ist deaktiviert.`); return; }
+  if(!recipientHasValidAddress(rec)){ alert(`Für ${partner} ist keine Mailadresse hinterlegt. Bitte in den Einstellungen eintragen.`); return; }
   const alias=rec.alias||partner;
-  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${alias} – ${todayStr()}`;
-  const html=mailPartnerHtml(partner, p.list, g.signature||'');
+  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${alias} – ${selectedReportDateDE()}`;
+  const html=mailPartnerHtml(partner, cleanList, g.signature||'');
   openConfirm({
     title:`Senden an ${alias}?`,
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:partner, htmlToCopy:html,
+    subject, to:rec.to||'', cc:rec.cc||'',
     onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
   });
 }
@@ -1710,12 +2117,17 @@ async function sendSinglePartnerConfirm(partner){
 async function sendTotalOnlyConfirm(){
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
-  const rec=await idbGet('partners','gesamt')||{};
-  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-  const html=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
+  const mailData=mailAggregates(agg.per);
+  if(!mailData.per.length){ alert('Es sind keine versendbaren Tourdaten vorhanden.'); return; }
+  const recipients=await loadRecipientRecords(['gesamt']);
+  const rec=recipients.get('gesamt')||{};
+  if(recipientNeverSend(rec)){ toast('Versand der Gesamttabelle ist deaktiviert.'); return; }
+  if(!recipientHasValidAddress(rec)){ alert('Für die Gesamttabelle ist keine Mailadresse hinterlegt. Bitte in den Einstellungen eintragen.'); return; }
+  const subject=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${selectedReportDateDE()}`;
+  const html=mailSummaryHtml(mailData.per, mailData.totals, g.signature||'');
   openConfirm({
     title:'Gesamtübersicht senden?',
-    subject, to:rec.to||'', cc:rec.cc||'', saveKey:'gesamt', htmlToCopy:html,
+    subject, to:rec.to||'', cc:rec.cc||'',
     onOk:({subject,to,cc})=>deliverMail({subject, html, to, cc})
   });
 }
@@ -1723,55 +2135,53 @@ async function sendTotalOnlyConfirm(){
 async function sendPartnerAndTotalConfirm(){
   const agg=await getAggregates(); if(!agg){ alert('Keine Daten gefunden.'); return; }
   const g=await ensureSettingsRecord();
-  const ready=[];
-  for(const p of agg.per){
-    const ov=await idbGet('partners', p.partner);
-    if(ov && normalizeEmailList(ov.to||'').valid.length>0) ready.push(p.partner);
-  }
-  const rec=await idbGet('partners','gesamt')||{};
-  const subjectTotal=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${todayStr()}`;
-  const htmlTot=mailSummaryHtml(agg.per, agg.totals, g.signature||'');
+  const mailData=mailAggregates(agg.per);
+  if(!mailData.per.length){ alert('Es sind keine versendbaren Tourdaten vorhanden.'); return; }
+  const recipients=await loadRecipientRecords([...mailData.per.map(p=>p.partner),'gesamt']);
+  const ready=mailData.per.map(p=>p.partner).filter(name=>{
+    const recipient=recipients.get(name);
+    return recipientHasValidAddress(recipient);
+  });
+  const rec=recipients.get('gesamt')||{};
+  const sendTotal=recipientHasValidAddress(rec);
+  const subjectTotal=`${g.subjectPrefix||'Aktueller Tour.Report'} – Gesamt – ${selectedReportDateDE()}`;
+  const htmlTot=mailSummaryHtml(mailData.per, mailData.totals, g.signature||'');
+  const sendRows=[
+    ...ready.map(name=>{
+      const recipient=recipients.get(name);
+      const alias=recipient.alias||name;
+      return {name:`Partnerreport – ${alias}`,to:recipient.to||'',cc:recipient.cc||''};
+    }),
+    ...(sendTotal?[{name:'Gesamttabelle',to:rec.to||'',cc:rec.cc||''}]:[])
+  ];
+  if(!sendRows.length){ alert('Für die vorhandenen Tourdaten sind keine Mailadressen hinterlegt. Bitte in den Einstellungen eintragen.'); return; }
 
   const ov=modal(`
     <h3 style="margin:0 0 8px 0;font:700 16px system-ui">Sammelversand bestätigen</h3>
-    <div style="font:13px;margin-bottom:10px">Es werden <b>${ready.length}</b> Partner-Mails gesendet (nur mit gültiger Adresse) und <b>1</b> Gesamt-Mail an „gesamt“.</div>
-    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin:8px 0">
-      <label>Gesamt – Betreff</label><input id="${NS}sammel-subj" type="text" value="${subjectTotal}">
-      <label>Gesamt – An</label><input id="${NS}sammel-to" type="text" value="${rec.to||''}">
-      <label>Gesamt – CC</label><input id="${NS}sammel-cc" type="text" value="${rec.cc||''}">
+    <div style="font:13px;margin-bottom:10px">Diese <b>${sendRows.length}</b> Mails werden gesendet:</div>
+    <div style="max-height:55vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font:13px system-ui">
+        <thead><tr style="background:#f3f4f6"><th style="padding:7px;text-align:left">Mail</th><th style="padding:7px;text-align:left">An</th><th style="padding:7px;text-align:left">CC</th></tr></thead>
+        <tbody>${sendRows.map(row=>`<tr><td style="padding:7px;border-top:1px solid #e5e7eb">${escHtml(row.name)}</td><td style="padding:7px;border-top:1px solid #e5e7eb">${escHtml(row.to)}</td><td style="padding:7px;border-top:1px solid #e5e7eb">${escHtml(row.cc||'—')}</td></tr>`).join('')}</tbody>
+      </table>
     </div>
     <div class="${NS}modal-actions">
-      <button class="${NS}btn-sm" data-act="copy-total">Gesamt kopieren</button>
-      <button class="${NS}btn-sm" data-act="save">Änderungen speichern</button>
       <button class="${NS}btn-sm" data-act="ok">Senden</button>
       <button class="${NS}btn-sm" data-act="cancel">Abbrechen</button>
     </div>
   `);
   ov.addEventListener('click', async e=>{
     const b=e.target.closest('button[data-act]'); if(!b) return;
-    const subj=ov.querySelector('#'+NS+'sammel-subj').value.trim();
-    const to  =ov.querySelector('#'+NS+'sammel-to').value.trim();
-    const cc  =ov.querySelector('#'+NS+'sammel-cc').value.trim();
     if(b.dataset.act==='cancel'){ ov.remove(); return; }
-    if(b.dataset.act==='copy-total'){
-      const ok=await copyHtmlToClipboard(htmlTot);
-      toast(ok?'Gesamt kopiert':'Kopieren fehlgeschlagen', ok);
-      return;
-    }
-    if(b.dataset.act==='save'){
-      const cur=await idbGet('partners','gesamt')||{name:'gesamt',alias:''};
-      await idbPut('partners',{name:'gesamt', to, cc, alias:cur.alias||''});
-      toast('Adressen „gesamt“ gespeichert'); return;
-    }
     if(b.dataset.act==='ok'){
       for(const pname of ready){
-        const ovRec=await idbGet('partners', pname);
-        const part=agg.per.find(x=>x.partner===pname);
+        const ovRec=recipients.get(pname);
+        const part=mailData.per.find(x=>x.partner===pname);
         const html=mailPartnerHtml(pname, part.list, g.signature||'');
-        const subjP=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${(ovRec.alias||pname)} – ${todayStr()}`;
+        const subjP=`${g.subjectPrefix||'Aktueller Tour.Report'} – ${(ovRec.alias||pname)} – ${selectedReportDateDE()}`;
         await deliverMail({subject:subjP, html, to:ovRec.to||'', cc:ovRec.cc||''});
       }
-      await deliverMail({subject:subj, html:htmlTot, to, cc});
+      if(sendTotal) await deliverMail({subject:subjectTotal, html:htmlTot, to:rec.to||'', cc:rec.cc||''});
       ov.remove();
     }
   },{passive:false});
@@ -1786,12 +2196,16 @@ async function render(force=false){
   const run=async ()=>{
     DIAG('render', 'run() gestartet', { contentExists: !!CONTENT });
     if(!CONTENT) return;
-    const res=await getAggregates();
+    const res=await getAggregates(force);
     if(!res){
-      CONTENT.innerHTML=`<div class="${NS}empty">Keine Daten gefunden (Tab „Fahrzeugübersicht“ sichtbar?).</div>`;
+      CONTENT.innerHTML=`<div class="${NS}empty">Für ${selectedReportDateDE()} wurden keine Daten gefunden.</div>`;
       return;
     }
-    const {per, totals}=res;
+    const {per, totals}=SHOW_ALL_TOURS_AND_PARTNERS?res:mailAggregates(res.per);
+    if(!per.length){
+      CONTENT.innerHTML=`<div class="${NS}empty">Für ${selectedReportDateDE()} wurden keine Touren mit Daten gefunden.</div>`;
+      return;
+    }
     const html = summaryHtml(per, totals, '');
     CONTENT.innerHTML = html;
     makeTableSortable(CONTENT.querySelector('table'));
@@ -1810,8 +2224,6 @@ async function openPanel(){
   DIAG("boot", "Panel-Element", { found: !!p, display: p?.style?.display, id: p?.id, parentTag: p?.parentElement?.tagName });
   if (p) p.style.removeProperty('display');
 
-  try { await ensureFahrzeuguebersichtActive(); } catch(e) { console.error('[fvpr] ensureFahrzeuguebersichtActive', e); }
-  try { fillCfg(); } catch {}
   try { await render(true); } catch {}
   DIAG("boot", "openPanel() abgeschlossen", { panelVisible: p ? getComputedStyle(p).display !== 'none' : false });
 }
@@ -1843,13 +2255,9 @@ function installOutsideClickClose(){
 
 async function bootStandalone(){
   DIAG("boot", "bootStandalone()");
-  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await ensureFahrzeuguebersichtActive(); await render(true); }
+  try { ensureStyles(); mountUI(false); await ensureSettingsRecord(); await render(true); }
   catch(e){ console.error('[fvpr] init', e); }
-  let mo = null, refreshInterval = null;
-  if (!mo){
-    mo = new MutationObserver(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); });
-    mo.observe(document.body, { childList:true, subtree:true });
-  }
+  let refreshInterval = null;
   if (!refreshInterval){
     refreshInterval = setInterval(()=>{ if (Date.now() - LAST_USER_SORT_TS < SUPPRESS_RENDER_MS) return; render(); }, REFRESH_MS);
   }
@@ -1927,7 +2335,7 @@ let FVPR_LAST_PD_REQUEST = null;
 let FVPR_DETAIL_CACHE = { key:'', ts:0, rows:[] };
 
 function escHtml(s){ return String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch])); }
-function fvprIsoToday(){ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function fvprIsoToday(){ return selectedReportDate(); }
 function fvprStatusNorm(s){ return norm(s).toUpperCase().replace(/[_/\\|-]+/g,' ').replace(/\s+/g,' ').trim(); }
 function fvprTypeOf(r){
   // Muss exakt zwischen Zustellung und Abholung trennen, sonst zeigt ein Klick auf offene Abholstopps falsche Daten.
@@ -2020,6 +2428,18 @@ function fvprServiceCodeOf(r){
   if(r?.product&&typeof r.product==='object'){ add(r.product.serviceCode); add(r.product.code); add(r.product.id); arr(r.product.serviceCodes); }
   return Array.from(out).sort((a,b)=>String(a).localeCompare(String(b),'de',{numeric:true})).join(' ');
 }
+function fvprAdditionalCodeOf(r){
+  const values=[];
+  const add=v=>{
+    if(v==null||v==='') return;
+    if(Array.isArray(v)){ v.forEach(add); return; }
+    const text=norm(typeof v==='object'?(v.code||v.id||v.reason||''):v);
+    if(text) values.push(text);
+  };
+  add(r?.additionalCodes); add(r?.additionalCode); add(r?.additional_code);
+  add(r?.problemReason); add(r?.problem_reason); add(r?.cancelReason);
+  return [...new Set(values)].join(', ');
+}
 function fvprPriorityKind(r){
   const txt=fvprStatusNorm([r.__serviceCode,r.__raw?.priority,r.__raw?.service_category,r.__raw?.serviceCategory,r.__raw?.service_type,r.__raw?.serviceType,r.__raw?.elements].join(' '));
   if(txt.includes('EXPRESS')) return 'EXPRESS';
@@ -2027,7 +2447,7 @@ function fvprPriorityKind(r){
   return '';
 }
 function fvprParcelListOf(r){
-  const vals=[r?.parcel_number,r?.parcelNumber,r?.parcelNumbers,r?.parcels,r?.parcelNumberList,r?.parcelsList,r?.shipmentNumbers,r?.labels,r?.barcodes,r?.packages,r?.consignments,r?.shipments,r?.completed_parcel,r?.removed_parcel_numbers];
+  const vals=[r?.parcel_number,r?.parcelNumber,r?.parcelNumbers,r?.parcels,r?.parcelNumberList,r?.parcelsList,r?.shipmentNumbers,r?.labels,r?.barcodes,r?.packages,r?.consignments,r?.shipments,r?.completed_parcel,r?.completedParcels,r?.removed_parcel_numbers,r?.removedParcelNumbers];
   const out=[];
   const push=v=>{
     if(v==null||v==='') return;
@@ -2042,7 +2462,7 @@ function fvprParcelListOf(r){
   };
   vals.forEach(push); return [...new Set(out)];
 }
-function fvprParcelCountOf(r){ const l=fvprParcelListOf(r); if(l.length) return l.length; for(const v of [r?.estimated_parcels,r?.completed_parcel,r?.parcelCount,r?.parcelsCount,r?.numberOfParcels,r?.numberOfPackages,r?.packageCount,r?.packagesCount,r?.shipmentCount,r?.quantity,r?.qty,r?.pieces,r?.pieceCount,r?.itemCount,r?.count,r?.totalParcels,r?.totalPackages]){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.trunc(n); } return 1; }
+function fvprParcelCountOf(r){ const l=fvprParcelListOf(r); if(l.length) return l.length; for(const v of [r?.estimated_parcels,r?.estimatedParcels,r?.completed_parcel,r?.completedParcels,r?.realParcels,r?.parcelCount,r?.parcelsCount,r?.numberOfParcels,r?.numberOfPackages,r?.packageCount,r?.packagesCount,r?.shipmentCount,r?.quantity,r?.qty,r?.pieces,r?.pieceCount,r?.itemCount,r?.count,r?.totalParcels,r?.totalPackages]){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.trunc(n); } return 1; }
 function fvprAddrOf(r){
   const street=norm(r?.street||r?.addressLine1||r?.address||r?.address?.street||r?.recipient?.street||'');
   const house=norm(r?.houseno||r?.houseNo||r?.houseNumber||r?.address?.houseNumber||r?.recipient?.houseNumber||'');
@@ -2069,7 +2489,7 @@ function fvprBuildHeaders(h){
   return H;
 }
 function fvprBuildPickupDeliveryUrl(page){
-  const base = FVPR_LAST_PD_REQUEST?.url ? new URL(FVPR_LAST_PD_REQUEST.url.href) : new URL('/dispatcher/api/pickup-delivery', location.origin);
+  const base = new URL('/dispatcher/api/pickup-delivery', location.origin);
   base.pathname = '/dispatcher/api/pickup-delivery';
   base.search = '';
   base.searchParams.set('page', String(page));
@@ -2099,7 +2519,7 @@ async function fvprFetchDetailRows(force=false){
   const rows=raw.map((r,idx)=>{
     const tour=fvprExtractTour(r)||'—'; const tk=tourKey(tour);
     const statusRaw=fvprStatusOf(r);
-    const o={ __raw:r, __idx:idx, __tour:tour, __partner:fvprRawPartner(r)||pMap.get(tk)||'Ohne Zuordnung', __driver:fvprDriverOf(r)||dMap.get(tk)||'', __type:fvprTypeOf(r), __statusRaw:statusRaw, __status:fvprStatusDe(statusRaw), __serviceCode:fvprServiceCodeOf(r), __additionalCode:norm(r?.additional_code||r?.additionalCode||r?.problemReason||r?.problem_reason||''), __parcelList:fvprParcelListOf(r), __pkgCount:fvprParcelCountOf(r), __addr:fvprAddrOf(r), __name:fvprNameOf(r), __stop:fvprStopOf(r,idx) };
+    const o={ __raw:r, __idx:idx, __tour:tour, __partner:fvprRawPartner(r)||pMap.get(tk)||'Ohne Zuordnung', __driver:fvprDriverOf(r)||dMap.get(tk)||'', __type:fvprTypeOf(r), __statusRaw:statusRaw, __status:fvprStatusDe(statusRaw), __serviceCode:fvprServiceCodeOf(r), __additionalCode:fvprAdditionalCodeOf(r), __parcelList:fvprParcelListOf(r), __pkgCount:fvprParcelCountOf(r), __addr:fvprAddrOf(r), __name:fvprNameOf(r), __stop:fvprStopOf(r,idx) };
     return o;
   });
   FVPR_DETAIL_CACHE={key,ts:Date.now(),rows};
@@ -2149,7 +2569,7 @@ async function fvprOpenDetailList({partner='', tour='', metric='stops'}){
   const title=[fvprMetricLabel(metric), partner, tour?`Tour ${tour}`:''].filter(Boolean).join(' – ');
   const html=`
     <div style="font:13px system-ui">
-      <div style="margin:0 0 8px 0;color:#334155;font-weight:700">${escHtml(title)} · ${fmtInt(rows.length)} Einträge · Stand ${todayStr()} ${timeHM()}</div>
+      <div style="margin:0 0 8px 0;color:#334155;font-weight:700">${escHtml(title)} · ${fmtInt(rows.length)} Einträge · Datum ${selectedReportDateDE()} · Stand ${todayStr()} ${timeHM()}</div>
       <div style="max-height:62vh;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;background:#fff">
         <table class="${NS}tbl ${NS}detailtbl" style="width:100%;border-collapse:collapse">
           <thead><tr>
@@ -2229,7 +2649,7 @@ function fvprInstallDetailClickHandler(){
     const tour = row.dataset.tour || (row.children.length>=8 && row.dataset.totalRow!=='1' ? norm(row.children[0]?.textContent||'') : '');
     const hideLoader=fvprShowBlockingLoader(`Detaildaten werden geladen${partner?' – '+partner:''}${tour?' – Tour '+tour:''} …`);
     try{ await fvprOpenDetailList({partner, tour, metric}); }
-    catch(err){ console.error('[fvpr] Detail-Liste', err); alert(String(err?.message||err) + '\n\nHinweis: Bitte ggf. einmal die normale Pickup-/Delivery-Liste im Dispatcher öffnen, damit der API-Zugriff sicher erkannt wird.'); }
+    catch(err){ console.error('[fvpr] Detail-Liste', err); alert(String(err?.message||err)); }
     finally{ hideLoader(); }
   }, true);
 }
@@ -2240,11 +2660,13 @@ function fvprInstallPickupDeliveryHook(){
       const res=await orig(input, init);
       try{
         const urlStr=typeof input==='string'?input:(input&&input.url)||'';
-        if(urlStr.includes('/dispatcher/api/pickup-delivery') && res.ok){
+        if(urlStr.includes('/dispatcher/api/') && res.ok){
           const u=new URL(urlStr, location.origin); const q=u.searchParams;
           if(!q.get('parcelNumber') && !q.get('parcel_number')){
             const headers={}; const src=(init&&init.headers)||(input&&input.headers);
             if(src){ if(src.forEach) src.forEach((v,k)=>headers[String(k).toLowerCase()]=String(v)); else if(Array.isArray(src)) src.forEach(([k,v])=>headers[String(k).toLowerCase()]=String(v)); else Object.entries(src).forEach(([k,v])=>headers[String(k).toLowerCase()]=String(v)); }
+            if(!headers.authorization){ const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/); if(m) headers.authorization='Bearer '+decodeURIComponent(m[1]); }
+            if(!headers.authorization && FVPR_LAST_PD_REQUEST?.headers?.authorization) headers.authorization=FVPR_LAST_PD_REQUEST.headers.authorization;
             FVPR_LAST_PD_REQUEST={url:u,headers};
           }
         }
@@ -2257,7 +2679,7 @@ function fvprInstallPickupDeliveryHook(){
     const X=window.XMLHttpRequest, open=X.prototype.open, send=X.prototype.send, setH=X.prototype.setRequestHeader;
     X.prototype.open=function(method,url){ this.__fvpr_pd_url=typeof url==='string'?new URL(url,location.origin):null; this.__fvpr_pd_headers={}; return open.apply(this, arguments); };
     X.prototype.setRequestHeader=function(k,v){ try{ this.__fvpr_pd_headers[String(k).toLowerCase()]=String(v); }catch{} return setH.apply(this, arguments); };
-    X.prototype.send=function(){ const onload=()=>{ try{ if(this.__fvpr_pd_url && this.__fvpr_pd_url.href.includes('/dispatcher/api/pickup-delivery') && this.status>=200 && this.status<300){ const q=this.__fvpr_pd_url.searchParams; if(!q.get('parcelNumber')&&!q.get('parcel_number')) FVPR_LAST_PD_REQUEST={url:this.__fvpr_pd_url, headers:this.__fvpr_pd_headers}; } }catch{} this.removeEventListener('load', onload); }; this.addEventListener('load', onload); return send.apply(this, arguments); };
+    X.prototype.send=function(){ const onload=()=>{ try{ if(this.__fvpr_pd_url && this.__fvpr_pd_url.href.includes('/dispatcher/api/') && this.status>=200 && this.status<300){ const q=this.__fvpr_pd_url.searchParams; if(!q.get('parcelNumber')&&!q.get('parcel_number')){ if(!this.__fvpr_pd_headers.authorization){ const m=document.cookie.match(/(?:^|;\s*)dpd-register-jwt=([^;]+)/); if(m) this.__fvpr_pd_headers.authorization='Bearer '+decodeURIComponent(m[1]); } if(!this.__fvpr_pd_headers.authorization && FVPR_LAST_PD_REQUEST?.headers?.authorization) this.__fvpr_pd_headers.authorization=FVPR_LAST_PD_REQUEST.headers.authorization; FVPR_LAST_PD_REQUEST={url:this.__fvpr_pd_url, headers:this.__fvpr_pd_headers}; } } }catch{} this.removeEventListener('load', onload); }; this.addEventListener('load', onload); return send.apply(this, arguments); };
     window.__fvpr_pd_xhr_hooked=true;
   }
 }
